@@ -337,6 +337,7 @@ function getMetrics(rows: Row[]) {
      winCount: winFlags.reduce<number>((a, b) => a + b, 0),
       drawCount: drawFlags.reduce<number>((a, b) => a + b, 0),
       lossCount: lossFlags.reduce<number>((a, b) => a + b, 0),
+  };
 }
 
 function confidenceLabel(value: number) {
