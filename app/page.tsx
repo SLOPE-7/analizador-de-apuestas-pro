@@ -1326,7 +1326,7 @@ export default function Home() {
           />
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-white">Analizador Manual de Apuestas</h1>
+              <h1 className="text-2xl font-bold text-white">Analizador Manual de Apuestas KCL07</h1>
               <p className="mt-1 text-sm text-slate-300">
                 Ahora guarda equipos por separado como local y visitante, incluye rojas y muestra G/E/P.
               </p>
@@ -1349,7 +1349,7 @@ export default function Home() {
         </section>
 
         <section className="rounded-2xl border border-purple-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-lg font-bold text-purple-700">1. Gestión de bankroll y mercado</h2>
+          <h2 className="mb-3 text-lg font-bold text-purple-700"> Gestión de bankroll y mercado</h2>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
             <Field
               label="Bankroll actual"
@@ -1404,7 +1404,7 @@ export default function Home() {
 
         <section className="rounded-2xl border border-blue-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-lg font-bold text-blue-700">2. Datos del partido</h2>
+            <h2 className="text-lg font-bold text-blue-700"> Datos del partido</h2>
             <div className="flex flex-wrap gap-2">
               {editingId && (
                 <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">
@@ -1634,7 +1634,7 @@ export default function Home() {
         </section>
 
         <TeamSection
-          title="3. Últimos 10 del local"
+          title=" Últimos 10 del local"
           titleColor="text-blue-700"
           boxColor="border-blue-200"
           headerBg="bg-blue-100"
@@ -1646,7 +1646,7 @@ export default function Home() {
         />
 
         <TeamSection
-          title="4. Últimos 10 del visitante"
+          title=" Últimos 10 del visitante"
           titleColor="text-red-700"
           boxColor="border-red-200"
           headerBg="bg-red-100"
@@ -1659,7 +1659,7 @@ export default function Home() {
 
         <section className="grid gap-4 xl:grid-cols-3">
           <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm xl:col-span-2">
-            <h2 className="mb-3 text-lg font-bold text-emerald-700">5. Análisis final</h2>
+            <h2 className="mb-3 text-lg font-bold text-emerald-700"> Análisis final</h2>
 
             <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4">
               <h3 className="mb-3 text-base font-bold text-red-700">Protección anti partidos trampa</h3>
@@ -1850,7 +1850,7 @@ export default function Home() {
 
           <div className="space-y-3">
             <section className="rounded-2xl border border-violet-200 bg-white p-3 shadow-sm">
-              <h2 className="mb-2 text-base font-bold text-violet-700">6. Mejores mercados</h2>
+              <h2 className="mb-2 text-base font-bold text-violet-700"> Mejores mercados</h2>
               <div className="space-y-2">
                 <CompactRecommendation label="Goles" pick={analysis.bestGoalsPick} />
                 <CompactRecommendation label="Amarillas" pick={analysis.bestCardsPick} />
@@ -2109,7 +2109,7 @@ export default function Home() {
         </section>
 
         <section className="rounded-2xl border border-fuchsia-200 bg-white p-3 shadow-sm">
-          <h2 className="mb-2 text-base font-bold text-fuchsia-700">7. Generador de parlay</h2>
+          <h2 className="mb-2 text-base font-bold text-fuchsia-700">Sugerencia Para Parlay o Individuales</h2>
           {selectedAnalyses.length === 0 ? (
             <p className="text-slate-600">Selecciona uno o más análisis guardados para generar parlays.</p>
           ) : (
