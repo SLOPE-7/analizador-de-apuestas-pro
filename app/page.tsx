@@ -2,6 +2,10 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
+import { savePartido } from "@/lib/partidos";
+
+
+
 type Row = {
   rival: string;
   gf: number | "";
@@ -482,9 +486,69 @@ function formatDateTime(value: string) {
 }
 
 export default function Home() {
+
+function loadCloudMatch(item: any) {
+  setMatchInfo((prev) => ({
+    ...prev,
+    home: item.local ?? "",
+    away: item.visitante ?? "",
+    league: item.liga ?? "",
+    date: item.fecha ?? "",
+    referee: item.arbitro ?? "",
+  }));
+
+  setHomeRows(item.home_rows ?? emptyRows());
+  setAwayRows(item.away_rows ?? emptyRows());
+
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+  
   const [matchInfo, setMatchInfo] = useState<MatchInfo>(EMPTY_MATCH_INFO);
   const [homeRows, setHomeRows] = useState<Row[]>(emptyRows());
   const [awayRows, setAwayRows] = useState<Row[]>(emptyRows());
+  const [cloudMatches, setCloudMatches] = useState<any[]>([]);
+  
+useEffect(() => {
+  loadCloudMatches();
+}, []);
+
+  async function handleSaveMatch() {
+  try {
+    const matchId =
+      `${matchInfo.home || "local"}__` +
+      `${matchInfo.away || "visitante"}__` +
+      `${matchInfo.date || ""}`;
+
+    await savePartido({
+      match_id: matchId,
+      local: matchInfo.home || "",
+      visitante: matchInfo.away || "",
+      liga: matchInfo.league || "",
+      fecha: matchInfo.date || "",
+      arbitro: matchInfo.referee || "",
+      home_rows: homeRows,
+      away_rows: awayRows,
+      analysis: analysis ?? null,
+      saved_from: "web",
+    });
+
+    await loadCloudMatches();
+    alert("Guardado en la nube 🚀");
+  } catch (error) {
+    console.error(error);
+    alert("Error al guardar");
+  }
+}
+async function loadCloudMatches() {
+  try {
+    const data = await getPartidos();
+    setCloudMatches(data ?? []);
+  } catch (error) {
+    console.error(error);
+    alert("Error al cargar partidos de la nube");
+  }
+}
+
 
   const [savedAnalyses, setSavedAnalyses] = useState<SavedAnalysis[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -1833,19 +1897,27 @@ export default function Home() {
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                onClick={saveAnalysis}
-                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
-              >
-                {editingId ? "Actualizar análisis" : "Guardar análisis"}
-              </button>
-              <button
-                onClick={resetForm}
-                className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-300"
-              >
-                Nuevo partido
-              </button>
-            </div>
+  <button
+    onClick={saveAnalysis}
+    className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
+  >
+    {editingId ? "Actualizar análisis" : "Guardar análisis"}
+  </button>
+
+  <button
+    onClick={handleSaveMatch}
+    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
+  >
+    Guardar en la nube
+  </button>
+
+  <button
+    onClick={resetForm}
+    className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-300"
+  >
+    Nuevo partido
+  </button>
+</div>
           </div>
 
           <div className="space-y-3">
@@ -1993,6 +2065,44 @@ export default function Home() {
             </div>
           )}
         </section>
+
+<section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
+  <div className="mb-3 flex items-center justify-between">
+    <h2 className="text-lg font-bold text-emerald-700">Partidos guardados en la nube</h2>
+    <p className="text-sm text-slate-500">{cloudMatches.length} partidos</p>
+  </div>
+
+  {cloudMatches.length === 0 ? (
+    <p className="text-slate-600">No hay partidos guardados en la nube.</p>
+  ) : (
+    <div className="space-y-2">
+      {cloudMatches.map((item) => (
+        <div
+          key={item.id}
+          className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 md:flex-row md:items-center md:justify-between"
+        >
+          <div>
+            <p className="text-sm font-bold text-slate-900">
+              <span className="text-blue-700">{item.local || "Local"}</span>
+              {" vs "}
+              <span className="text-red-700">{item.visitante || "Visitante"}</span>
+            </p>
+            <p className="text-xs text-slate-600">
+              {item.liga || "Liga"} · {item.fecha || "Sin fecha"}
+            </p>
+          </div>
+
+          <button
+            onClick={() => loadCloudMatch(item)}
+            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
+          >
+            Cargar desde nube
+          </button>
+        </div>
+      ))}
+    </div>
+  )}
+</section>
 
         <section className="rounded-2xl border border-indigo-200 bg-white p-3 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
