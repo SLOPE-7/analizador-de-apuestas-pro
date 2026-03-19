@@ -334,10 +334,9 @@ function getMetrics(rows: Row[]) {
     weightedOppCorners: weightedAverage(oppCorners),
     weightedTotalCorners: weightedAverage(totalCorners),
 
-    winCount: winFlags.reduce((a, b) => a + b, 0),
-    drawCount: drawFlags.reduce((a, b) => a + b, 0),
-    lossCount: lossFlags.reduce((a, b) => a + b, 0),
-  };
+     winCount: winFlags.reduce<number>((a, b) => a + b, 0),
+      drawCount: drawFlags.reduce<number>((a, b) => a + b, 0),
+      lossCount: lossFlags.reduce<number>((a, b) => a + b, 0),
 }
 
 function confidenceLabel(value: number) {
