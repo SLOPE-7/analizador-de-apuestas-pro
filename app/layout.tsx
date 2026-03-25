@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -14,13 +14,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Analizador de Apuestas",
-  description: "Analizador profesional de apuestas deportivas",
-  manifest: "/manifest.json",
+  description: "Analizador de apuestas de fútbol y NBA",
+};
+
+export const viewport: Viewport = {
   themeColor: "#0f172a",
-  icons: {
-    icon: "/icon-192.png",
-    apple: "/icon-192.png",
-  },
 };
 
 export default function RootLayout({
@@ -30,9 +28,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
       </body>
     </html>

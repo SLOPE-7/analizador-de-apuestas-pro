@@ -1,2670 +1,2192 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { analizarParlay } from "@/lib/sistemaDios";
+import { optimizarParlay } from "@/lib/optimizador";
+//import { analizarParlay } from "@/lib/sistemaDios";
 
-import { savePartido } from "@/lib/partidos";
+type MatchStage =
+  | "Liga"
+  | "16vos"
+  | "8vos"
+  | "4tos"
+  | "Semifinal"
+  | "Final";
 
+type MatchType = "Liga" | "Ida" | "Vuelta" | "Clásico" | "Copa";
 
+type ResultState = "G" | "E" | "P" | "";
 
-type Row = {
+type TeamCondition = "local" | "visitante";
+
+type TeamRow = {
   rival: string;
+  fecha: string;
   gf: number | "";
   gc: number | "";
-  ownCards: number | "";
-  oppCards: number | "";
-  ownRedCards: number | "";
-  oppRedCards: number | "";
   ownCorners: number | "";
   oppCorners: number | "";
-};
-
-type PickFamily = "goles" | "tarjetas" | "rojas" | "corners" | "ganador" | "doble";
-
-type Pick = {
-  market: string;
-  probability: number;
-  family: PickFamily;
-  tier?: "segura" | "valor" | "arriesgada";
-};
-
-type ResultStatus = "pendiente" | "ganada" | "perdida";
-type MatchOutcome = "G" | "E" | "P";
-
-type RiskFlags = {
-  zeroZeroRisk: "alto" | "medio" | "bajo";
-  avoidGoals: boolean;
-  trapMatch: boolean;
-  lowTempo: boolean;
-  reasonList: string[];
-  alternativeMarkets: string[];
-};
-
-type AnalysisResult = {
-  localWin: number;
-  draw: number;
-  awayWin: number;
-  over15: number;
-  over25: number;
-  over35: number;
-  under35: number;
-  btts: number;
-  homeOrDraw: number;
-  awayOrDraw: number;
-  noDraw: number;
-
-  cardsOver25: number;
-  cardsOver35: number;
-  cardsOver45: number;
-  cardsUnder55: number;
-  cardsUnder65: number;
-  cardsUnder75: number;
-
-  redsOver05: number;
-  redsUnder15: number;
-
-  cornersOver55: number;
-  cornersOver65: number;
-  cornersOver75: number;
-  cornersUnder105: number;
-  cornersUnder115: number;
-  cornersUnder125: number;
-
-  expectedHomeGoals: number;
-  expectedAwayGoals: number;
-  totalExpectedGoals: number;
-
-  expectedHomeYellowCards: number;
-  expectedAwayYellowCards: number;
-  expectedTotalYellowCards: number;
-
-  expectedHomeRedCards: number;
-  expectedAwayRedCards: number;
-  expectedTotalRedCards: number;
-
-  topScores: { score: string; probability: number }[];
-  zeroZeroProbability: number;
-  oneZeroProbability: number;
-  zeroOneProbability: number;
-
-  picks: Pick[];
-  safestPick: Pick | null;
-  valuePick: Pick | null;
-  riskyPick: Pick | null;
-
-  bestGoalsPick: Pick | null;
-  bestCardsPick: Pick | null;
-  bestRedCardsPick: Pick | null;
-  bestCornersPick: Pick | null;
-  bestWinnerPick: Pick | null;
-  bestDoubleChancePick: Pick | null;
-
-  riskFlags: RiskFlags;
+  ownYellow: number | "";
+  oppYellow: number | "";
+  ownRed: number | "";
+  oppRed: number | "";
+  estado: ResultState;
 };
 
 type MatchInfo = {
-  home: string;
-  away: string;
-  league: string;
-  country: string;
-  date: string;
-  referee: string;
-  refereeCards: string;
-  refereeYellowCards: string;
-  refereeRedCards: string;
-  homePosition: string;
-  awayPosition: string;
+  local: string;
+  visitante: string;
+  liga: string;
+  fecha: string;
+  posicionLocal: number | "";
+  posicionVisitante: number | "";
+  etapa: MatchStage;
+  tipo: MatchType;
+  globalScore: string;
+  notas: string;
 };
 
-type SavedAnalysis = {
-  id: number;
-  matchInfo: MatchInfo;
-  homeRows: Row[];
-  awayRows: Row[];
-  analysis: AnalysisResult;
-  topPicks: Pick[];
-  stake: string;
-  odds: string;
-  result: ResultStatus;
+type RefereeInfo = {
+  nombre: string;
+  promedioAmarillas: number | "";
+  promedioRojas: number | "";
 };
 
-type SavedTeamTemplate = {
+type SavedTeamPack = {
   teamName: string;
-  side: "home" | "away";
-  rows: Row[];
-  updatedAt: string;
+  condition: TeamCondition;
+  rows: TeamRow[];
+  savedAt: string;
 };
 
-const STORAGE_KEY = "analizador-manual-pro-guardados-v5";
-const SELECTED_KEY = "analizador-manual-pro-seleccionados-v5";
-const BANKROLL_KEY = "analizador-manual-pro-bankroll-v5";
-const DRAFT_KEY = "analizador-manual-pro-borrador-v5";
-const TEAM_LIBRARY_KEY = "analizador-manual-team-library-v2";
-
-const EMPTY_MATCH_INFO: MatchInfo = {
-  home: "",
-  away: "",
-  league: "",
-  country: "",
-  date: "",
-  referee: "",
-  refereeCards: "",
-  refereeYellowCards: "",
-  refereeRedCards: "",
-  homePosition: "",
-  awayPosition: "",
+type SavedReferee = {
+  nombre: string;
+  promedioAmarillas: number;
+  promedioRojas: number;
 };
 
-const emptyRows = (): Row[] =>
-  Array.from({ length: 10 }, () => ({
+type PickItem = {
+  id: string;
+  mercado: string;
+  probabilidad: number;
+  riesgo: "Bajo" | "Medio" | "Alto";
+  motivo: string;
+};
+
+type ScoreProb = {
+  score: string;
+  prob: number;
+};
+
+const STAGES: MatchStage[] = ["Liga", "16vos", "8vos", "4tos", "Semifinal", "Final"];
+const TYPES: MatchType[] = ["Liga", "Ida", "Vuelta", "Clásico", "Copa"];
+
+const TEAM_STORAGE_KEY = "analizador_saved_teams_v1";
+const REF_STORAGE_KEY = "analizador_saved_refs_v1";
+
+function createEmptyRows(): TeamRow[] {
+  return Array.from({ length: 10 }, () => ({
     rival: "",
+    fecha: "",
     gf: "",
     gc: "",
-    ownCards: "",
-    oppCards: "",
-    ownRedCards: "",
-    oppRedCards: "",
     ownCorners: "",
     oppCorners: "",
+    ownYellow: "",
+    oppYellow: "",
+    ownRed: "",
+    oppRed: "",
+    estado: "",
   }));
+}
 
-function toNumber(value: number | "") {
+function toNumber(value: number | ""): number {
   return value === "" ? 0 : Number(value);
 }
 
-function pct(value: number) {
-  return `${Math.round(value)}%`;
+function pct(part: number, total: number): number {
+  if (!total) return 0;
+  return (part / total) * 100;
 }
 
-function dec(value: number) {
-  return value.toFixed(2);
-}
-
-function average(values: number[]) {
+function avg(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function factorial(n: number) {
-  if (n <= 1) return 1;
-  let result = 1;
-  for (let i = 2; i <= n; i += 1) result *= i;
-  return result;
-}
-
-function poisson(lambda: number, k: number) {
-  return (Math.exp(-lambda) * Math.pow(lambda, k)) / factorial(k);
-}
-
-function weightedAverage(values: number[]) {
+function weightedAvg(values: number[]): number {
   if (!values.length) return 0;
-  const weights = values.map((_, index) => values.length - index);
-  const weightSum = weights.reduce((a, b) => a + b, 0);
-  const total = values.reduce((sum, value, index) => sum + value * weights[index], 0);
-  return total / weightSum;
+
+  const baseWeights = [1.6, 1.5, 1.4, 1.3, 1.2, 1.0, 1.0, 0.9, 0.8, 0.7];
+  const weights = values.map((_, i) => baseWeights[i] ?? 0.7);
+
+  const totalW = weights.reduce((a, b) => a + b, 0);
+  const sum = values.reduce((acc, value, i) => acc + value * weights[i], 0);
+
+  return totalW ? sum / totalW : 0;
 }
 
-function weightedPercent(values: number[]) {
-  return weightedAverage(values) * 100;
+function variance(values: number[]): number {
+  if (!values.length) return 0;
+  const mean = avg(values);
+  return avg(values.map((v) => (v - mean) ** 2));
 }
 
-function getOutcome(gf: number, gc: number): MatchOutcome {
+function stdDev(values: number[]): number {
+  return Math.sqrt(variance(values));
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n));
+}
+
+function poisson(lambda: number, k: number): number {
+  const fact = (x: number): number => (x <= 1 ? 1 : x * fact(x - 1));
+  return (Math.exp(-lambda) * Math.pow(lambda, k)) / fact(k);
+}
+
+function impliedProb(odd: number | ""): number {
+  if (odd === "" || odd <= 0) return 0;
+  return 100 / Number(odd);
+}
+
+function formatPct(n: number): string {
+  return `${n.toFixed(1)}%`;
+}
+
+function resultFromGoals(gf: number, gc: number): ResultState {
   if (gf > gc) return "G";
-  if (gf === gc) return "E";
-  return "P";
+  if (gf < gc) return "P";
+  return "E";
 }
 
-function getMetrics(rows: Row[]) {
-  const played = rows.filter(
-    (r) =>
-      r.rival ||
-      r.gf !== "" ||
-      r.gc !== "" ||
-      r.ownCards !== "" ||
-      r.oppCards !== "" ||
-      r.ownRedCards !== "" ||
-      r.oppRedCards !== "" ||
-      r.ownCorners !== "" ||
-      r.oppCorners !== ""
-  );
-
-  if (!played.length) {
-    return {
-      matches: 0,
-      over15: 0,
-      over25: 0,
-      over35: 0,
-      under35: 0,
-      btts: 0,
-      wins: 0,
-      draws: 0,
-      losses: 0,
-      avgGF: 0,
-      avgGC: 0,
-      avgGoals: 0,
-      avgOwnCards: 0,
-      avgOppCards: 0,
-      avgTotalCards: 0,
-      avgOwnRedCards: 0,
-      avgOppRedCards: 0,
-      avgTotalRedCards: 0,
-      avgOwnCorners: 0,
-      avgOppCorners: 0,
-      avgTotalCorners: 0,
-      weightedGF: 0,
-      weightedGC: 0,
-      weightedOwnCards: 0,
-      weightedOppCards: 0,
-      weightedTotalCards: 0,
-      weightedOwnRedCards: 0,
-      weightedOppRedCards: 0,
-      weightedTotalRedCards: 0,
-      weightedOwnCorners: 0,
-      weightedOppCorners: 0,
-      weightedTotalCorners: 0,
-      winCount: 0,
-      drawCount: 0,
-      lossCount: 0,
-    };
+function safeParse<T>(raw: string | null, fallback: T): T {
+  try {
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
   }
+}
 
-  const totals = played.map((r) => toNumber(r.gf) + toNumber(r.gc));
-  const gfs = played.map((r) => toNumber(r.gf));
-  const gcs = played.map((r) => toNumber(r.gc));
+function getTotalGoals(row: TeamRow) {
+  return toNumber(row.gf) + toNumber(row.gc);
+}
 
-  const ownCards = played.map((r) => toNumber(r.ownCards));
-  const oppCards = played.map((r) => toNumber(r.oppCards));
-  const totalCards = played.map((r) => toNumber(r.ownCards) + toNumber(r.oppCards));
+function getBTTS(row: TeamRow) {
+  return toNumber(row.gf) > 0 && toNumber(row.gc) > 0 ? 1 : 0;
+}
 
-  const ownRedCards = played.map((r) => toNumber(r.ownRedCards));
-  const oppRedCards = played.map((r) => toNumber(r.oppRedCards));
-  const totalRedCards = played.map((r) => toNumber(r.ownRedCards) + toNumber(r.oppRedCards));
+function analyzeRows(rows: TeamRow[]) {
+  const valid = rows.filter((r) => r.fecha || r.rival || r.gf !== "" || r.gc !== "");
+  const count = valid.length || 1;
 
-  const ownCorners = played.map((r) => toNumber(r.ownCorners));
-  const oppCorners = played.map((r) => toNumber(r.oppCorners));
-  const totalCorners = played.map((r) => toNumber(r.ownCorners) + toNumber(r.oppCorners));
+  const gfList = valid.map((r) => toNumber(r.gf));
+  const gcList = valid.map((r) => toNumber(r.gc));
+  const totalGoalsList = valid.map((r) => getTotalGoals(r));
+  const ownCornersList = valid.map((r) => toNumber(r.ownCorners));
+  const oppCornersList = valid.map((r) => toNumber(r.oppCorners));
+  const totalCornersList = valid.map((r) => toNumber(r.ownCorners) + toNumber(r.oppCorners));
+  const ownYellowList = valid.map((r) => toNumber(r.ownYellow));
+  const oppYellowList = valid.map((r) => toNumber(r.oppYellow));
+  const totalYellowList = valid.map((r) => toNumber(r.ownYellow) + toNumber(r.oppYellow));
+  const redList = valid.map((r) => toNumber(r.ownRed) + toNumber(r.oppRed));
 
-  const over15Flags = totals.map((t) => (t >= 2 ? 1 : 0));
-  const over25Flags = totals.map((t) => (t >= 3 ? 1 : 0));
-  const over35Flags = totals.map((t) => (t >= 4 ? 1 : 0));
-  const under35Flags = totals.map((t) => (t <= 3 ? 1 : 0));
-  const bttsFlags = played.map((r) => (toNumber(r.gf) > 0 && toNumber(r.gc) > 0 ? 1 : 0));
-  const winFlags = played.map((r) => (toNumber(r.gf) > toNumber(r.gc) ? 1 : 0));
-  const drawFlags = played.map((r) => (toNumber(r.gf) === toNumber(r.gc) ? 1 : 0));
-  const lossFlags = played.map((r) => (toNumber(r.gf) < toNumber(r.gc) ? 1 : 0));
+  const wins = valid.filter((r) => r.estado === "G").length;
+  const draws = valid.filter((r) => r.estado === "E").length;
+  const losses = valid.filter((r) => r.estado === "P").length;
+
+  const over15 = valid.filter((r) => getTotalGoals(r) > 1.5).length;
+  const over25 = valid.filter((r) => getTotalGoals(r) > 2.5).length;
+  const over35 = valid.filter((r) => getTotalGoals(r) > 3.5).length;
+  const under35 = valid.filter((r) => getTotalGoals(r) < 3.5).length;
+  const bttsYes = valid.filter((r) => getBTTS(r) === 1).length;
+
+  const cornersOver75 = totalCornersList.filter((x) => x > 7.5).length;
+  const cornersOver85 = totalCornersList.filter((x) => x > 8.5).length;
+  const cornersOver95 = totalCornersList.filter((x) => x > 9.5).length;
+
+  const cardsOver35 = totalYellowList.filter((x) => x > 3.5).length;
+  const cardsOver45 = totalYellowList.filter((x) => x > 4.5).length;
+  const cardsOver55 = totalYellowList.filter((x) => x > 5.5).length;
+  const cardsUnder65 = totalYellowList.filter((x) => x < 6.5).length;
 
   return {
-    matches: played.length,
-    over15: weightedPercent(over15Flags),
-    over25: weightedPercent(over25Flags),
-    over35: weightedPercent(over35Flags),
-    under35: weightedPercent(under35Flags),
-    btts: weightedPercent(bttsFlags),
-    wins: weightedPercent(winFlags),
-    draws: weightedPercent(drawFlags),
-    losses: weightedPercent(lossFlags),
+    count: valid.length,
+    gfAvg: avg(gfList),
+    gcAvg: avg(gcList),
+    totalGoalsAvg: avg(totalGoalsList),
+    ownCornersAvg: avg(ownCornersList),
+    oppCornersAvg: avg(oppCornersList),
+    totalCornersAvg: avg(totalCornersList),
+    ownYellowAvg: avg(ownYellowList),
+    oppYellowAvg: avg(oppYellowList),
+    totalYellowAvg: avg(totalYellowList),
+    redAvg: avg(redList),
 
-    avgGF: average(gfs),
-    avgGC: average(gcs),
-    avgGoals: average(totals),
+    gfWeighted: weightedAvg(gfList),
+    gcWeighted: weightedAvg(gcList),
+    totalGoalsWeighted: weightedAvg(totalGoalsList),
+    cornersWeighted: weightedAvg(totalCornersList),
+    cardsWeighted: weightedAvg(totalYellowList),
 
-    avgOwnCards: average(ownCards),
-    avgOppCards: average(oppCards),
-    avgTotalCards: average(totalCards),
+    over15Pct: pct(over15, count),
+    over25Pct: pct(over25, count),
+    over35Pct: pct(over35, count),
+    under35Pct: pct(under35, count),
+    bttsPct: pct(bttsYes, count),
 
-    avgOwnRedCards: average(ownRedCards),
-    avgOppRedCards: average(oppRedCards),
-    avgTotalRedCards: average(totalRedCards),
+    cornersOver75Pct: pct(cornersOver75, count),
+    cornersOver85Pct: pct(cornersOver85, count),
+    cornersOver95Pct: pct(cornersOver95, count),
 
-    avgOwnCorners: average(ownCorners),
-    avgOppCorners: average(oppCorners),
-    avgTotalCorners: average(totalCorners),
+    cardsOver35Pct: pct(cardsOver35, count),
+    cardsOver45Pct: pct(cardsOver45, count),
+    cardsOver55Pct: pct(cardsOver55, count),
+    cardsUnder65Pct: pct(cardsUnder65, count),
 
-    weightedGF: weightedAverage(gfs),
-    weightedGC: weightedAverage(gcs),
+    winPct: pct(wins, count),
+    drawPct: pct(draws, count),
+    lossPct: pct(losses, count),
+    noLosePct: pct(wins + draws, count),
 
-    weightedOwnCards: weightedAverage(ownCards),
-    weightedOppCards: weightedAverage(oppCards),
-    weightedTotalCards: weightedAverage(totalCards),
-
-    weightedOwnRedCards: weightedAverage(ownRedCards),
-    weightedOppRedCards: weightedAverage(oppRedCards),
-    weightedTotalRedCards: weightedAverage(totalRedCards),
-
-    weightedOwnCorners: weightedAverage(ownCorners),
-    weightedOppCorners: weightedAverage(oppCorners),
-    weightedTotalCorners: weightedAverage(totalCorners),
-
-     winCount: winFlags.reduce<number>((a, b) => a + b, 0),
-      drawCount: drawFlags.reduce<number>((a, b) => a + b, 0),
-      lossCount: lossFlags.reduce<number>((a, b) => a + b, 0),
+    totalGoalsStd: stdDev(totalGoalsList),
+    cornersStd: stdDev(totalCornersList),
+    cardsStd: stdDev(totalYellowList),
   };
 }
 
-function confidenceLabel(value: number) {
-  if (value >= 85) return "Muy alta";
-  if (value >= 75) return "Alta";
-  if (value >= 65) return "Media";
-  return "Baja";
-}
-
-function badgeClass(value: number) {
-  if (value >= 85) return "bg-green-100 text-green-800 border border-green-300";
-  if (value >= 75) return "bg-emerald-100 text-emerald-800 border border-emerald-300";
-  if (value >= 65) return "bg-yellow-100 text-yellow-800 border border-yellow-300";
-  return "bg-slate-100 text-slate-700 border border-slate-300";
-}
-
-function analysisCardClass(value: number) {
-  if (value >= 85) return "border-green-300 bg-green-50";
-  if (value >= 75) return "border-emerald-300 bg-emerald-50";
-  if (value >= 65) return "border-yellow-300 bg-yellow-50";
-  return "border-slate-200 bg-white";
-}
-
-function trafficLightClass(value: number) {
-  if (value >= 80) return "bg-green-500";
-  if (value >= 68) return "bg-yellow-400";
-  return "bg-red-500";
-}
-
-function riskBadgeClass(level: "alto" | "medio" | "bajo") {
-  if (level === "alto") return "bg-red-100 text-red-800 border-red-300";
-  if (level === "medio") return "bg-yellow-100 text-yellow-800 border-yellow-300";
-  return "bg-green-100 text-green-800 border-green-300";
-}
-
-function resultBadgeClass(result: MatchOutcome) {
-  if (result === "G") return "bg-green-100 text-green-800 border-green-300";
-  if (result === "E") return "bg-slate-100 text-slate-700 border-slate-300";
-  return "bg-red-100 text-red-800 border-red-300";
-}
-
-function randomPoisson(lambda: number) {
-  const L = Math.exp(-lambda);
-  let p = 1;
-  let k = 0;
-  do {
-    k += 1;
-    p *= Math.random();
-  } while (p > L);
-  return k - 1;
-}
-
-function kellyFraction(probabilityPct: number, odds: number) {
-  const p = probabilityPct / 100;
-  const b = odds - 1;
-  if (b <= 0) return 0;
-  const q = 1 - p;
-  return Math.max(0, (b * p - q) / b);
-}
-
-function uniqueRivals(rows: Row[]) {
-  return Array.from(new Set(rows.map((r) => r.rival.trim()).filter(Boolean))).sort();
-}
-
-function normalizeName(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-}
-
-function getTemplateKey(teamName: string, side: "home" | "away") {
-  return `${normalizeName(teamName)}__${side}`;
-}
-
-function getCommonOpponents(homeRows: Row[], awayRows: Row[]) {
-  const homeMap = new Map(
-    homeRows.filter((r) => r.rival.trim()).map((r) => [normalizeName(r.rival), r] as const)
-  );
-
-  const awayMap = new Map(
-    awayRows.filter((r) => r.rival.trim()).map((r) => [normalizeName(r.rival), r] as const)
-  );
-
-  const common: {
-    rival: string;
-    homeGF: number;
-    homeGC: number;
-    awayGF: number;
-    awayGC: number;
-  }[] = [];
-
-  for (const [key, homeRow] of homeMap.entries()) {
-    const awayRow = awayMap.get(key);
-    if (awayRow) {
-      common.push({
-        rival: homeRow.rival,
-        homeGF: toNumber(homeRow.gf),
-        homeGC: toNumber(homeRow.gc),
-        awayGF: toNumber(awayRow.gf),
-        awayGC: toNumber(awayRow.gc),
-      });
-    }
+function getSectionColors(side: TeamCondition) {
+  if (side === "local") {
+    return {
+      wrapper: "border-2 border-blue-700 bg-blue-100/70",
+      header: "text-blue-950",
+      sub: "text-blue-900",
+      button: "bg-blue-800 hover:bg-blue-900 text-white",
+      badge: "bg-blue-200 text-blue-950 border-2 border-blue-700",
+      input: "border-2 border-blue-700 bg-white text-slate-950 placeholder:text-slate-500 focus:border-blue-900 focus:ring-2 focus:ring-blue-300",
+      tableHead: "bg-blue-200 text-blue-950",
+      rowAlt: "even:bg-blue-50/90",
+    };
   }
 
-  return common;
+  return {
+    wrapper: "border-2 border-red-700 bg-red-100/70",
+    header: "text-red-950",
+    sub: "text-red-900",
+    button: "bg-red-800 hover:bg-red-900 text-white",
+    badge: "bg-red-200 text-red-950 border-2 border-red-700",
+    input: "border-2 border-red-700 bg-white text-slate-950 placeholder:text-slate-500 focus:border-red-900 focus:ring-2 focus:ring-red-300",
+    tableHead: "bg-red-200 text-red-950",
+    rowAlt: "even:bg-red-50/90",
+  };
 }
 
-function compactTopPicks(analysis: AnalysisResult): Pick[] {
-  return [
-    analysis.bestGoalsPick,
-    analysis.bestCardsPick,
-    analysis.bestRedCardsPick,
-    analysis.bestCornersPick,
-    analysis.bestWinnerPick,
-    analysis.bestDoubleChancePick,
-  ].filter(Boolean) as Pick[];
+function getRefColors() {
+  return {
+    wrapper: "border-2 border-yellow-500 bg-yellow-100/80",
+    header: "text-yellow-950",
+    sub: "text-yellow-900",
+    button: "bg-yellow-500 hover:bg-yellow-600 text-slate-950",
+    input: "border-2 border-yellow-500 bg-white text-slate-950 placeholder:text-slate-500 focus:border-yellow-700 focus:ring-2 focus:ring-yellow-300",
+  };
 }
 
-function hasUsefulRows(rows: Row[]) {
-  return rows.some(
-    (r) =>
-      r.rival.trim() ||
-      r.gf !== "" ||
-      r.gc !== "" ||
-      r.ownCards !== "" ||
-      r.oppCards !== "" ||
-      r.ownRedCards !== "" ||
-      r.oppRedCards !== "" ||
-      r.ownCorners !== "" ||
-      r.oppCorners !== ""
-  );
-}
-
-function cleanTeamName(name: string) {
-  return name.trim();
-}
-
-function formatDateTime(value: string) {
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
+function getResultBadgeClass(result: ResultState) {
+  if (result === "G") {
+    return "bg-emerald-100 text-emerald-800 border border-emerald-300";
   }
-}
-
-export default function Home() {
-
-function loadCloudMatch(item: any) {
-  setMatchInfo((prev) => ({
-    ...prev,
-    home: item.local ?? "",
-    away: item.visitante ?? "",
-    league: item.liga ?? "",
-    date: item.fecha ?? "",
-    referee: item.arbitro ?? "",
-  }));
-
-  setHomeRows(item.home_rows ?? emptyRows());
-  setAwayRows(item.away_rows ?? emptyRows());
-
-  window.scrollTo({ top: 0, behavior: "smooth" });
-}
-  
-  const [matchInfo, setMatchInfo] = useState<MatchInfo>(EMPTY_MATCH_INFO);
-  const [homeRows, setHomeRows] = useState<Row[]>(emptyRows());
-  const [awayRows, setAwayRows] = useState<Row[]>(emptyRows());
-  const [cloudMatches, setCloudMatches] = useState<any[]>([]);
-  
-useEffect(() => {
-  loadCloudMatches();
-}, []);
-
-  async function handleSaveMatch() {
-  try {
-    const matchId =
-      `${matchInfo.home || "local"}__` +
-      `${matchInfo.away || "visitante"}__` +
-      `${matchInfo.date || ""}`;
-
-    await savePartido({
-      match_id: matchId,
-      local: matchInfo.home || "",
-      visitante: matchInfo.away || "",
-      liga: matchInfo.league || "",
-      fecha: matchInfo.date || "",
-      arbitro: matchInfo.referee || "",
-      home_rows: homeRows,
-      away_rows: awayRows,
-      analysis: analysis ?? null,
-      saved_from: "web",
-    });
-
-    await loadCloudMatches();
-    alert("Guardado en la nube 🚀");
-  } catch (error) {
-    console.error(error);
-    alert("Error al guardar");
+  if (result === "E") {
+    return "bg-slate-200 text-slate-700 border border-slate-300";
   }
+  return "bg-rose-100 text-rose-800 border border-rose-300";
 }
-async function loadCloudMatches() {
-  try {
-    const data = await getPartidos();
-    setCloudMatches(data ?? []);
-  } catch (error) {
-    console.error(error);
-    alert("Error al cargar partidos de la nube");
+
+function getOpponentSuggestions(
+  allRowsA: TeamRow[],
+  allRowsB: TeamRow[],
+  currentValue: string
+) {
+  const names = [...allRowsA, ...allRowsB]
+    .map((r) => r.rival.trim())
+    .filter(Boolean);
+
+  const unique = Array.from(new Set(names));
+
+  if (!currentValue.trim()) return unique.slice(0, 12);
+
+  return unique
+    .filter((name) =>
+      name.toLowerCase().includes(currentValue.trim().toLowerCase())
+    )
+    .slice(0, 12);
+}
+
+function getLevelLabel(
+  value: number,
+  high: number,
+  medium: number
+): "Alto" | "Medio" | "Bajo" {
+  if (value >= high) return "Alto";
+  if (value >= medium) return "Medio";
+  return "Bajo";
+}
+
+function getProfileBadgeClass(level: "Alto" | "Medio" | "Bajo") {
+  if (level === "Alto") {
+    return "bg-emerald-100 text-emerald-800 border border-emerald-300";
   }
+  if (level === "Medio") {
+    return "bg-amber-100 text-amber-800 border border-amber-300";
+  }
+  return "bg-slate-200 text-slate-700 border border-slate-300";
 }
 
+export default function AnalizadorApuestasPage() {
+  const [matchInfo, setMatchInfo] = useState<MatchInfo>({
+    local: "",
+    visitante: "",
+    liga: "",
+    fecha: "",
+    posicionLocal: "",
+    posicionVisitante: "",
+    etapa: "Liga",
+    tipo: "Liga",
+    globalScore: "",
+    notas: "",
 
-  const [savedAnalyses, setSavedAnalyses] = useState<SavedAnalysis[]>([]);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [editingId, setEditingId] = useState<number | null>(null);
+    
+  });
 
-  const [bankroll, setBankroll] = useState("1000");
-  const [stakeMethod, setStakeMethod] = useState<"fijo" | "confianza" | "kelly">("confianza");
-  const [stakeOdds, setStakeOdds] = useState("1.80");
-  const [preferredMarket, setPreferredMarket] = useState<
-    "auto" | "goles" | "tarjetas" | "corners" | "1x2"
-  >("auto");
 
-  const [searchTeam, setSearchTeam] = useState("");
-  const [searchLeague, setSearchLeague] = useState("");
 
-  const [teamLibrary, setTeamLibrary] = useState<SavedTeamTemplate[]>([]);
-  const [selectedSavedHomeTeam, setSelectedSavedHomeTeam] = useState("");
-  const [selectedSavedAwayTeam, setSelectedSavedAwayTeam] = useState("");
+  const [refInfo, setRefInfo] = useState<RefereeInfo>({
+    nombre: "",
+    promedioAmarillas: "",
+    promedioRojas: "",
+  });
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [localRows, setLocalRows] = useState<TeamRow[]>(createEmptyRows());
+  const [visitRows, setVisitRows] = useState<TeamRow[]>(createEmptyRows());
+
+  const [savedTeams, setSavedTeams] = useState<SavedTeamPack[]>([]);
+  const [savedRefs, setSavedRefs] = useState<SavedReferee[]>([]);
+
+  const [selectedSavedLocal, setSelectedSavedLocal] = useState("");
+  const [selectedSavedVisit, setSelectedSavedVisit] = useState("");
+  const [selectedSavedRef, setSelectedSavedRef] = useState("");
+
+  const [odds, setOdds] = useState({
+    local: "" as number | "",
+    empate: "" as number | "",
+    visitante: "" as number | "",
+    over25: "" as number | "",
+    btts: "" as number | "",
+    corners85: "" as number | "",
+    cards45: "" as number | "",
+  });
+
+  const [parlay, setParlay] = useState<PickItem[]>([]);
+  const [monteCarloRuns, setMonteCarloRuns] = useState(5000);
+  const [monteCarloResult, setMonteCarloResult] = useState<{
+    localWin: number;
+    draw: number;
+    awayWin: number;
+    over15: number;
+    over25: number;
+    btts: number;
+    topScores: ScoreProb[];
+  } | null>(null);
+
+const partidos = useMemo(() => {
+  const items = [];
+
+  if (matchInfo.local.trim()) {
+    items.push({ equipo: matchInfo.local.trim() });
+  }
+
+  if (matchInfo.visitante.trim()) {
+    items.push({ equipo: matchInfo.visitante.trim() });
+  }
+
+  return items;
+}, [matchInfo.local, matchInfo.visitante]);
+
+const resultadoDios = useMemo(() => analizarParlay(partidos), [partidos]);
+const sugerencias = useMemo(() => optimizarParlay(partidos), [partidos]);
+
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      const selected = localStorage.getItem(SELECTED_KEY);
-      const savedBankroll = localStorage.getItem(BANKROLL_KEY);
-      const draft = localStorage.getItem(DRAFT_KEY);
-      const savedLibrary = localStorage.getItem(TEAM_LIBRARY_KEY);
-
-      if (saved) setSavedAnalyses(JSON.parse(saved));
-      if (selected) setSelectedIds(JSON.parse(selected));
-      if (savedLibrary) setTeamLibrary(JSON.parse(savedLibrary));
-
-      if (savedBankroll) {
-        const parsed = JSON.parse(savedBankroll);
-        setBankroll(parsed.bankroll ?? "1000");
-        setStakeMethod(parsed.stakeMethod ?? "confianza");
-        setStakeOdds(parsed.stakeOdds ?? "1.80");
-        setPreferredMarket(parsed.preferredMarket ?? "auto");
-      }
-
-      if (draft) {
-        const parsedDraft = JSON.parse(draft);
-        setMatchInfo(parsedDraft.matchInfo ?? EMPTY_MATCH_INFO);
-        setHomeRows(parsedDraft.homeRows ?? emptyRows());
-        setAwayRows(parsedDraft.awayRows ?? emptyRows());
-        setEditingId(parsedDraft.editingId ?? null);
-      }
-    } catch {}
+    setSavedTeams(safeParse<SavedTeamPack[]>(localStorage.getItem(TEAM_STORAGE_KEY), []));
+    setSavedRefs(safeParse<SavedReferee[]>(localStorage.getItem(REF_STORAGE_KEY), []));
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(savedAnalyses));
-  }, [savedAnalyses]);
+  const localStats = useMemo(() => analyzeRows(localRows), [localRows]);
+  const visitStats = useMemo(() => analyzeRows(visitRows), [visitRows]);
 
-  useEffect(() => {
-    localStorage.setItem(SELECTED_KEY, JSON.stringify(selectedIds));
-  }, [selectedIds]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      BANKROLL_KEY,
-      JSON.stringify({ bankroll, stakeMethod, stakeOdds, preferredMarket })
-    );
-  }, [bankroll, stakeMethod, stakeOdds, preferredMarket]);
-
-  useEffect(() => {
-    const draft = { matchInfo, homeRows, awayRows, editingId };
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
-  }, [matchInfo, homeRows, awayRows, editingId]);
-
-  useEffect(() => {
-    localStorage.setItem(TEAM_LIBRARY_KEY, JSON.stringify(teamLibrary));
-  }, [teamLibrary]);
-
-  const home = useMemo(() => getMetrics(homeRows), [homeRows]);
-  const away = useMemo(() => getMetrics(awayRows), [awayRows]);
-
-  const homeRivalSuggestions = useMemo(() => uniqueRivals(homeRows), [homeRows]);
-  const awayRivalSuggestions = useMemo(() => uniqueRivals(awayRows), [awayRows]);
-  const commonOpponents = useMemo(() => getCommonOpponents(homeRows, awayRows), [homeRows, awayRows]);
-
-  const homeSavedOptions = useMemo(
-    () => [...teamLibrary].filter((t) => t.side === "home").sort((a, b) => a.teamName.localeCompare(b.teamName)),
-    [teamLibrary]
-  );
-
-  const awaySavedOptions = useMemo(
-    () => [...teamLibrary].filter((t) => t.side === "away").sort((a, b) => a.teamName.localeCompare(b.teamName)),
-    [teamLibrary]
-  );
-
-  const analysis = useMemo<AnalysisResult>(() => {
-    const refereeCards = Number(matchInfo.refereeCards || 0);
-    const refereeYellowCards =
-      Number(matchInfo.refereeYellowCards || 0) || Number(matchInfo.refereeCards || 0);
-    const refereeRedCards = Number(matchInfo.refereeRedCards || 0);
-
-    const homePos = Number(matchInfo.homePosition || 0);
-    const awayPos = Number(matchInfo.awayPosition || 0);
-    const posFactor = homePos > 0 && awayPos > 0 ? clamp((awayPos - homePos) * 1.5, -12, 12) : 0;
-
-    const commonBonusRaw =
-      commonOpponents.length > 0
-        ? average(
-            commonOpponents.map((c) => {
-              const homeDiff = c.homeGF - c.homeGC;
-              const awayDiff = c.awayGF - c.awayGC;
-              return homeDiff - awayDiff;
-            })
-          )
+  const expectedGoalsLocal = useMemo(() => {
+    const base = (localStats.gfWeighted + visitStats.gcWeighted) / 2;
+    const positionAdj =
+      matchInfo.posicionLocal !== "" && matchInfo.posicionVisitante !== ""
+        ? clamp((Number(matchInfo.posicionVisitante) - Number(matchInfo.posicionLocal)) * 0.03, -0.35, 0.35)
         : 0;
+    return clamp(base + positionAdj, 0.2, 4.5);
+  }, [localStats.gfWeighted, visitStats.gcWeighted, matchInfo.posicionLocal, matchInfo.posicionVisitante]);
 
-    const commonBonus = clamp(commonBonusRaw * 0.08, -0.35, 0.35);
+  const expectedGoalsVisit = useMemo(() => {
+    const base = (visitStats.gfWeighted + localStats.gcWeighted) / 2;
+    const positionAdj =
+      matchInfo.posicionLocal !== "" && matchInfo.posicionVisitante !== ""
+        ? clamp((Number(matchInfo.posicionLocal) - Number(matchInfo.posicionVisitante)) * 0.03, -0.35, 0.35)
+        : 0;
+    return clamp(base + positionAdj, 0.2, 4.5);
+  }, [visitStats.gfWeighted, localStats.gcWeighted, matchInfo.posicionLocal, matchInfo.posicionVisitante]);
 
-    const expectedHomeGoals = clamp(
-      (home.weightedGF + away.weightedGC) / 2 + Math.max(posFactor, 0) * 0.03 + Math.max(commonBonus, 0),
-      0.2,
-      3.8
-    );
+  const expectedTotalGoals = expectedGoalsLocal + expectedGoalsVisit;
+  const expectedTotalCorners = (localStats.cornersWeighted + visitStats.cornersWeighted) / 2;
+  const expectedTotalCards = useMemo(() => {
+    const teamBase = (localStats.cardsWeighted + visitStats.cardsWeighted) / 2;
+    const refAdj = refInfo.promedioAmarillas === "" ? 0 : Number(refInfo.promedioAmarillas) * 0.35;
+    return clamp(teamBase * 0.65 + refAdj, 0.5, 12);
+  }, [localStats.cardsWeighted, visitStats.cardsWeighted, refInfo.promedioAmarillas]);
 
-    const expectedAwayGoals = clamp(
-      (away.weightedGF + home.weightedGC) / 2 + Math.max(-posFactor, 0) * 0.03 + Math.max(-commonBonus, 0),
-      0.2,
-      3.8
-    );
+  const normalVsWeightedDiff = useMemo(() => {
+    return {
+      goalsLocal: Math.abs(localStats.totalGoalsAvg - localStats.totalGoalsWeighted),
+      goalsVisit: Math.abs(visitStats.totalGoalsAvg - visitStats.totalGoalsWeighted),
+      cornersLocal: Math.abs(localStats.totalCornersAvg - localStats.cornersWeighted),
+      cornersVisit: Math.abs(visitStats.totalCornersAvg - visitStats.cornersWeighted),
+      cardsLocal: Math.abs(localStats.totalYellowAvg - localStats.cardsWeighted),
+      cardsVisit: Math.abs(visitStats.totalYellowAvg - visitStats.cardsWeighted),
+    };
+  }, [localStats, visitStats]);
 
-    const totalExpectedGoals = expectedHomeGoals + expectedAwayGoals;
+const localProfile = useMemo(() => {
+  const goles = getLevelLabel(localStats.totalGoalsWeighted, 2.6, 1.8);
+  const btts = getLevelLabel(localStats.bttsPct, 60, 45);
+  const corners = getLevelLabel(localStats.cornersWeighted, 9, 7);
+  const tarjetas = getLevelLabel(localStats.cardsWeighted, 4.8, 3.2);
 
-    const maxGoals = 6;
+  let estabilidad: "Estable" | "Variable" | "Volátil" = "Estable";
+  if (localStats.totalGoalsStd >= 1.4 || localStats.cornersStd >= 3) {
+    estabilidad = "Variable";
+  }
+  if (localStats.totalGoalsStd >= 1.8 || localStats.cornersStd >= 4) {
+    estabilidad = "Volátil";
+  }
+
+  let estilo = "Equilibrado";
+  if (localStats.gfWeighted > localStats.gcWeighted + 0.4 && localStats.totalGoalsWeighted >= 2.2) {
+    estilo = "Ofensivo";
+  } else if (localStats.totalGoalsWeighted < 2.0 && localStats.bttsPct < 50) {
+    estilo = "Cerrado";
+  }
+
+  return {
+    goles,
+    btts,
+    corners,
+    tarjetas,
+    estabilidad,
+    estilo,
+  };
+}, [localStats]);
+
+function getCombinedReading(
+  localProfile: {
+    goles: "Alto" | "Medio" | "Bajo";
+    btts: "Alto" | "Medio" | "Bajo";
+    corners: "Alto" | "Medio" | "Bajo";
+    tarjetas: "Alto" | "Medio" | "Bajo";
+    estabilidad: "Estable" | "Variable" | "Volátil";
+    estilo: string;
+  },
+  visitProfile: {
+    goles: "Alto" | "Medio" | "Bajo";
+    btts: "Alto" | "Medio" | "Bajo";
+    corners: "Alto" | "Medio" | "Bajo";
+    tarjetas: "Alto" | "Medio" | "Bajo";
+    estabilidad: "Estable" | "Variable" | "Volátil";
+    estilo: string;
+  }
+) {
+  let cruce = "Equilibrado";
+  let lecturaGoles = "Señal media de goles";
+  let lecturaBTTS = "Señal media para ambos marcan";
+  let lecturaCorners = "Señal media de corners";
+  let lecturaTarjetas = "Señal media de tarjetas";
+  let riesgo = "Medio";
+
+  if (localProfile.estilo === "Ofensivo" && visitProfile.estilo === "Ofensivo") {
+    cruce = "Ofensivo vs Ofensivo";
+    lecturaGoles = "Partido apto para goles";
+  } else if (
+    (localProfile.estilo === "Ofensivo" && visitProfile.estilo === "Cerrado") ||
+    (localProfile.estilo === "Cerrado" && visitProfile.estilo === "Ofensivo")
+  ) {
+    cruce = "Ofensivo vs Cerrado";
+    lecturaGoles = "Cuidado con overs altos";
+  } else if (localProfile.estilo === "Cerrado" && visitProfile.estilo === "Cerrado") {
+    cruce = "Cerrado vs Cerrado";
+    lecturaGoles = "Partido de pocos goles";
+  }
+
+  if (localProfile.btts === "Alto" && visitProfile.btts === "Alto") {
+    lecturaBTTS = "Fuerte señal para ambos marcan";
+  } else if (localProfile.btts === "Bajo" || visitProfile.btts === "Bajo") {
+    lecturaBTTS = "Señal débil para ambos marcan";
+  }
+
+  if (localProfile.corners === "Alto" && visitProfile.corners === "Alto") {
+    lecturaCorners = "Partido apto para corners";
+  } else if (localProfile.corners === "Bajo" && visitProfile.corners === "Bajo") {
+    lecturaCorners = "Señal baja para corners";
+  }
+
+  if (localProfile.tarjetas === "Alto" || visitProfile.tarjetas === "Alto") {
+    lecturaTarjetas = "Buenas señales para tarjetas";
+  } else if (localProfile.tarjetas === "Bajo" && visitProfile.tarjetas === "Bajo") {
+    lecturaTarjetas = "Partido flojo para tarjetas";
+  }
+
+  if (
+    localProfile.estabilidad === "Volátil" ||
+    visitProfile.estabilidad === "Volátil"
+  ) {
+    riesgo = "Alto";
+  } else if (
+    localProfile.estabilidad === "Variable" ||
+    visitProfile.estabilidad === "Variable"
+  ) {
+    riesgo = "Medio";
+  } else {
+    riesgo = "Bajo";
+  }
+
+  return {
+    cruce,
+    lecturaGoles,
+    lecturaBTTS,
+    lecturaCorners,
+    lecturaTarjetas,
+    riesgo,
+  };
+}
+
+const visitProfile = useMemo(() => {
+  const goles = getLevelLabel(visitStats.totalGoalsWeighted, 2.6, 1.8);
+  const btts = getLevelLabel(visitStats.bttsPct, 60, 45);
+  const corners = getLevelLabel(visitStats.cornersWeighted, 9, 7);
+  const tarjetas = getLevelLabel(visitStats.cardsWeighted, 4.8, 3.2);
+
+  let estabilidad: "Estable" | "Variable" | "Volátil" = "Estable";
+  if (visitStats.totalGoalsStd >= 1.4 || visitStats.cornersStd >= 3) {
+    estabilidad = "Variable";
+  }
+  if (visitStats.totalGoalsStd >= 1.8 || visitStats.cornersStd >= 4) {
+    estabilidad = "Volátil";
+  }
+
+  let estilo = "Equilibrado";
+  if (visitStats.gfWeighted > visitStats.gcWeighted + 0.4 && visitStats.totalGoalsWeighted >= 2.2) {
+    estilo = "Ofensivo";
+  } else if (visitStats.totalGoalsWeighted < 2.0 && visitStats.bttsPct < 50) {
+    estilo = "Cerrado";
+  }
+
+  return {
+    goles,
+    btts,
+    corners,
+    tarjetas,
+    estabilidad,
+    estilo,
+  };
+}, [visitStats]);
+  
+  const volatilityScore = useMemo(() => {
+    const g = (localStats.totalGoalsStd + visitStats.totalGoalsStd) / 2;
+    const c = (localStats.cornersStd + visitStats.cornersStd) / 2;
+    const t = (localStats.cardsStd + visitStats.cardsStd) / 2;
+    return g * 16 + c * 6 + t * 10;
+  }, [localStats, visitStats]);
+
+  const volatilityLabel = useMemo(() => {
+    if (volatilityScore < 28) return "Baja";
+    if (volatilityScore < 42) return "Media";
+    return "Alta";
+  }, [volatilityScore]);
+
+const combinedReading = useMemo(() => {
+  return getCombinedReading(localProfile, visitProfile);
+}, [localProfile, visitProfile]);
+
+
+const commonOpponents = useMemo(() => {
+  const localOpps = new Map<string, TeamRow>();
+  const visitOpps = new Map<string, TeamRow>();
+
+  localRows.forEach((r) => {
+    const key = r.rival.trim().toLowerCase();
+    if (key) localOpps.set(key, r);
+  });
+
+  visitRows.forEach((r) => {
+    const key = r.rival.trim().toLowerCase();
+    if (key) visitOpps.set(key, r);
+  });
+
+  const commons: Array<{
+    rival: string;
+    localGF: number;
+    localGC: number;
+    visitGF: number;
+    visitGC: number;
+  }> = [];
+
+  localOpps.forEach((localRow, key) => {
+    const visitRow = visitOpps.get(key);
+    if (visitRow) {
+      commons.push({
+        rival: localRow.rival,
+        localGF: toNumber(localRow.gf),
+        localGC: toNumber(localRow.gc),
+        visitGF: toNumber(visitRow.gf),
+        visitGC: toNumber(visitRow.gc),
+      });
+    }
+  });
+
+  return commons;
+}, [localRows, visitRows]);
+
+const simulation = useMemo(() => {
     let localWin = 0;
     let draw = 0;
     let awayWin = 0;
-    let over15Pois = 0;
-    let over25Pois = 0;
-    let over35Pois = 0;
-    let under35Pois = 0;
-    let bttsPois = 0;
-    let zeroZeroProbability = 0;
-    let oneZeroProbability = 0;
-    let zeroOneProbability = 0;
-    const scoreMatrix: { score: string; probability: number }[] = [];
+    const scores: ScoreProb[] = [];
 
-    for (let homeGoals = 0; homeGoals <= maxGoals; homeGoals += 1) {
-      for (let awayGoals = 0; awayGoals <= maxGoals; awayGoals += 1) {
-        const probability = poisson(expectedHomeGoals, homeGoals) * poisson(expectedAwayGoals, awayGoals);
-
-        scoreMatrix.push({
-          score: `${homeGoals}-${awayGoals}`,
-          probability: probability * 100,
-        });
-
-        if (homeGoals === 0 && awayGoals === 0) zeroZeroProbability = probability * 100;
-        if (homeGoals === 1 && awayGoals === 0) oneZeroProbability = probability * 100;
-        if (homeGoals === 0 && awayGoals === 1) zeroOneProbability = probability * 100;
-
-        if (homeGoals > awayGoals) localWin += probability;
-        else if (homeGoals === awayGoals) draw += probability;
-        else awayWin += probability;
-
-        const total = homeGoals + awayGoals;
-        if (total >= 2) over15Pois += probability;
-        if (total >= 3) over25Pois += probability;
-        if (total >= 4) over35Pois += probability;
-        if (total <= 3) under35Pois += probability;
-        if (homeGoals > 0 && awayGoals > 0) bttsPois += probability;
+    for (let l = 0; l <= 4; l++) {
+      for (let v = 0; v <= 4; v++) {
+        const p = poisson(expectedGoalsLocal, l) * poisson(expectedGoalsVisit, v);
+        scores.push({ score: `${l}-${v}`, prob: p * 100 });
+        if (l > v) localWin += p;
+        else if (l === v) draw += p;
+        else awayWin += p;
       }
     }
 
-    const localWinForm =
-      (home.wins + away.losses) / 2 + Math.max(posFactor, 0) * 0.8 + Math.max(commonBonusRaw, 0) * 2;
-    const awayWinForm =
-      (away.wins + home.losses) / 2 + Math.max(-posFactor, 0) * 0.8 + Math.max(-commonBonusRaw, 0) * 2;
-    const drawForm = (home.draws + away.draws) / 2;
+    const topScores = scores.sort((a, b) => b.prob - a.prob).slice(0, 5);
 
-    const localWinPct = clamp(localWin * 100 * 0.72 + localWinForm * 0.28, 0, 95);
-    const awayWinPct = clamp(awayWin * 100 * 0.72 + awayWinForm * 0.28, 0, 95);
-    const drawPct = clamp(draw * 100 * 0.72 + drawForm * 0.28, 0, 40);
+    return {
+      localWin: localWin * 100,
+      draw: draw * 100,
+      awayWin: awayWin * 100,
+      topScores,
+    };
+  }, [expectedGoalsLocal, expectedGoalsVisit]);
 
-    const total1x2 = localWinPct + awayWinPct + drawPct || 1;
-    const localWinNorm = (localWinPct / total1x2) * 100;
-    const awayWinNorm = (awayWinPct / total1x2) * 100;
-    const drawNorm = (drawPct / total1x2) * 100;
 
-    const over15 = clamp(over15Pois * 100 * 0.7 + ((home.over15 + away.over15) / 2) * 0.3, 0, 99);
-    const over25 = clamp(over25Pois * 100 * 0.7 + ((home.over25 + away.over25) / 2) * 0.3, 0, 99);
-    const over35 = clamp(over35Pois * 100 * 0.7 + ((home.over35 + away.over35) / 2) * 0.3, 0, 99);
-    const under35 = clamp(under35Pois * 100 * 0.7 + ((home.under35 + away.under35) / 2) * 0.3, 0, 99);
-    const btts = clamp(bttsPois * 100 * 0.7 + ((home.btts + away.btts) / 2) * 0.3, 0, 99);
+  const trapAlert = useMemo(() => {
+    let score = 0;
+    const reasons: string[] = [];
 
-    const homeOrDraw = Math.min(localWinNorm + drawNorm, 100);
-    const awayOrDraw = Math.min(awayWinNorm + drawNorm, 100);
-    const noDraw = Math.min(localWinNorm + awayWinNorm, 100);
+    const posGap =
+      matchInfo.posicionLocal !== "" && matchInfo.posicionVisitante !== ""
+        ? Math.abs(Number(matchInfo.posicionLocal) - Number(matchInfo.posicionVisitante))
+        : 0;
 
-    const expectedHomeYellowCards = (home.weightedOwnCards + away.weightedOppCards) / 2;
-    const expectedAwayYellowCards = (away.weightedOwnCards + home.weightedOppCards) / 2;
-    const expectedTotalYellowCards = refereeYellowCards
-      ? (expectedHomeYellowCards + expectedAwayYellowCards + refereeYellowCards) / 3
-      : expectedHomeYellowCards + expectedAwayYellowCards;
+    const favoriteLocal = expectedGoalsLocal - expectedGoalsVisit > 0.4;
+    const favoriteVisit = expectedGoalsVisit - expectedGoalsLocal > 0.4;
 
-    const expectedHomeRedCards = (home.weightedOwnRedCards + away.weightedOppRedCards) / 2;
-    const expectedAwayRedCards = (away.weightedOwnRedCards + home.weightedOppRedCards) / 2;
-    const expectedTotalRedCards = refereeRedCards
-      ? (expectedHomeRedCards + expectedAwayRedCards + refereeRedCards) / 3
-      : expectedHomeRedCards + expectedAwayRedCards;
-
-    const estimatedCards = refereeCards
-      ? (expectedHomeYellowCards + expectedAwayYellowCards + refereeCards) / 3
-      : expectedHomeYellowCards + expectedAwayYellowCards;
-
-    const estimatedHomeCorners = (home.weightedOwnCorners + away.weightedOppCorners) / 2;
-    const estimatedAwayCorners = (away.weightedOwnCorners + home.weightedOppCorners) / 2;
-    const estimatedCorners = estimatedHomeCorners + estimatedAwayCorners;
-
-    const cardsOver25 = clamp(42 + estimatedCards * 7.2, 0, 97);
-    const cardsOver35 = clamp(30 + estimatedCards * 7.0, 0, 96);
-    const cardsOver45 = clamp(18 + estimatedCards * 6.8, 0, 94);
-    const cardsUnder55 = clamp(105 - cardsOver45 * 0.9, 0, 96);
-    const cardsUnder65 = clamp(112 - cardsOver35 * 0.75, 0, 97);
-    const cardsUnder75 = clamp(118 - cardsOver25 * 0.55, 0, 98);
-
-    const redsOver05 = clamp(10 + expectedTotalRedCards * 75, 0, 92);
-    const redsUnder15 = clamp(100 - redsOver05 * 0.65, 30, 99);
-
-    const cornersOver55 = clamp(48 + estimatedCorners * 4.6, 0, 98);
-    const cornersOver65 = clamp(36 + estimatedCorners * 4.4, 0, 97);
-    const cornersOver75 = clamp(24 + estimatedCorners * 4.2, 0, 95);
-    const cornersUnder105 = clamp(116 - cornersOver75 * 0.85, 0, 96);
-    const cornersUnder115 = clamp(121 - cornersOver65 * 0.75, 0, 97);
-    const cornersUnder125 = clamp(126 - cornersOver55 * 0.65, 0, 98);
-
-    const topScores = scoreMatrix.sort((a, b) => b.probability - a.probability).slice(0, 4);
-    const scoreNames = topScores.map((s) => s.score);
-
-    const reasonList: string[] = [];
-    const alternativeMarkets: string[] = [];
-
-    const zeroZeroRisk: "alto" | "medio" | "bajo" =
-      zeroZeroProbability >= 13 || (scoreNames.includes("0-0") && topScores[0]?.score === "0-0")
-        ? "alto"
-        : zeroZeroProbability >= 8 || scoreNames.includes("0-0")
-        ? "medio"
-        : "bajo";
-
-    const lowTempo = totalExpectedGoals < 2.05;
-    if (lowTempo) reasonList.push("Goles esperados totales bajos");
-    if (zeroZeroRisk !== "bajo") reasonList.push("Riesgo relevante de 0-0");
-    if (over15 < 68) reasonList.push("Over 1.5 no es tan fuerte");
-    if (btts < 52) reasonList.push("BTTS bajo");
-    if (drawNorm >= 30) reasonList.push("Empate relativamente alto");
-    if (scoreNames.includes("1-0") || scoreNames.includes("0-1")) {
-      reasonList.push("Marcadores cortos entre los más probables");
+    if (favoriteLocal && localStats.winPct < 50) {
+      score += 2;
+      reasons.push("El local parece favorito, pero no gana con suficiente frecuencia.");
     }
 
-    const avoidGoals =
-      (over15 < 68 && btts < 52) ||
-      totalExpectedGoals < 1.85 ||
-      zeroZeroRisk === "alto" ||
-      (topScores[0]?.score === "0-0" && zeroZeroProbability >= 12) ||
-      drawNorm >= 34;
+    if (
+  volatilityLabel === "Alta" &&
+  Math.max(simulation.localWin, simulation.awayWin) < 55
+) {
+  score += 2;
+  reasons.push("Partido impredecible: no conviene confiar en ganador directo.");
+}
 
-    const trapMatch =
-      avoidGoals &&
-      (zeroZeroRisk === "alto" || totalExpectedGoals < 1.9 || oneZeroProbability + zeroOneProbability >= 24);
-
-    if (avoidGoals) {
-      if (under35 >= 70) alternativeMarkets.push("Menos de 3.5 goles");
-      if (cardsOver25 >= 65) alternativeMarkets.push("Más de 2.5 amarillas");
-      if (redsUnder15 >= 72) alternativeMarkets.push("Menos de 1.5 rojas");
-      if (cornersOver55 >= 65) alternativeMarkets.push("Más de 5.5 corners");
-      if (homeOrDraw >= 75) alternativeMarkets.push("Local o empate (1X)");
-      if (awayOrDraw >= 75) alternativeMarkets.push("Visitante o empate (X2)");
+    if (favoriteVisit && visitStats.winPct < 50) {
+      score += 2;
+      reasons.push("El visitante parece favorito, pero no gana con suficiente frecuencia.");
     }
 
-    let picks: Pick[] = [
-      { market: "Más de 1.5 goles", probability: over15, family: "goles" },
-      { market: "Más de 2.5 goles", probability: over25, family: "goles", tier: "valor" },
-      { market: "Más de 3.5 goles", probability: over35, family: "goles", tier: "arriesgada" },
-      { market: "Menos de 3.5 goles", probability: under35, family: "goles" },
-      { market: "Ambos marcan", probability: btts, family: "goles" },
-
-      { market: "Gana local", probability: localWinNorm, family: "ganador", tier: "arriesgada" },
-      { market: "Empate", probability: drawNorm, family: "ganador", tier: "arriesgada" },
-      { market: "Gana visitante", probability: awayWinNorm, family: "ganador", tier: "arriesgada" },
-
-      { market: "Local o empate (1X)", probability: homeOrDraw, family: "doble" },
-      { market: "Visitante o empate (X2)", probability: awayOrDraw, family: "doble" },
-      { market: "No empate (1 o 2)", probability: noDraw, family: "doble", tier: "valor" },
-
-      { market: "Más de 2.5 amarillas", probability: cardsOver25, family: "tarjetas" },
-      { market: "Más de 3.5 amarillas", probability: cardsOver35, family: "tarjetas" },
-      { market: "Más de 4.5 amarillas", probability: cardsOver45, family: "tarjetas", tier: "valor" },
-      { market: "Menos de 5.5 amarillas", probability: cardsUnder55, family: "tarjetas" },
-      { market: "Menos de 6.5 amarillas", probability: cardsUnder65, family: "tarjetas" },
-      { market: "Menos de 7.5 amarillas", probability: cardsUnder75, family: "tarjetas" },
-
-      { market: "Más de 0.5 rojas", probability: redsOver05, family: "rojas", tier: "arriesgada" },
-      { market: "Menos de 1.5 rojas", probability: redsUnder15, family: "rojas" },
-
-      { market: "Más de 5.5 corners", probability: cornersOver55, family: "corners" },
-      { market: "Más de 6.5 corners", probability: cornersOver65, family: "corners" },
-      { market: "Más de 7.5 corners", probability: cornersOver75, family: "corners" },
-      { market: "Menos de 10.5 corners", probability: cornersUnder105, family: "corners" },
-      { market: "Menos de 11.5 corners", probability: cornersUnder115, family: "corners" },
-      { market: "Menos de 12.5 corners", probability: cornersUnder125, family: "corners" },
-    ];
-
-    if (avoidGoals) {
-      const blocked = new Set(["Más de 1.5 goles", "Más de 2.5 goles", "Más de 3.5 goles", "Ambos marcan"]);
-      picks = picks.map((pick) =>
-        blocked.has(pick.market) ? { ...pick, probability: Math.max(0, pick.probability - 12) } : pick
-      );
+    if (Math.abs(localStats.totalGoalsWeighted - localStats.totalGoalsAvg) > 0.7) {
+      score += 1;
+      reasons.push("El local muestra cambio reciente fuerte en goles.");
     }
 
-    picks = picks.map((pick) => {
-      const penalty = pick.family === "corners" ? 8 : 0;
-      return { ...pick, probability: clamp(pick.probability - penalty, 0, 99) };
+    if (Math.abs(visitStats.totalGoalsWeighted - visitStats.totalGoalsAvg) > 0.7) {
+      score += 1;
+      reasons.push("El visitante muestra cambio reciente fuerte en goles.");
+    }
+
+    if (volatilityLabel === "Alta") {
+      score += 2;
+      reasons.push("La volatilidad general del partido es alta.");
+    }
+
+    if (matchInfo.tipo === "Vuelta" && matchInfo.globalScore.trim()) {
+      score += 1;
+      reasons.push("Es partido de vuelta; el contexto del global puede distorsionar el juego.");
+    }
+
+    if (posGap >= 8 && Math.abs(expectedGoalsLocal - expectedGoalsVisit) < 0.35) {
+      score += 2;
+      reasons.push("La diferencia de tabla no se refleja claramente en los datos del partido.");
+    }
+
+    if (score <= 2) return { label: "Estable", color: "text-emerald-700 bg-emerald-50 border-emerald-200", reasons };
+    if (score <= 4) return { label: "Cuidado", color: "text-amber-700 bg-amber-50 border-amber-200", reasons };
+    return { label: "Partido trampa", color: "text-rose-700 bg-rose-50 border-rose-200", reasons };
+  }, [
+    expectedGoalsLocal,
+    expectedGoalsVisit,
+    localStats.winPct,
+    visitStats.winPct,
+    localStats.totalGoalsWeighted,
+    localStats.totalGoalsAvg,
+    visitStats.totalGoalsWeighted,
+    visitStats.totalGoalsAvg,
+    volatilityLabel,
+    matchInfo.tipo,
+    matchInfo.globalScore,
+    matchInfo.posicionLocal,
+    matchInfo.posicionVisitante,
+  ]);
+
+  const bestPicks = useMemo<PickItem[]>(() => {
+  const picks: PickItem[] = [];
+
+  const over15Prob = clamp((localStats.over15Pct + visitStats.over15Pct) / 2, 0, 100);
+  const over25Prob = clamp((localStats.over25Pct + visitStats.over25Pct) / 2, 0, 100);
+  const under35Prob = clamp((localStats.under35Pct + visitStats.under35Pct) / 2, 0, 100);
+  const bttsProb = clamp((localStats.bttsPct + visitStats.bttsPct) / 2, 0, 100);
+  const corners85Prob = clamp((localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2, 0, 100);
+  const cards45Prob =
+    clamp((localStats.cardsOver45Pct + visitStats.cardsOver45Pct) / 2, 0, 100) * 0.7 +
+    (refInfo.promedioAmarillas === "" ? 0 : Number(refInfo.promedioAmarillas) * 5);
+
+  const strongGoalSignal =
+    expectedTotalGoals >= 2.4 &&
+    bttsProb >= 60;
+
+  const mediumGoalSignal =
+    expectedTotalGoals >= 2.2 &&
+    bttsProb >= 55;
+
+  const lowGoalWarning =
+    expectedTotalGoals < 2.2 &&
+    bttsProb < 55 &&
+    simulation.draw >= 20;
+
+  if (over15Prob >= 72 && mediumGoalSignal) {
+    picks.push({
+      id: "over15",
+      mercado: "Más de 1.5 goles",
+      probabilidad: lowGoalWarning ? Math.max(68, over15Prob - 8) : over15Prob,
+      riesgo: strongGoalSignal ? "Bajo" : "Medio",
+      motivo: strongGoalSignal
+        ? "Partido con clara tendencia ofensiva en ambos equipos."
+        : "Hay señal moderada de goles, pero no es un partido totalmente abierto.",
     });
+  }
 
-    if (preferredMarket !== "auto") {
-      picks = picks.map((pick) => {
-        let boost = 0;
-        if (preferredMarket === "goles" && pick.family === "goles") boost = 6;
-        if (preferredMarket === "tarjetas" && (pick.family === "tarjetas" || pick.family === "rojas")) boost = 6;
-        if (preferredMarket === "corners" && pick.family === "corners") boost = 6;
-        if (preferredMarket === "1x2" && (pick.family === "ganador" || pick.family === "doble")) boost = 6;
-        return { ...pick, probability: clamp(pick.probability + boost, 0, 99) };
+  if (under35Prob >= 68) {
+    picks.push({
+      id: "under35",
+      mercado: "Menos de 3.5 goles",
+      probabilidad: under35Prob,
+      riesgo: "Bajo",
+      motivo: "La línea aparece estable y suele sostenerse en ambos historiales.",
+    });
+  }
+
+  if (over25Prob >= 63 && strongGoalSignal && !lowGoalWarning) {
+    picks.push({
+      id: "over25",
+      mercado: "Más de 2.5 goles",
+      probabilidad: over25Prob,
+      riesgo: "Medio",
+      motivo: "Ambos equipos generan suficiente volumen ofensivo para una línea alta.",
+    });
+  }
+
+  if (bttsProb >= 62) {
+    picks.push({
+      id: "btts",
+      mercado: "Ambos marcan: Sí",
+      probabilidad: bttsProb,
+      riesgo: "Medio",
+      motivo: "Ambos equipos muestran tendencia razonable a conceder y marcar.",
+    });
+  }
+
+const isBigMatch =
+  Math.max(simulation.localWin, simulation.awayWin) >= 60 &&
+  volatilityLabel === "Baja";
+  //);
+
+const strongCornerSignal = expectedTotalCorners >= 9.5;
+const mediumCornerSignal = expectedTotalCorners >= 8.0;
+
+  if (mediumCornerSignal || corners85Prob >= 58) {
+  // ❌ evitar corners en partidos grandes si no hay señal fuerte
+  if (isBigMatch && !strongCornerSignal) {
+    // no hacer nada
+  } else {
+    picks.push({
+      id: "corners85",
+      mercado: strongCornerSignal ? "Más de 8.5 corners" : "Más de 7.5 corners",
+      probabilidad: clamp(
+        Math.max(
+          corners85Prob,
+          strongCornerSignal
+            ? expectedTotalCorners * 8
+            : expectedTotalCorners * 10
+        ),
+        0,
+        100
+      ),
+      riesgo: strongCornerSignal ? "Medio" : "Bajo",
+      motivo: strongCornerSignal
+        ? "Alta generación de corners en ambos equipos."
+        : "Señal moderada de corners.",
+    });
+  }
+}
+
+  if (expectedTotalCards >= 3.5) {
+    picks.push({
+      id: "cards45",
+      mercado: expectedTotalCards >= 4.8 ? "Más de 4.5 tarjetas" : "Más de 3.5 tarjetas",
+      probabilidad: clamp(
+        Math.max(
+          cards45Prob,
+          expectedTotalCards >= 4.8 ? expectedTotalCards * 12 : expectedTotalCards * 15
+        ),
+        0,
+        100
+      ),
+      riesgo: expectedTotalCards >= 4.8 ? "Medio" : "Bajo",
+      motivo:
+        expectedTotalCards >= 4.8
+          ? "Equipos y árbitro sostienen una línea media-alta de tarjetas."
+          : "Hay suficiente señal para una línea base de tarjetas.",
+    });
+  }
+
+    const noLoseLocalProb = clamp(
+      (localStats.noLosePct + (100 - visitStats.winPct)) / 2,
+      0,
+      100
+    );
+    if (simulation.localWin + simulation.draw >= 68 && noLoseLocalProb >= 68) {
+      picks.push({
+        id: "1x",
+        mercado: "Local o empate (1X)",
+        probabilidad: (simulation.localWin + simulation.draw + noLoseLocalProb) / 2,
+        riesgo: "Bajo",
+        motivo: "El local sostiene buena probabilidad de no perder según forma y simulación.",
       });
     }
 
-    picks = picks.sort((a, b) => b.probability - a.probability);
-
-    const bestGoalsPick = picks.filter((p) => p.family === "goles")[0] ?? null;
-    const bestCardsPick = picks.filter((p) => p.family === "tarjetas")[0] ?? null;
-    const bestRedCardsPick = picks.filter((p) => p.family === "rojas")[0] ?? null;
-    const bestCornersPick = picks.filter((p) => p.family === "corners")[0] ?? null;
-    const bestWinnerPick = picks.filter((p) => p.family === "ganador")[0] ?? null;
-    const bestDoubleChancePick = picks.filter((p) => p.family === "doble")[0] ?? null;
-
-    const safestPick =
-      [bestGoalsPick, bestCardsPick, bestRedCardsPick, bestCornersPick, bestWinnerPick, bestDoubleChancePick]
-        .filter(Boolean)
-        .sort((a, b) => (b?.probability ?? 0) - (a?.probability ?? 0))[0] ?? null;
-
-    const valuePick =
-      picks.find(
-        (p) =>
-          p.market !== safestPick?.market &&
-          ((p.tier === "valor" && p.probability >= 68) || (p.probability >= 68 && p.probability < 82))
-      ) ?? null;
-
-    const riskyPick =
-      picks.find(
-        (p) =>
-          p.market !== safestPick?.market &&
-          p.market !== valuePick?.market &&
-          ((p.tier === "arriesgada" && p.probability >= 55) || (p.probability >= 55 && p.probability < 75))
-      ) ?? null;
-
-    return {
-      localWin: localWinNorm,
-      draw: drawNorm,
-      awayWin: awayWinNorm,
-      over15,
-      over25,
-      over35,
-      under35,
-      btts,
-      homeOrDraw,
-      awayOrDraw,
-      noDraw,
-
-      cardsOver25,
-      cardsOver35,
-      cardsOver45,
-      cardsUnder55,
-      cardsUnder65,
-      cardsUnder75,
-
-      redsOver05,
-      redsUnder15,
-
-      cornersOver55,
-      cornersOver65,
-      cornersOver75,
-      cornersUnder105,
-      cornersUnder115,
-      cornersUnder125,
-
-      expectedHomeGoals,
-      expectedAwayGoals,
-      totalExpectedGoals,
-
-      expectedHomeYellowCards,
-      expectedAwayYellowCards,
-      expectedTotalYellowCards,
-
-      expectedHomeRedCards,
-      expectedAwayRedCards,
-      expectedTotalRedCards,
-
-      topScores,
-      zeroZeroProbability,
-      oneZeroProbability,
-      zeroOneProbability,
-
-      picks,
-      safestPick,
-      valuePick,
-      riskyPick,
-
-      bestGoalsPick,
-      bestCardsPick,
-      bestRedCardsPick,
-      bestCornersPick,
-      bestWinnerPick,
-      bestDoubleChancePick,
-
-      riskFlags: {
-        zeroZeroRisk,
-        avoidGoals,
-        trapMatch,
-        lowTempo,
-        reasonList,
-        alternativeMarkets,
-      },
-    };
-  }, [
-    home,
-    away,
-    matchInfo.refereeCards,
-    matchInfo.refereeYellowCards,
-    matchInfo.refereeRedCards,
-    matchInfo.homePosition,
-    matchInfo.awayPosition,
-    preferredMarket,
-    commonOpponents,
-  ]);
-
-  const monteCarlo = useMemo(() => {
-    const simulations = 10000;
-    let homeWins = 0;
-    let draws = 0;
-    let awayWins = 0;
-    let btts = 0;
-    const scores: Record<string, number> = {};
-
-    for (let i = 0; i < simulations; i += 1) {
-      const hg = randomPoisson(analysis.expectedHomeGoals);
-      const ag = randomPoisson(analysis.expectedAwayGoals);
-      const key = `${hg}-${ag}`;
-      scores[key] = (scores[key] || 0) + 1;
-      if (hg > ag) homeWins += 1;
-      else if (hg === ag) draws += 1;
-      else awayWins += 1;
-      if (hg > 0 && ag > 0) btts += 1;
+    const noLoseVisitProb = clamp(
+      (visitStats.noLosePct + (100 - localStats.winPct)) / 2,
+      0,
+      100
+    );
+    if (simulation.awayWin + simulation.draw >= 68 && noLoseVisitProb >= 68) {
+      picks.push({
+        id: "x2",
+        mercado: "Visitante o empate (X2)",
+        probabilidad: (simulation.awayWin + simulation.draw + noLoseVisitProb) / 2,
+        riesgo: "Bajo",
+        motivo: "El visitante sostiene buena probabilidad de no perder según forma y simulación.",
+      });
     }
 
-    const topScores = Object.entries(scores)
-      .map(([score, count]) => ({ score, probability: (count / simulations) * 100 }))
-      .sort((a, b) => b.probability - a.probability)
-      .slice(0, 4);
+    return picks.sort((a, b) => b.probabilidad - a.probabilidad);
+  }, [localStats, visitStats, refInfo.promedioAmarillas, simulation]);
 
-    return {
-      simulations,
-      homeWin: (homeWins / simulations) * 100,
-      draw: (draws / simulations) * 100,
-      awayWin: (awayWins / simulations) * 100,
-      btts: (btts / simulations) * 100,
-      topScores,
-    };
-  }, [analysis.expectedHomeGoals, analysis.expectedAwayGoals]);
+  const discardedMarkets = useMemo(() => {
+    const items: string[] = [];
 
-  const bankrollAnalysis = useMemo(() => {
-    const bank = Number(bankroll || 0);
-    const odds = Number(stakeOdds || 0);
-    const basePick = analysis.safestPick ?? analysis.picks[0] ?? null;
-    const probability = basePick?.probability ?? 0;
-
-    let percent = 0;
-    if (stakeMethod === "fijo") percent = 2;
-    if (stakeMethod === "confianza") {
-      if (probability >= 85) percent = 5;
-      else if (probability >= 75) percent = 3;
-      else if (probability >= 65) percent = 2;
-      else percent = 1;
-    }
-    if (stakeMethod === "kelly") {
-      percent = clamp(kellyFraction(probability, odds) * 100 * 0.5, 0, 8);
+    if (Math.abs(simulation.localWin - simulation.awayWin) < 10) {
+      items.push("Ganador directo: el partido se ve demasiado parejo.");
     }
 
-    const amount = bank * (percent / 100);
-    return { basePick, probability, percent, amount };
-  }, [bankroll, stakeMethod, stakeOdds, analysis]);
+if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) < 55) {
+  items.push("Más de 2.5 goles: el partido muestra señales de pocos goles.");
+}
 
-  const filteredAnalyses = useMemo(() => {
-    return savedAnalyses.filter((item) => {
-      const teamMatch =
-        searchTeam === "" ||
-        item.matchInfo.home.toLowerCase().includes(searchTeam.toLowerCase()) ||
-        item.matchInfo.away.toLowerCase().includes(searchTeam.toLowerCase());
+    if (volatilityLabel === "Alta") {
+      items.push("Marcador exacto: demasiada volatilidad para confiar.");
+    }
 
-      const leagueMatch =
-        searchLeague === "" ||
-        item.matchInfo.league.toLowerCase().includes(searchLeague.toLowerCase());
+    if ((localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2 < 55) {
+      items.push("Corners altos: señal insuficiente.");
+    }
 
-      return teamMatch && leagueMatch;
-    });
-  }, [savedAnalyses, searchTeam, searchLeague]);
+    if ((localStats.bttsPct + visitStats.bttsPct) / 2 < 50) {
+      items.push("Ambos marcan: señal débil.");
+    }
 
-  const selectedAnalyses = useMemo(
-    () => savedAnalyses.filter((item) => selectedIds.includes(item.id)),
-    [savedAnalyses, selectedIds]
-  );
+    return items;
+  }, [simulation, volatilityLabel, localStats, visitStats]);
 
-  const generatedParlays = useMemo(() => {
-    const buildLinesForMatch = (
-      item: SavedAnalysis,
-      mode: "conservadora" | "media" | "agresiva"
-    ) => {
-      const pool = compactTopPicks(item.analysis)
-        .filter((pick) => {
-          if (mode === "conservadora") return pick.probability >= 75;
-          if (mode === "media") return pick.probability >= 68;
-          return pick.probability >= 60;
-        })
-        .sort((a, b) => b.probability - a.probability);
-
-      const fallback = [...item.analysis.picks].sort((a, b) => b.probability - a.probability);
-      const source = pool.length ? pool : fallback;
-
-      const usedFamilies = new Set<PickFamily>();
-      const lines: Pick[] = [];
-
-      for (const pick of source) {
-        if (!usedFamilies.has(pick.family)) {
-          lines.push(pick);
-          usedFamilies.add(pick.family);
-        }
-        if (lines.length === 3) break;
-      }
-
-      if (lines.length < 3) {
-        for (const pick of fallback) {
-          if (!lines.find((l) => l.market === pick.market)) {
-            lines.push(pick);
-          }
-          if (lines.length === 3) break;
-        }
-      }
-
-      return {
-        id: item.id,
-        match: `${item.matchInfo.home || "Local"} vs ${item.matchInfo.away || "Visitante"}`,
-        lines,
-      };
-    };
-
-    const build = (mode: "conservadora" | "media" | "agresiva") => {
-      const matches = selectedAnalyses.map((item) => buildLinesForMatch(item, mode));
-      const allProbabilities = matches.flatMap((m) => m.lines.map((l) => l.probability));
-      const avgProbability = allProbabilities.length
-        ? allProbabilities.reduce((sum, p) => sum + p, 0) / allProbabilities.length
-        : 0;
-
-      return {
-        mode,
-        matches,
-        avgProbability,
-        confidence: confidenceLabel(avgProbability),
-      };
-    };
+  const profile = useMemo(() => {
+    const openClosed =
+      expectedTotalGoals >= 2.9 ? "Abierto" : expectedTotalGoals <= 2.1 ? "Cerrado" : "Intermedio";
+    const cardsStyle =
+      expectedTotalCards >= 5.5 ? "Tarjetas altas" : expectedTotalCards <= 4.0 ? "Tarjetas bajas" : "Tarjetas medias";
+    const cornersStyle =
+      expectedTotalCorners >= 9.3 ? "Corners altos" : expectedTotalCorners <= 7.5 ? "Corners bajos" : "Corners medios";
 
     return {
-      conservadora: build("conservadora"),
-      media: build("media"),
-      agresiva: build("agresiva"),
+      tipo: openClosed,
+      goles: expectedTotalGoals >= 2.5 ? "Tendencia a goles" : "Tendencia contenida",
+      tarjetas: cardsStyle,
+      corners: cornersStyle,
+      riesgo: trapAlert.label,
     };
-  }, [selectedAnalyses]);
+  }, [expectedTotalGoals, expectedTotalCards, expectedTotalCorners, trapAlert.label]);
 
-  const performance = useMemo(() => {
-    const settled = savedAnalyses.filter((item) => item.result !== "pendiente");
-    const wins = settled.filter((item) => item.result === "ganada");
-    const losses = settled.filter((item) => item.result === "perdida");
-    const totalStake = settled.reduce((sum, item) => sum + Number(item.stake || 0), 0);
-
-    const profit = settled.reduce((sum, item) => {
-      const stake = Number(item.stake || 0);
-      const odds = Number(item.odds || 0);
-      if (item.result === "ganada") return sum + stake * (odds - 1);
-      if (item.result === "perdida") return sum - stake;
-      return sum;
-    }, 0);
-
-    const roi = totalStake > 0 ? (profit / totalStake) * 100 : 0;
-
-    return {
-      total: savedAnalyses.length,
-      settled: settled.length,
-      wins: wins.length,
-      losses: losses.length,
-      hitRate: settled.length > 0 ? (wins.length / settled.length) * 100 : 0,
-      totalStake,
-      profit,
-      roi,
-    };
-  }, [savedAnalyses]);
-
-  const updateRow = (
-    setter: React.Dispatch<React.SetStateAction<Row[]>>,
+  function handleRowChange(
+    side: TeamCondition,
     index: number,
-    field: keyof Row,
+    field: keyof TeamRow,
     value: string
-  ) => {
-    setter((prev) => {
-      const copy = [...prev];
-      copy[index] = {
-        ...copy[index],
-        [field]: field === "rival" ? value : value === "" ? "" : Number(value),
-      };
-      return copy;
+  ) {
+    const setter = side === "local" ? setLocalRows : setVisitRows;
+    const current = side === "local" ? localRows : visitRows;
+
+   const next = [...current];
+const row = { ...next[index] };
+
+if (field === "gf") row.gf = value === "" ? "" : Number(value);
+else if (field === "gc") row.gc = value === "" ? "" : Number(value);
+else if (field === "ownCorners") row.ownCorners = value === "" ? "" : Number(value);
+else if (field === "oppCorners") row.oppCorners = value === "" ? "" : Number(value);
+else if (field === "ownYellow") row.ownYellow = value === "" ? "" : Number(value);
+else if (field === "oppYellow") row.oppYellow = value === "" ? "" : Number(value);
+else if (field === "ownRed") row.ownRed = value === "" ? "" : Number(value);
+else if (field === "oppRed") row.oppRed = value === "" ? "" : Number(value);
+else if (field === "rival") row.rival = value;
+else if (field === "fecha") row.fecha = value;
+else if (field === "estado") row.estado = value as ResultState;
+
+if ((field === "gf" || field === "gc") && row.gf !== "" && row.gc !== "") {
+  row.estado = resultFromGoals(Number(row.gf), Number(row.gc));
+}
+
+next[index] = row;
+setter(next);
+  }
+
+  function saveReferee() {
+    if (!refInfo.nombre.trim() || refInfo.promedioAmarillas === "") return;
+    const next: SavedReferee[] = [
+      {
+        nombre: refInfo.nombre.trim(),
+        promedioAmarillas: Number(refInfo.promedioAmarillas),
+        promedioRojas: Number(refInfo.promedioRojas || 0),
+      },
+      ...savedRefs.filter((r) => r.nombre.toLowerCase() !== refInfo.nombre.trim().toLowerCase()),
+    ];
+    setSavedRefs(next);
+    localStorage.setItem(REF_STORAGE_KEY, JSON.stringify(next));
+  }
+
+  function loadRefereeByName(nombre: string) {
+    const found = savedRefs.find((r) => r.nombre === nombre);
+    if (!found) return;
+    setRefInfo({
+      nombre: found.nombre,
+      promedioAmarillas: found.promedioAmarillas,
+      promedioRojas: found.promedioRojas,
     });
-  };
+  }
 
-  const resetForm = () => {
-    setMatchInfo(EMPTY_MATCH_INFO);
-    setHomeRows(emptyRows());
-    setAwayRows(emptyRows());
-    setEditingId(null);
-    setSelectedSavedHomeTeam("");
-    setSelectedSavedAwayTeam("");
-    localStorage.removeItem(DRAFT_KEY);
-  };
+  function saveTeam(side: TeamCondition) {
+    const teamName = side === "local" ? matchInfo.local.trim() : matchInfo.visitante.trim();
+    const rows = side === "local" ? localRows : visitRows;
+    if (!teamName) return;
 
-  const saveAnalysis = () => {
-    if (!matchInfo.home.trim() && !matchInfo.away.trim()) return;
-
-    const topPicks = compactTopPicks(analysis);
-
-    if (editingId) {
-      setSavedAnalyses((prev) =>
-        prev.map((item) =>
-          item.id === editingId
-            ? {
-                ...item,
-                matchInfo: { ...matchInfo },
-                homeRows: [...homeRows],
-                awayRows: [...awayRows],
-                analysis: { ...analysis },
-                topPicks,
-              }
-            : item
-        )
-      );
-      setEditingId(null);
-      localStorage.removeItem(DRAFT_KEY);
-      return;
-    }
-
-    const saved: SavedAnalysis = {
-      id: Date.now(),
-      matchInfo: { ...matchInfo },
-      homeRows: [...homeRows],
-      awayRows: [...awayRows],
-      analysis: { ...analysis },
-      topPicks,
-      stake: "",
-      odds: "",
-      result: "pendiente",
-    };
-
-    setSavedAnalyses((prev) => [saved, ...prev]);
-    localStorage.removeItem(DRAFT_KEY);
-  };
-
-  const toggleSelection = (id: number) => {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
-  };
-
-  const editAnalysis = (item: SavedAnalysis) => {
-    setMatchInfo(item.matchInfo);
-    setHomeRows(item.homeRows);
-    setAwayRows(item.awayRows);
-    setEditingId(item.id);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const deleteAnalysis = (id: number) => {
-    setSavedAnalyses((prev) => prev.filter((item) => item.id !== id));
-    setSelectedIds((prev) => prev.filter((item) => item !== id));
-    if (editingId === id) setEditingId(null);
-  };
-
-  const updateSavedField = (id: number, field: "stake" | "odds", value: string) =>
-    setSavedAnalyses((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
-    );
-
-  const updateSavedResult = (id: number, result: ResultStatus) =>
-    setSavedAnalyses((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, result } : item))
-    );
-
-  const exportAnalyses = () => {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      bankroll,
-      stakeMethod,
-      stakeOdds,
-      preferredMarket,
-      savedAnalyses,
-      teamLibrary,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `analizador-manual-pro-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const importAnalyses = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const parsed = JSON.parse(String(reader.result));
-        if (Array.isArray(parsed.savedAnalyses)) setSavedAnalyses(parsed.savedAnalyses);
-        if (Array.isArray(parsed.teamLibrary)) setTeamLibrary(parsed.teamLibrary);
-        if (typeof parsed.bankroll === "string") setBankroll(parsed.bankroll);
-        if (
-          parsed.stakeMethod === "fijo" ||
-          parsed.stakeMethod === "confianza" ||
-          parsed.stakeMethod === "kelly"
-        ) {
-          setStakeMethod(parsed.stakeMethod);
-        }
-        if (typeof parsed.stakeOdds === "string") setStakeOdds(parsed.stakeOdds);
-        if (
-          parsed.preferredMarket === "auto" ||
-          parsed.preferredMarket === "goles" ||
-          parsed.preferredMarket === "tarjetas" ||
-          parsed.preferredMarket === "corners" ||
-          parsed.preferredMarket === "1x2"
-        ) {
-          setPreferredMarket(parsed.preferredMarket);
-        }
-        setSelectedIds([]);
-        setEditingId(null);
-      } catch {
-        alert("El archivo no es válido para importar.");
-      }
-    };
-
-    reader.readAsText(file);
-    event.target.value = "";
-  };
-
-  const saveTeamTemplate = (side: "home" | "away") => {
-    const teamName = cleanTeamName(side === "home" ? matchInfo.home : matchInfo.away);
-    const rows = side === "home" ? homeRows : awayRows;
-
-    if (!teamName) {
-      alert(`Escribe primero el nombre del equipo ${side === "home" ? "local" : "visitante"}.`);
-      return;
-    }
-
-    if (!hasUsefulRows(rows)) {
-      alert(`No hay datos para guardar del equipo ${teamName}.`);
-      return;
-    }
-
-    const payload: SavedTeamTemplate = {
+    const pack: SavedTeamPack = {
       teamName,
-      side,
-      rows: [...rows],
-      updatedAt: new Date().toISOString(),
+      condition: side,
+      rows,
+      savedAt: new Date().toISOString(),
     };
 
-    setTeamLibrary((prev) => {
-      const key = getTemplateKey(teamName, side);
-      const exists = prev.some((item) => getTemplateKey(item.teamName, item.side) === key);
-      if (exists) {
-        return prev.map((item) =>
-          getTemplateKey(item.teamName, item.side) === key ? payload : item
-        );
-      }
-      return [payload, ...prev].sort((a, b) => a.teamName.localeCompare(b.teamName));
-    });
+    const next = [
+      pack,
+      ...savedTeams.filter(
+        (t) => !(t.teamName.toLowerCase() === teamName.toLowerCase() && t.condition === side)
+      ),
+    ];
 
-    alert(`Registro guardado para ${teamName} como ${side === "home" ? "LOCAL" : "VISITANTE"}.`);
-  };
+    setSavedTeams(next);
+    localStorage.setItem(TEAM_STORAGE_KEY, JSON.stringify(next));
+  }
 
-  const loadTeamTemplate = (side: "home" | "away", teamName: string) => {
-    const found = teamLibrary.find(
-      (item) => normalizeName(item.teamName) === normalizeName(teamName) && item.side === side
-    );
-
+  function loadTeamByName(side: TeamCondition, teamName: string) {
+    const found = savedTeams.find((t) => t.teamName === teamName && t.condition === side);
     if (!found) return;
 
-    if (side === "home") {
-      setMatchInfo((prev) => ({ ...prev, home: found.teamName }));
-      setHomeRows(found.rows.map((r) => ({ ...r })));
-      setSelectedSavedHomeTeam(found.teamName);
+    if (side === "local") {
+      setMatchInfo((prev) => ({ ...prev, local: found.teamName }));
+      setLocalRows(found.rows);
     } else {
-      setMatchInfo((prev) => ({ ...prev, away: found.teamName }));
-      setAwayRows(found.rows.map((r) => ({ ...r })));
-      setSelectedSavedAwayTeam(found.teamName);
+      setMatchInfo((prev) => ({ ...prev, visitante: found.teamName }));
+      setVisitRows(found.rows);
     }
-  };
+  }
 
-  const deleteTeamTemplate = (teamName: string, side: "home" | "away") => {
-    setTeamLibrary((prev) =>
-      prev.filter((item) => !(normalizeName(item.teamName) === normalizeName(teamName) && item.side === side))
-    );
+function resetAllForNewMatch() {
+  setMatchInfo({
+    local: "",
+    visitante: "",
+    liga: "",
+    fecha: "",
+    posicionLocal: "",
+    posicionVisitante: "",
+    etapa: "Liga",
+    tipo: "Liga",
+    globalScore: "",
+    notas: "",
+  });
 
-    if (side === "home" && normalizeName(selectedSavedHomeTeam) === normalizeName(teamName)) {
-      setSelectedSavedHomeTeam("");
+  setRefInfo({
+    nombre: "",
+    promedioAmarillas: "",
+    promedioRojas: "",
+  });
+
+  setLocalRows(createEmptyRows());
+  setVisitRows(createEmptyRows());
+
+  setSelectedSavedLocal("");
+  setSelectedSavedVisit("");
+  setSelectedSavedRef("");
+
+  setOdds({
+    local: "",
+    empate: "",
+    visitante: "",
+    over25: "",
+    btts: "",
+    corners85: "",
+    cards45: "",
+  });
+
+  setParlay([]);
+  setMonteCarloResult(null);
+}
+  
+  function runMonteCarlo() {
+    let localWin = 0;
+    let draw = 0;
+    let awayWin = 0;
+    let over15 = 0;
+    let over25 = 0;
+    let btts = 0;
+    const scoreMap = new Map<string, number>();
+
+    const randomPoisson = (lambda: number) => {
+      const L = Math.exp(-lambda);
+      let k = 0;
+      let p = 1;
+      do {
+        k++;
+        p *= Math.random();
+      } while (p > L);
+      return k - 1;
+    };
+
+    for (let i = 0; i < monteCarloRuns; i++) {
+      const l = randomPoisson(expectedGoalsLocal);
+      const v = randomPoisson(expectedGoalsVisit);
+
+      if (l > v) localWin++;
+      else if (l === v) draw++;
+      else awayWin++;
+
+      if (l + v > 1.5) over15++;
+      if (l + v > 2.5) over25++;
+      if (l > 0 && v > 0) btts++;
+
+      const key = `${l}-${v}`;
+      scoreMap.set(key, (scoreMap.get(key) || 0) + 1);
     }
 
-    if (side === "away" && normalizeName(selectedSavedAwayTeam) === normalizeName(teamName)) {
-      setSelectedSavedAwayTeam("");
-    }
-  };
+    const topScores = [...scoreMap.entries()]
+      .map(([score, count]) => ({ score, prob: (count / monteCarloRuns) * 100 }))
+      .sort((a, b) => b.prob - a.prob)
+      .slice(0, 5);
 
-  return (
-    <main className="min-h-screen bg-slate-100 p-4">
-      <div className="mx-auto max-w-7xl space-y-4">
-        <section className="rounded-2xl bg-slate-900 p-5 shadow-md">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="application/json"
-            onChange={importAnalyses}
-            className="hidden"
-          />
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-white">Analizador Manual de Apuestas KCL07</h1>
-              <p className="mt-1 text-sm text-slate-300">
-                Ahora guarda equipos por separado como local y visitante, incluye rojas y muestra G/E/P.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={exportAnalyses}
-                className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/20"
-              >
-                Exportar
-              </button>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/20"
-              >
-                Importar
-              </button>
-            </div>
-          </div>
-        </section>
+    setMonteCarloResult({
+      localWin: (localWin / monteCarloRuns) * 100,
+      draw: (draw / monteCarloRuns) * 100,
+      awayWin: (awayWin / monteCarloRuns) * 100,
+      over15: (over15 / monteCarloRuns) * 100,
+      over25: (over25 / monteCarloRuns) * 100,
+      btts: (btts / monteCarloRuns) * 100,
+      topScores,
+    });
+  }
 
-        <section className="rounded-2xl border border-purple-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-lg font-bold text-purple-700"> Gestión de bankroll y mercado</h2>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <Field
-              label="Bankroll actual"
-              value={bankroll}
-              onChange={setBankroll}
-              cls="border-purple-300 text-slate-900 focus:border-purple-500"
-            />
-            <div>
-              <label className="mb-2 block text-sm font-bold text-purple-700">Método de stake</label>
-              <select
-                value={stakeMethod}
-                onChange={(e) => setStakeMethod(e.target.value as "fijo" | "confianza" | "kelly")}
-                className="w-full rounded-xl border-2 border-purple-300 px-3 py-2 text-slate-900 outline-none focus:border-purple-500"
-              >
-                <option value="fijo">Fijo</option>
-                <option value="confianza">Por confianza</option>
-                <option value="kelly">Kelly 50%</option>
-              </select>
-            </div>
-            <Field
-              label="Cuota para stake"
-              value={stakeOdds}
-              onChange={setStakeOdds}
-              cls="border-purple-300 text-slate-900 focus:border-purple-500"
-            />
-            <div>
-              <label className="mb-2 block text-sm font-bold text-purple-700">Mercado de preferencia</label>
-              <select
-                value={preferredMarket}
-                onChange={(e) =>
-                  setPreferredMarket(
-                    e.target.value as "auto" | "goles" | "tarjetas" | "corners" | "1x2"
-                  )
-                }
-                className="w-full rounded-xl border-2 border-purple-300 px-3 py-2 text-slate-900 outline-none focus:border-purple-500"
-              >
-                <option value="auto">Automático</option>
-                <option value="goles">Goles</option>
-                <option value="tarjetas">Tarjetas</option>
-                <option value="corners">Corners</option>
-                <option value="1x2">1X2 / doble oportunidad</option>
-              </select>
-            </div>
-            <SmallInfoBox
-              label="Stake sugerido"
-              value={dec(bankrollAnalysis.amount)}
-              sub={`${dec(bankrollAnalysis.percent)}% del bank`}
-              tone="purple"
-            />
-          </div>
-        </section>
+  function addPickToParlay(pick: PickItem) {
+    if (parlay.some((p) => p.id === pick.id)) return;
+    setParlay((prev) => [...prev, pick]);
+  }
 
-        <section className="rounded-2xl border border-blue-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-lg font-bold text-blue-700"> Datos del partido</h2>
-            <div className="flex flex-wrap gap-2">
-              {editingId && (
-                <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700">
-                  Editando análisis
-                </span>
-              )}
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
-                Borrador automático
-              </span>
-            </div>
-          </div>
+  function removePickFromParlay(id: string) {
+    setParlay((prev) => prev.filter((p) => p.id !== id));
+  }
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <Field
-              label="Equipo local"
-              value={matchInfo.home}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, home: v }))}
-              cls="border-blue-300 text-blue-700 focus:border-blue-500"
-            />
-            <Field
-              label="Equipo visitante"
-              value={matchInfo.away}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, away: v }))}
-              cls="border-red-300 text-red-700 focus:border-red-500"
-            />
-            <Field
-              label="Puesto local"
-              value={matchInfo.homePosition}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, homePosition: v }))}
-              cls="border-blue-300 text-slate-900 focus:border-blue-500"
-            />
-            <Field
-              label="Puesto visitante"
-              value={matchInfo.awayPosition}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, awayPosition: v }))}
-              cls="border-red-300 text-slate-900 focus:border-red-500"
-            />
-            <Field
-              label="Liga"
-              value={matchInfo.league}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, league: v }))}
-              cls="border-sky-200 text-slate-900 focus:border-sky-500"
-            />
-            <Field
-              label="País"
-              value={matchInfo.country}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, country: v }))}
-              cls="border-sky-200 text-slate-900 focus:border-sky-500"
-            />
-            <Field
-              label="Fecha"
-              value={matchInfo.date}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, date: v }))}
-              cls="border-sky-200 text-slate-900 focus:border-sky-500"
-            />
-            <Field
-              label="Árbitro"
-              value={matchInfo.referee}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, referee: v }))}
-              cls="border-sky-200 text-slate-900 focus:border-sky-500"
-            />
-            <Field
-              label="Promedio tarjetas árbitro"
-              value={matchInfo.refereeCards}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, refereeCards: v }))}
-              cls="border-sky-200 text-slate-900 focus:border-sky-500"
-            />
-            <Field
-              label="Promedio amarillas árbitro"
-              value={matchInfo.refereeYellowCards}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, refereeYellowCards: v }))}
-              cls="border-amber-200 text-slate-900 focus:border-amber-500"
-            />
-            <Field
-              label="Promedio rojas árbitro"
-              value={matchInfo.refereeRedCards}
-              onChange={(v) => setMatchInfo((p) => ({ ...p, refereeRedCards: v }))}
-              cls="border-rose-200 text-slate-900 focus:border-rose-500"
-            />
-          </div>
-        </section>
+  function correlationLabel() {
+    const ids = parlay.map((p) => p.id);
+    const goalGroup = ids.filter((id) => ["over15", "over25", "under35", "btts"].includes(id)).length;
+    if (goalGroup >= 3) return "Alta";
+    if (goalGroup === 2) return "Media";
+    return "Baja";
+  }
 
-        <section className="rounded-2xl border border-blue-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-bold text-blue-700">Biblioteca de equipos</h2>
-            <div className="flex flex-wrap gap-2 text-xs font-bold">
-              <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">
-                Locales guardados: {homeSavedOptions.length}
-              </span>
-              <span className="rounded-full bg-red-100 px-3 py-1 text-red-700">
-                Visitantes guardados: {awaySavedOptions.length}
-              </span>
-            </div>
-          </div>
+  const parlayRisk =
+    parlay.length === 0
+      ? "Sin parlay"
+      : parlay.some((p) => p.riesgo === "Alto")
+      ? "Alto"
+      : parlay.some((p) => p.riesgo === "Medio")
+      ? "Medio"
+      : "Bajo";
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
-              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
-                <div>
-                  <label className="mb-2 block text-sm font-bold text-blue-700">
-                    Cargar equipo guardado (local)
-                  </label>
-                  <select
-                    value={selectedSavedHomeTeam}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setSelectedSavedHomeTeam(value);
-                      if (value) loadTeamTemplate("home", value);
-                    }}
-                    className="w-full rounded-xl border-2 border-blue-300 px-3 py-2 text-slate-900 outline-none focus:border-blue-500"
-                  >
-                    <option value="">Seleccionar equipo local guardado</option>
-                    {homeSavedOptions.map((team) => (
-                      <option key={`home-${team.teamName}-${team.updatedAt}`} value={team.teamName}>
-                        {team.teamName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+  const avgParlayProb =
+    parlay.length === 0 ? 0 : avg(parlay.map((p) => p.probabilidad));
 
-                <button
-                  onClick={() => saveTeamTemplate("home")}
-                  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
-                >
-                  Guardar local
-                </button>
+  const valueComparison = [
+    {
+      mercado: "1",
+      sistema: simulation.localWin,
+      casa: impliedProb(odds.local),
+    },
+    {
+      mercado: "X",
+      sistema: simulation.draw,
+      casa: impliedProb(odds.empate),
+    },
+    {
+      mercado: "2",
+      sistema: simulation.awayWin,
+      casa: impliedProb(odds.visitante),
+    },
+    {
+      mercado: "Más de 2.5 goles",
+      sistema: (localStats.over25Pct + visitStats.over25Pct) / 2,
+      casa: impliedProb(odds.over25),
+    },
+    {
+      mercado: "BTTS Sí",
+      sistema: (localStats.bttsPct + visitStats.bttsPct) / 2,
+      casa: impliedProb(odds.btts),
+    },
+    {
+      mercado: "Más de 8.5 corners",
+      sistema: (localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2,
+      casa: impliedProb(odds.corners85),
+    },
+    {
+      mercado: "Más de 4.5 tarjetas",
+      sistema: (localStats.cardsOver45Pct + visitStats.cardsOver45Pct) / 2,
+      casa: impliedProb(odds.cards45),
+    },
+  ];
 
-                <button
-                  onClick={() => {
-                    if (selectedSavedHomeTeam) deleteTeamTemplate(selectedSavedHomeTeam, "home");
-                  }}
-                  className="rounded-xl bg-red-100 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-200"
-                >
-                  Eliminar
-                </button>
-              </div>
+  function renderTeamTable(
+    title: string,
+    side: TeamCondition,
+    rows: TeamRow[],
+    savedValue: string,
+    setSavedValue: (v: string) => void
+  ) {
+    const teamName = side === "local" ? matchInfo.local : matchInfo.visitante;
+    const colors = getSectionColors(side);
 
-              <div className="mt-3 space-y-2">
-                {homeSavedOptions.slice(0, 4).map((item) => (
-                  <div
-                    key={`home-preview-${item.teamName}-${item.updatedAt}`}
-                    className="flex items-center justify-between rounded-xl border border-blue-200 bg-white p-3"
-                  >
-                    <div>
-                      <p className="text-sm font-bold text-slate-900">{item.teamName}</p>
-                      <p className="text-xs text-slate-600">LOCAL · {formatDateTime(item.updatedAt)}</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setSelectedSavedHomeTeam(item.teamName);
-                        loadTeamTemplate("home", item.teamName);
-                      }}
-                      className="rounded-lg bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700"
-                    >
-                      Cargar
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
-                <div>
-                  <label className="mb-2 block text-sm font-bold text-red-700">
-                    Cargar equipo guardado (visitante)
-                  </label>
-                  <select
-                    value={selectedSavedAwayTeam}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setSelectedSavedAwayTeam(value);
-                      if (value) loadTeamTemplate("away", value);
-                    }}
-                    className="w-full rounded-xl border-2 border-red-300 px-3 py-2 text-slate-900 outline-none focus:border-red-500"
-                  >
-                    <option value="">Seleccionar equipo visitante guardado</option>
-                    {awaySavedOptions.map((team) => (
-                      <option key={`away-${team.teamName}-${team.updatedAt}`} value={team.teamName}>
-                        {team.teamName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <button
-                  onClick={() => saveTeamTemplate("away")}
-                  className="rounded-xl bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700"
-                >
-                  Guardar visitante
-                </button>
-
-                <button
-                  onClick={() => {
-                    if (selectedSavedAwayTeam) deleteTeamTemplate(selectedSavedAwayTeam, "away");
-                  }}
-                  className="rounded-xl bg-red-100 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-200"
-                >
-                  Eliminar
-                </button>
-              </div>
-
-              <div className="mt-3 space-y-2">
-                {awaySavedOptions.slice(0, 4).map((item) => (
-                  <div
-                    key={`away-preview-${item.teamName}-${item.updatedAt}`}
-                    className="flex items-center justify-between rounded-xl border border-red-200 bg-white p-3"
-                  >
-                    <div>
-                      <p className="text-sm font-bold text-slate-900">{item.teamName}</p>
-                      <p className="text-xs text-slate-600">VISITANTE · {formatDateTime(item.updatedAt)}</p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setSelectedSavedAwayTeam(item.teamName);
-                        loadTeamTemplate("away", item.teamName);
-                      }}
-                      className="rounded-lg bg-red-100 px-3 py-1 text-xs font-bold text-red-700"
-                    >
-                      Cargar
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <TeamSection
-          title=" Últimos 10 del local"
-          titleColor="text-blue-700"
-          boxColor="border-blue-200"
-          headerBg="bg-blue-100"
-          inputClass="border-blue-300 text-slate-900 focus:border-blue-500"
-          rows={homeRows}
-          onChange={updateRow.bind(null, setHomeRows)}
-          metrics={home}
-          suggestions={awayRivalSuggestions}
-        />
-
-        <TeamSection
-          title=" Últimos 10 del visitante"
-          titleColor="text-red-700"
-          boxColor="border-red-200"
-          headerBg="bg-red-100"
-          inputClass="border-red-300 text-slate-900 focus:border-red-500"
-          rows={awayRows}
-          onChange={updateRow.bind(null, setAwayRows)}
-          metrics={away}
-          suggestions={homeRivalSuggestions}
-        />
-
-        <section className="grid gap-4 xl:grid-cols-3">
-          <div className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm xl:col-span-2">
-            <h2 className="mb-3 text-lg font-bold text-emerald-700"> Análisis final</h2>
-
-            <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4">
-              <h3 className="mb-3 text-base font-bold text-red-700">Protección anti partidos trampa</h3>
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <RiskInfoBox
-                  label="Riesgo de 0-0"
-                  value={analysis.riskFlags.zeroZeroRisk.toUpperCase()}
-                  level={analysis.riskFlags.zeroZeroRisk}
-                />
-                <RiskInfoBox
-                  label="Probabilidad 0-0"
-                  value={pct(analysis.zeroZeroProbability)}
-                  level={analysis.riskFlags.zeroZeroRisk}
-                />
-                <RiskInfoBox
-                  label="Goles esperados"
-                  value={dec(analysis.totalExpectedGoals)}
-                  level={
-                    analysis.totalExpectedGoals < 1.9
-                      ? "alto"
-                      : analysis.totalExpectedGoals < 2.2
-                      ? "medio"
-                      : "bajo"
-                  }
-                />
-                <RiskInfoBox
-                  label="Estado over 1.5"
-                  value={analysis.riskFlags.avoidGoals ? "CUIDADO" : "APTO"}
-                  level={analysis.riskFlags.avoidGoals ? "medio" : "bajo"}
-                />
-              </div>
-
-              <div className="mt-3 grid gap-3 xl:grid-cols-2">
-                <div
-                  className={`rounded-xl border p-3 ${
-                    analysis.riskFlags.trapMatch
-                      ? "border-red-300 bg-red-100"
-                      : "border-green-300 bg-green-100"
-                  }`}
-                >
-                  <p
-                    className={`font-bold ${
-                      analysis.riskFlags.trapMatch ? "text-red-800" : "text-green-800"
-                    }`}
-                  >
-                    {analysis.riskFlags.trapMatch
-                      ? "Partido trampa para goles"
-                      : "Partido sin alerta fuerte"}
-                  </p>
-                  <div className="mt-2 space-y-1">
-                    {analysis.riskFlags.reasonList.length > 0 ? (
-                      analysis.riskFlags.reasonList.map((reason) => (
-                        <div key={reason} className="text-sm text-slate-700">
-                          • {reason}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-sm text-slate-700">No hay alertas fuertes activas.</div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-sky-200 bg-sky-100 p-3">
-                  <p className="font-bold text-sky-800">Mercados alternativos</p>
-                  <div className="mt-2 space-y-1">
-                    {analysis.riskFlags.alternativeMarkets.length > 0 ? (
-                      analysis.riskFlags.alternativeMarkets.map((market) => (
-                        <div key={market} className="text-sm text-slate-700">
-                          • {market}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-sm text-slate-700">Partido apto para mercados principales.</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-              <SmallStatBox label="Goles esp. local" value={dec(analysis.expectedHomeGoals)} tone="blue" />
-              <SmallStatBox label="Goles esp. visitante" value={dec(analysis.expectedAwayGoals)} tone="red" />
-              <SmallStatBox label="Amarillas esp." value={dec(analysis.expectedTotalYellowCards)} tone="amber" />
-              <SmallStatBox label="Rojas esp." value={dec(analysis.expectedTotalRedCards)} tone="red" />
-              <SmallStatBox label="Local o empate (1X)" value={pct(analysis.homeOrDraw)} tone="green" />
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              {[
-                ["Over 1.5", analysis.over15],
-                ["Over 2.5", analysis.over25],
-                ["Over 3.5", analysis.over35],
-                ["Menos de 3.5", analysis.under35],
-                ["Ambos marcan", analysis.btts],
-
-                ["Gana local", analysis.localWin],
-                ["Empate", analysis.draw],
-                ["Gana visitante", analysis.awayWin],
-                ["Local o empate (1X)", analysis.homeOrDraw],
-                ["Visitante o empate (X2)", analysis.awayOrDraw],
-                ["No empate (1 o 2)", analysis.noDraw],
-
-                ["Más de 2.5 amarillas", analysis.cardsOver25],
-                ["Más de 3.5 amarillas", analysis.cardsOver35],
-                ["Más de 4.5 amarillas", analysis.cardsOver45],
-                ["Menos de 5.5 amarillas", analysis.cardsUnder55],
-                ["Menos de 6.5 amarillas", analysis.cardsUnder65],
-                ["Menos de 7.5 amarillas", analysis.cardsUnder75],
-
-                ["Más de 0.5 rojas", analysis.redsOver05],
-                ["Menos de 1.5 rojas", analysis.redsUnder15],
-
-                ["Más de 5.5 corners", analysis.cornersOver55],
-                ["Más de 6.5 corners", analysis.cornersOver65],
-                ["Más de 7.5 corners", analysis.cornersOver75],
-                ["Menos de 10.5 corners", analysis.cornersUnder105],
-                ["Menos de 11.5 corners", analysis.cornersUnder115],
-                ["Menos de 12.5 corners", analysis.cornersUnder125],
-              ].map(([label, value]) => (
-                <div
-                  key={String(label)}
-                  className={`flex items-center justify-between rounded-xl border p-3 ${analysisCardClass(
-                    Number(value)
-                  )}`}
-                >
-                  <div>
-                    <p className="font-bold text-slate-800">{label}</p>
-                    <p className="text-xs text-slate-600">
-                      Confianza {confidenceLabel(Number(value))}
-                    </p>
-                  </div>
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-bold ${badgeClass(
-                      Number(value)
-                    )}`}
-                  >
-                    {pct(Number(value))}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <section className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-              <h3 className="mb-3 text-base font-bold text-indigo-700">Análisis plus: rivales en común</h3>
-              {commonOpponents.length === 0 ? (
-                <p className="text-sm text-slate-600">No hay rivales en común todavía.</p>
-              ) : (
-                <div className="space-y-2">
-                  {commonOpponents.map((item) => (
-                    <div key={item.rival} className="rounded-xl border border-indigo-200 bg-white p-3">
-                      <p className="font-bold text-slate-900">{item.rival}</p>
-                      <p className="text-sm text-slate-700">
-                        Local: {item.homeGF}-{item.homeGC} · Visitante: {item.awayGF}-{item.awayGC}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <div className="mt-4 rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
-              <p className="font-bold text-cyan-800">Marcadores más probables</p>
-              <div className="mt-3 grid gap-3 md:grid-cols-4">
-                {analysis.topScores.map((item) => (
-                  <div key={item.score} className="rounded-xl border border-cyan-200 bg-white p-3">
-                    <p className="text-lg font-bold text-slate-900">{item.score}</p>
-                    <p className="text-sm text-slate-600">{pct(item.probability)}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-  <button
-    onClick={saveAnalysis}
-    className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
-  >
-    {editingId ? "Actualizar análisis" : "Guardar análisis"}
-  </button>
-
-  <button
-    onClick={handleSaveMatch}
-    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
-  >
-    Guardar en la nube
-  </button>
-
-  <button
-    onClick={resetForm}
-    className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-300"
-  >
-    Nuevo partido
-  </button>
-</div>
-          </div>
-
-          <div className="space-y-3">
-            <section className="rounded-2xl border border-violet-200 bg-white p-3 shadow-sm">
-              <h2 className="mb-2 text-base font-bold text-violet-700"> Mejores mercados</h2>
-              <div className="space-y-2">
-                <CompactRecommendation label="Goles" pick={analysis.bestGoalsPick} />
-                <CompactRecommendation label="Amarillas" pick={analysis.bestCardsPick} />
-                <CompactRecommendation label="Rojas" pick={analysis.bestRedCardsPick} />
-                <CompactRecommendation label="Corners" pick={analysis.bestCornersPick} />
-                <CompactRecommendation label="Ganador" pick={analysis.bestWinnerPick} />
-                <CompactRecommendation label="Doble oportunidad" pick={analysis.bestDoubleChancePick} />
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-orange-200 bg-white p-3 shadow-sm">
-              <h2 className="mb-2 text-base font-bold text-orange-700">Semáforo de apuestas</h2>
-              <div className="space-y-2">
-                <MiniRecommendationCard title="Más segura" pick={analysis.safestPick} color="green" />
-                <MiniRecommendationCard title="Mejor valor" pick={analysis.valuePick} color="amber" />
-                <MiniRecommendationCard title="Arriesgada" pick={analysis.riskyPick} color="rose" />
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-teal-200 bg-white p-3 shadow-sm">
-              <h2 className="mb-2 text-base font-bold text-teal-700">Monte Carlo</h2>
-              <div className="grid gap-2">
-                <SmallStatBox label="Simulaciones" value={String(monteCarlo.simulations)} tone="green" />
-                <SmallStatBox label="Local gana" value={pct(monteCarlo.homeWin)} tone="blue" />
-                <SmallStatBox label="Empate" value={pct(monteCarlo.draw)} tone="amber" />
-                <SmallStatBox label="Visitante gana" value={pct(monteCarlo.awayWin)} tone="red" />
-              </div>
-            </section>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-lg font-bold text-emerald-700">Detector de valor</h2>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            <ValueRow label="Over 2.5" modelProb={analysis.over25} />
-            <ValueRow label="Ambos marcan" modelProb={analysis.btts} />
-            <ValueRow label="Local o empate (1X)" modelProb={analysis.homeOrDraw} />
-            <ValueRow label="Visitante o empate (X2)" modelProb={analysis.awayOrDraw} />
-            <ValueRow label="Más de 5.5 corners" modelProb={analysis.cornersOver55} />
-            <ValueRow label="Más de 2.5 amarillas" modelProb={analysis.cardsOver25} />
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-lg font-bold text-indigo-700">Rendimiento</h2>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-            <SmallStatBox label="Análisis guardados" value={String(performance.total)} tone="blue" />
-            <SmallStatBox label="Apuestas cerradas" value={String(performance.settled)} tone="amber" />
-            <SmallStatBox label="Ganadas" value={String(performance.wins)} tone="green" />
-            <SmallStatBox label="Perdidas" value={String(performance.losses)} tone="red" />
-            <SmallStatBox label="Hit Rate" value={pct(performance.hitRate)} tone="green" />
-            <SmallStatBox
-              label="ROI"
-              value={`${dec(performance.roi)}%`}
-              tone={performance.roi >= 0 ? "green" : "red"}
-            />
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-bold text-slate-800">Lista rápida</h2>
-            <p className="text-sm text-slate-500">{filteredAnalyses.length} partidos</p>
-          </div>
-
-          <div className="mb-3 grid gap-3 md:grid-cols-2">
-            <input
-              placeholder="Buscar por equipo"
-              value={searchTeam}
-              onChange={(e) => setSearchTeam(e.target.value)}
-              className="rounded-xl border-2 border-slate-300 px-3 py-2"
-            />
-            <input
-              placeholder="Filtrar por liga"
-              value={searchLeague}
-              onChange={(e) => setSearchLeague(e.target.value)}
-              className="rounded-xl border-2 border-slate-300 px-3 py-2"
-            />
-          </div>
-
-          {filteredAnalyses.length === 0 ? (
-            <p className="text-slate-600">No hay partidos guardados.</p>
-          ) : (
-            <div className="space-y-2">
-              {filteredAnalyses.map((item) => (
-                <div
-                  key={`compact-${item.id}`}
-                  className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2 md:flex-row md:items-center md:justify-between"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-slate-900">
-                      <span className="text-blue-700">{item.matchInfo.home || "Local"}</span>
-                      {" vs "}
-                      <span className="text-red-700">{item.matchInfo.away || "Visitante"}</span>
-                    </p>
-                    <p className="truncate text-xs text-slate-600">
-                      {item.matchInfo.league || "Liga"} · {item.matchInfo.date || "Sin fecha"}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5">
-                    {item.topPicks.slice(0, 3).map((pick) => (
-                      <span
-                        key={`${item.id}-${pick.market}`}
-                        className={`rounded-full px-2 py-1 text-[11px] font-bold ${badgeClass(
-                          pick.probability
-                        )}`}
-                      >
-                        {pick.market}
-                      </span>
-                    ))}
-
-                    <button
-                      onClick={() => toggleSelection(item.id)}
-                      className={`rounded-lg px-2.5 py-1 text-xs font-bold ${
-                        selectedIds.includes(item.id)
-                          ? "bg-green-600 text-white"
-                          : "bg-slate-200 text-slate-800"
-                      }`}
-                    >
-                      {selectedIds.includes(item.id) ? "OK" : "Sel"}
-                    </button>
-
-                    <button
-                      onClick={() => editAnalysis(item)}
-                      className="rounded-lg bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-700"
-                    >
-                      Editar
-                    </button>
-
-                    <button
-                      onClick={() => deleteAnalysis(item.id)}
-                      className="rounded-lg bg-red-100 px-2.5 py-1 text-xs font-bold text-red-700"
-                    >
-                      X
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-<section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm">
-  <div className="mb-3 flex items-center justify-between">
-    <h2 className="text-lg font-bold text-emerald-700">Partidos guardados en la nube</h2>
-    <p className="text-sm text-slate-500">{cloudMatches.length} partidos</p>
-  </div>
-
-  {cloudMatches.length === 0 ? (
-    <p className="text-slate-600">No hay partidos guardados en la nube.</p>
-  ) : (
-    <div className="space-y-2">
-      {cloudMatches.map((item) => (
-        <div
-          key={item.id}
-          className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 md:flex-row md:items-center md:justify-between"
-        >
+    return (
+      <section className={`rounded-2xl border p-4 shadow-sm ${colors.wrapper}`}>
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-sm font-bold text-slate-900">
-              <span className="text-blue-700">{item.local || "Local"}</span>
-              {" vs "}
-              <span className="text-red-700">{item.visitante || "Visitante"}</span>
-            </p>
-            <p className="text-xs text-slate-600">
-              {item.liga || "Liga"} · {item.fecha || "Sin fecha"}
-            </p>
+            <h2 className={`text-xl font-bold ${colors.header}`}>{title}</h2>
+<p className={`text-sm ${colors.sub}`}>Últimos 10 partidos en condición {side}.</p>
           </div>
 
-          <button
-            onClick={() => loadCloudMatch(item)}
-            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700"
-          >
-            Cargar desde nube
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => saveTeam(side)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold ${colors.button}`}
+            >
+              Guardar equipo
+            </button>
+            <select
+              value={savedValue}
+              onChange={(e) => {
+                setSavedValue(e.target.value);
+                loadTeamByName(side, e.target.value);
+              }}
+              className="rounded-xl border text-slate-900 px-3 py-2 text-sm"
+            >
+              <option value="">Cargar guardado</option>
+              {savedTeams
+                .filter((t) => t.condition === side)
+                .map((t, i) => (
+                  <option key={`${t.teamName}-${t.condition}-${i}`} value={t.teamName}>
+                    {t.teamName}
+                  </option>
+                ))}
+            </select>
+            <button
+              onClick={() => (side === "local" ? setLocalRows(createEmptyRows()) : setVisitRows(createEmptyRows()))}
+              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Limpiar
+            </button>
+          </div>
         </div>
+
+        <div className={`mb-3 rounded-xl border p-3 text-sm ${colors.badge}`}>
+           Equipo actual: <span className="font-semibold">{teamName || "Sin nombre"}</span>
+            </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-[1250px] w-full border-collapse text-sm">
+            <thead>
+              <tr className={colors.tableHead}>
+                {[
+                  "Rival",
+                  "Fecha",
+                  "GF",
+                  "GC",
+                  "Total",
+                  "BTTS",
+                  "Corners propio",
+                  "Corners rival",
+                  "Tarj. propio",
+                  "Tarj. rival",
+                  "Rojas propio",
+                  "Rojas rival",
+                  "Estado",
+                ].map((h) => (
+                  <th key={h} className="border border-slate-200 px-2 py-2 text-left font-semibold">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={i} className={`odd:bg-white ${colors.rowAlt}`}>
+                <td className="border border-slate-200 p-1">
+                <div>
+                      <input
+                             list={`${side}-rivals-${i}`}
+      value={row.rival}
+      onChange={(e) => handleRowChange(side, i, "rival", e.target.value)}
+      className={`w-full rounded-md px-2 py-1 font-semibold ${colors.input}`}
+    />
+    <datalist id={`${side}-rivals-${i}`}>
+      {getOpponentSuggestions(localRows, visitRows, row.rival).map((name) => (
+        <option key={`${side}-${i}-${name}`} value={name} />
       ))}
-    </div>
+    </datalist>
+  </div>
+</td>
+              <td className="border border-slate-200 p-1">
+  <input
+    type="text"
+    placeholder="MM/DD/AA"
+    value={row.fecha}
+    onChange={(e) => handleRowChange(side, i, "fecha", e.target.value)}
+    className={`w-[110px] rounded-md border-2 px-2 py-1 bg-white text-slate-900 font-semibold placeholder:text-slate-400 ${colors.input}`}
+  />
+</td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.gf}
+                      onChange={(e) => handleRowChange(side, i, "gf", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.gc}
+                      onChange={(e) => handleRowChange(side, i, "gc", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 px-2 py-1 font-semibold text-slate-700">
+                    {getTotalGoals(row)}
+                  </td>
+                  <td className="border border-slate-200 px-2 py-1 font-semibold text-slate-700">
+                    {getBTTS(row) ? "Sí" : "No"}
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.ownCorners}
+                      onChange={(e) => handleRowChange(side, i, "ownCorners", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.oppCorners}
+                      onChange={(e) => handleRowChange(side, i, "oppCorners", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.ownYellow}
+                      onChange={(e) => handleRowChange(side, i, "ownYellow", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.oppYellow}
+                      onChange={(e) => handleRowChange(side, i, "oppYellow", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.ownRed}
+                      onChange={(e) => handleRowChange(side, i, "ownRed", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.oppRed}
+                      onChange={(e) => handleRowChange(side, i, "oppRed", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 px-2 py-1">
+  {row.estado ? (
+    <span
+      className={`inline-flex min-w-[36px] justify-center rounded-lg px-2 py-1 text-xs font-bold ${getResultBadgeClass(
+        row.estado
+      )}`}
+    >
+      {row.estado}
+    </span>
+  ) : (
+    "-"
   )}
-</section>
-
-        <section className="rounded-2xl border border-indigo-200 bg-white p-3 shadow-sm">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-bold text-indigo-700">Historial de análisis</h2>
-            {savedAnalyses.length > 0 && (
-              <button
-                onClick={() => {
-                  setSavedAnalyses([]);
-                  setSelectedIds([]);
-                  setEditingId(null);
-                }}
-                className="rounded-xl bg-red-100 px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-200"
-              >
-                Borrar todo
-              </button>
-            )}
-          </div>
-
-          {filteredAnalyses.length === 0 ? (
-            <p className="text-slate-600">Aún no has guardado análisis.</p>
-          ) : (
-            <div className="space-y-2">
-              {filteredAnalyses.map((item) => (
-                <div key={item.id} className="rounded-xl border border-slate-200 p-3">
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <p className="text-sm font-bold text-slate-900">
-                        <span className="text-blue-700">{item.matchInfo.home || "Local"}</span>
-                        {" vs "}
-                        <span className="text-red-700">{item.matchInfo.away || "Visitante"}</span>
-                      </p>
-                      <p className="text-xs text-slate-600">
-                        {item.matchInfo.league || "Liga"} · {item.matchInfo.country || "País"} ·{" "}
-                        {item.matchInfo.date || "Sin fecha"}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5">
-                      <button
-                        onClick={() => toggleSelection(item.id)}
-                        className={`rounded-lg px-3 py-1 text-xs font-bold ${
-                          selectedIds.includes(item.id)
-                            ? "bg-green-600 text-white"
-                            : "bg-slate-200 text-slate-800"
-                        }`}
-                      >
-                        {selectedIds.includes(item.id) ? "Seleccionado" : "Seleccionar"}
-                      </button>
-
-                      <button
-                        onClick={() => editAnalysis(item)}
-                        className="rounded-lg bg-blue-100 px-3 py-1 text-xs font-bold text-blue-700"
-                      >
-                        Editar
-                      </button>
-
-                      <button
-                        onClick={() => deleteAnalysis(item.id)}
-                        className="rounded-lg bg-red-100 px-3 py-1 text-xs font-bold text-red-700"
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-                    {item.topPicks.map((pick, index) => (
-                      <div
-                        key={index}
-                        className={`rounded-xl border p-2 ${analysisCardClass(pick.probability)}`}
-                      >
-                        <p className="text-xs font-semibold text-slate-800">{pick.market}</p>
-                        <p className="text-xs text-slate-600">{pct(pick.probability)}</p>
-                      </div>
-                    ))}
-
-                    <div className="rounded-xl border border-slate-200 p-2">
-                      <p className="text-xs font-semibold text-slate-700">Stake</p>
-                      <input
-                        value={item.stake}
-                        onChange={(e) => updateSavedField(item.id, "stake", e.target.value)}
-                        className="mt-1 w-full rounded-lg border-2 border-slate-300 px-2 py-1 text-sm text-slate-900"
-                        placeholder="0"
-                      />
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 p-2">
-                      <p className="text-xs font-semibold text-slate-700">Cuota</p>
-                      <input
-                        value={item.odds}
-                        onChange={(e) => updateSavedField(item.id, "odds", e.target.value)}
-                        className="mt-1 w-full rounded-lg border-2 border-slate-300 px-2 py-1 text-sm text-slate-900"
-                        placeholder="0"
-                      />
-                    </div>
-
-                    <div className="rounded-xl border border-slate-200 p-2">
-                      <p className="text-xs font-semibold text-slate-700">Resultado</p>
-                      <select
-                        value={item.result}
-                        onChange={(e) => updateSavedResult(item.id, e.target.value as ResultStatus)}
-                        className="mt-1 w-full rounded-lg border-2 border-slate-300 px-2 py-1 text-sm text-slate-900"
-                      >
-                        <option value="pendiente">Pendiente</option>
-                        <option value="ganada">Ganada</option>
-                        <option value="perdida">Perdida</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
+</td>
+                </tr>
               ))}
-            </div>
-          )}
-        </section>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    );
+  }
 
-        <section className="rounded-2xl border border-fuchsia-200 bg-white p-3 shadow-sm">
-          <h2 className="mb-2 text-base font-bold text-fuchsia-700">Sugerencia Para Parlay o Individuales</h2>
-          {selectedAnalyses.length === 0 ? (
-            <p className="text-slate-600">Selecciona uno o más análisis guardados para generar parlays.</p>
-          ) : (
-            <div className="space-y-3">
-              <MiniParlayBlock title="Conservadora" color="fuchsia" data={generatedParlays.conservadora} />
-              <MiniParlayBlock title="Media" color="sky" data={generatedParlays.media} />
-              <MiniParlayBlock title="Agresiva" color="rose" data={generatedParlays.agresiva} />
-            </div>
-          )}
-        </section>
+  function StatCard({
+    title,
+    value,
+    subtitle,
+  }: {
+    title: string;
+    value: string;
+    subtitle?: string;
+  }) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <p className="text-sm text-slate-500">{title}</p>
+        <p className="mt-1 text-2xl font-bold text-slate-800">{value}</p>
+        {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
       </div>
-    </main>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  cls,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  cls: string;
-}) {
-  return (
-    <div>
-      <label className="mb-2 block text-sm font-bold text-slate-700">{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`w-full rounded-xl border-2 px-3 py-2 text-sm font-medium outline-none ${cls}`}
-      />
-    </div>
-  );
-}
-
-function SmallInfoBox({
-  label,
-  value,
-  sub,
-  tone,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  tone: "purple";
-}) {
-  const cls = { purple: "border-purple-200 bg-purple-50 text-purple-700" }[tone];
-
-  return (
-    <div className={`rounded-xl border p-3 ${cls}`}>
-      <p className="text-sm font-bold">{label}</p>
-      <p className="mt-1 text-xl font-bold text-slate-900">{value}</p>
-      <p className="text-xs text-slate-700">{sub}</p>
-    </div>
-  );
-}
-
-function SmallStatBox({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "blue" | "red" | "green" | "amber";
-}) {
-  const styles = {
-    blue: "bg-blue-50 border-blue-200 text-blue-700",
-    red: "bg-red-50 border-red-200 text-red-700",
-    green: "bg-green-50 border-green-200 text-green-700",
-    amber: "bg-amber-50 border-amber-200 text-amber-700",
-  } as const;
-
-  return (
-    <div className={`rounded-xl border p-3 ${styles[tone]}`}>
-      <p className="text-xs font-bold">{label}</p>
-      <p className="mt-1 text-lg font-bold">{value}</p>
-    </div>
-  );
-}
-
-function RiskInfoBox({
-  label,
-  value,
-  level,
-}: {
-  label: string;
-  value: string;
-  level: "alto" | "medio" | "bajo";
-}) {
-  return (
-    <div className={`rounded-xl border p-3 ${riskBadgeClass(level)}`}>
-      <p className="text-xs font-bold">{label}</p>
-      <p className="mt-1 text-lg font-bold">{value}</p>
-    </div>
-  );
-}
-
-function CompactRecommendation({
-  label,
-  pick,
-}: {
-  label: string;
-  pick: Pick | null;
-}) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5">
-      <p className="text-xs font-bold text-slate-600">{label}</p>
-      {pick ? (
-        <>
-          <p className="mt-1 text-sm font-bold text-slate-900">{pick.market}</p>
-          <p className="text-xs text-slate-600">{pct(pick.probability)}</p>
-        </>
-      ) : (
-        <p className="mt-1 text-xs text-slate-500">Sin señal clara</p>
-      )}
-    </div>
-  );
-}
-
-function MiniRecommendationCard({
-  title,
-  pick,
-  color,
-}: {
-  title: string;
-  pick: Pick | null;
-  color: "green" | "amber" | "rose";
-}) {
-  const styles = {
-    green: "border-green-200 bg-green-50 text-green-700",
-    amber: "border-amber-200 bg-amber-50 text-amber-700",
-    rose: "border-rose-200 bg-rose-50 text-rose-700",
-  } as const;
-
-  return (
-    <div className={`rounded-xl border p-2.5 ${styles[color]}`}>
-      <p className="text-xs font-bold">{title}</p>
-      {pick ? (
-        <>
-          <p className="mt-1 text-sm font-bold text-slate-900">{pick.market}</p>
-          <p className="text-xs text-slate-700">{pct(pick.probability)}</p>
-        </>
-      ) : (
-        <p className="mt-1 text-xs text-slate-700">Sin sugerencia</p>
-      )}
-    </div>
-  );
-}
-
-function ValueRow({ label, modelProb }: { label: string; modelProb: number }) {
-  const [odds, setOdds] = useState("");
-  const oddsNumber = Number(odds || 0);
-  const implied = oddsNumber > 0 ? (1 / oddsNumber) * 100 : 0;
-  const edge = modelProb - implied;
-
-  let status = "Sin cuota";
-  let statusClass = "bg-slate-100 text-slate-700 border-slate-300";
-
-  if (oddsNumber > 0 && edge > 5) {
-    status = "Valor alto";
-    statusClass = "bg-green-100 text-green-800 border-green-300";
-  } else if (oddsNumber > 0 && edge > 0) {
-    status = "Valor leve";
-    statusClass = "bg-emerald-100 text-emerald-800 border-emerald-300";
-  } else if (oddsNumber > 0) {
-    status = "Sin valor";
-    statusClass = "bg-rose-100 text-rose-800 border-rose-300";
+    );
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 p-3">
-      <p className="font-bold text-slate-900">{label}</p>
-      <p className="mt-1 text-sm text-slate-600">Probabilidad modelo: {pct(modelProb)}</p>
+    <main className="min-h-screen bg-slate-100 p-4 md:p-6">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="rounded-3xl bg-gradient-to-r from-emerald-600 to-teal-600 p-6 text-white shadow-lg">
+          <h1 className="text-3xl font-extrabold">Analizador de Apuestas Pro</h1>
+          <p className="mt-2 text-sm text-emerald-50">
+            Base completa para analizar probabilidad real, no adivinación.
+          </p>
+        </section>
 
-      <input
-        type="number"
-        step="0.01"
-        value={odds}
-        onChange={(e) => setOdds(e.target.value)}
-        placeholder="Ingresa cuota"
-        className="mt-3 w-full rounded-xl border-2 border-slate-300 px-3 py-2 text-sm font-medium text-slate-900 outline-none focus:border-slate-500"
-      />
+<div className="flex justify-end">
+  <button
+    onClick={resetAllForNewMatch}
+    className="rounded-xl bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-800"
+  >
+    Nuevo partido / Limpiar todo
+  </button>
+</div>
 
-      <button
-        onClick={() => setOdds("")}
-        className="mt-2 rounded-lg bg-slate-200 px-3 py-1 text-xs font-bold text-slate-700 hover:bg-slate-300"
-      >
-        Limpiar
-      </button>
+        <section className="grid gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">1. Información del partido</h2>
+            <div className="grid gap-3 md:grid-cols-2">
+              <input
+                placeholder="Equipo local"
+                value={matchInfo.local}
+                onChange={(e) => setMatchInfo((p) => ({ ...p, local: e.target.value }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <input
+                placeholder="Equipo visitante"
+                value={matchInfo.visitante}
+                onChange={(e) => setMatchInfo((p) => ({ ...p, visitante: e.target.value }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <input
+                placeholder="Liga / torneo"
+                value={matchInfo.liga}
+                onChange={(e) => setMatchInfo((p) => ({ ...p, liga: e.target.value }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
 
-      <div className="mt-3 space-y-1 text-sm">
-        <p className="text-slate-700">
-          Prob. implícita: <span className="font-bold">{oddsNumber > 0 ? pct(implied) : "-"}</span>
-        </p>
-        <p className="text-slate-700">
-          Edge: <span className="font-bold">{oddsNumber > 0 ? `${dec(edge)}%` : "-"}</span>
-        </p>
-      </div>
+              
 
-      <span className={`mt-3 inline-block rounded-full border px-3 py-1 text-xs font-bold ${statusClass}`}>
-        {status}
-      </span>
-    </div>
-  );
-}
+              <input
+                type="number"
+                placeholder="Posición local"
+                value={matchInfo.posicionLocal}
+                onChange={(e) =>
+                  setMatchInfo((p) => ({
+                    ...p,
+                    posicionLocal: e.target.value === "" ? "" : Number(e.target.value),
+                  }))
+                }
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <input
+                type="number"
+                placeholder="Posición visitante"
+                value={matchInfo.posicionVisitante}
+                onChange={(e) =>
+                  setMatchInfo((p) => ({
+                    ...p,
+                    posicionVisitante: e.target.value === "" ? "" : Number(e.target.value),
+                  }))
+                }
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <select
+                value={matchInfo.etapa}
+                onChange={(e) => setMatchInfo((p) => ({ ...p, etapa: e.target.value as MatchStage }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              >
+                {STAGES.map((s) => (
+                  <option key={s}>{s}</option>
+                ))}
+              </select>
+              <select
+                value={matchInfo.tipo}
+                onChange={(e) => setMatchInfo((p) => ({ ...p, tipo: e.target.value as MatchType }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              >
+                {TYPES.map((s) => (
+                  <option key={s}>{s}</option>
+                ))}
+              </select>
 
-function MiniParlayBlock({
-  title,
-  color,
-  data,
-}: {
-  title: string;
-  color: "fuchsia" | "sky" | "rose";
-  data: {
-    matches: { id: number; match: string; lines: Pick[] }[];
-    avgProbability: number;
-    confidence: string;
-  };
-}) {
-  const styles = {
-    fuchsia: "bg-fuchsia-50 border-fuchsia-200 text-fuchsia-700",
-    sky: "bg-sky-50 border-sky-200 text-sky-700",
-    rose: "bg-rose-50 border-rose-200 text-rose-700",
-  } as const;
+                    <div>
+  <label className="block text-sm font-semibold text-slate-700 mb-1">
+    Fecha del partido
+  </label>
+  <input
+    type="date"
+    value={matchInfo.fecha}
+    onChange={(e) =>
+      setMatchInfo((prev) => ({ ...prev, fecha: e.target.value }))
+    }
+    className="w-full rounded-xl border-2 border-slate-400 px-3 py-2 bg-white text-slate-900 font-semibold focus:border-slate-600 focus:ring-2 focus:ring-slate-300"
+  />
+</div>
 
-  return (
-    <div className={`rounded-xl border p-3 ${styles[color]}`}>
-      <div className="mb-2 flex flex-wrap items-center gap-3">
-        <span className={`inline-block h-3.5 w-3.5 rounded-full ${trafficLightClass(data.avgProbability)}`} />
-        <p className="text-sm font-bold text-slate-900">{title}</p>
-        <p className="text-xs text-slate-700">{pct(data.avgProbability)}</p>
-        <p className="text-xs text-slate-700">{data.confidence}</p>
-      </div>
+              <input
+                placeholder="Marcador global (opcional)"
+                value={matchInfo.globalScore}
+                onChange={(e) => setMatchInfo((p) => ({ ...p, globalScore: e.target.value }))}
+                className="rounded-xl border text-slate-900 px-3 py-2 md:col-span-2"
+              />
+              <textarea
+                placeholder="Notas del partido"
+                value={matchInfo.notas}
+                onChange={(e) => setMatchInfo((p) => ({ ...p, notas: e.target.value }))}
+                className="min-h-[90px] rounded-xl border text-slate-900 px-3 py-2 md:col-span-2"
+              />
+            </div>
+          </div>
 
-      <div className="space-y-2">
-        {data.matches.map((match) => (
-          <div
-            key={`${title}-${match.id}`}
-            className="rounded-xl border border-white bg-white/80 p-3"
-          >
-            <p className="mb-2 text-sm font-bold text-slate-900">{match.match}</p>
+          
 
-            <div className="grid gap-2 md:grid-cols-3">
-              {match.lines.map((line, idx) => (
-                <div
-                  key={`${match.id}-${line.market}-${idx}`}
-                  className="rounded-lg border border-slate-200 bg-slate-50 p-2"
+                 <div className={`rounded-2xl border p-4 shadow-sm ${getRefColors().wrapper}`}>
+                 <h2 className={`mb-4 text-xl font-bold ${getRefColors().header}`}>2. Árbitro</h2>
+            <div className="space-y-3">
+              <input
+  list="saved-referees"
+  placeholder="Nombre del árbitro"
+  value={refInfo.nombre}
+  onChange={(e) => setRefInfo((p) => ({ ...p, nombre: e.target.value }))}
+  className={`w-full rounded-xl border-2 px-3 py-2 font-semibold ${getRefColors().input}`}
+/>
+<datalist id="saved-referees">
+  {savedRefs.map((r) => (
+    <option key={r.nombre} value={r.nombre} />
+  ))}
+</datalist>
+              <input
+                type="number"
+                placeholder="Promedio amarillas"
+                value={refInfo.promedioAmarillas}
+                onChange={(e) =>
+                  setRefInfo((p) => ({
+                    ...p,
+                    promedioAmarillas: e.target.value === "" ? "" : Number(e.target.value),
+                  }))
+                }
+                className={`w-full rounded-xl px-3 py-2 font-semibold ${getRefColors().input}`}
+              />
+              <input
+                type="number"
+                placeholder="Promedio rojas"
+                value={refInfo.promedioRojas}
+                onChange={(e) =>
+                  setRefInfo((p) => ({
+                    ...p,
+                    promedioRojas: e.target.value === "" ? "" : Number(e.target.value),
+                  }))
+                }
+                className={`w-full rounded-xl px-3 py-2 font-semibold ${getRefColors().input}`}
+              />
+
+              <div className="flex gap-2">
+                <button
+                  onClick={saveReferee}
+                  className={`flex-1 rounded-xl px-4 py-2 font-semibold ${getRefColors().button}`}
                 >
-                  <p className="text-[11px] font-bold text-slate-600">Línea {idx + 1}</p>
-                  <p className="mt-1 text-xs font-bold text-slate-900">{line.market}</p>
-                  <span className={`mt-2 inline-block rounded-full px-2 py-1 text-[11px] font-bold ${badgeClass(line.probability)}`}>
-                    {pct(line.probability)}
-                  </span>
+                  Guardar árbitro
+                </button>
+              </div>
+
+              <select
+                value={selectedSavedRef}
+                onChange={(e) => {
+                  setSelectedSavedRef(e.target.value);
+                  loadRefereeByName(e.target.value);
+                }}
+                className={`w-full rounded-xl px-3 py-2 font-semibold ${getRefColors().input}`}
+              >
+                <option value="">Cargar árbitro guardado</option>
+                {savedRefs.map((r) => (
+                  <option key={r.nombre} value={r.nombre}>
+                    {r.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </section>
+
+        {renderTeamTable("3. Datos del local", "local", localRows, selectedSavedLocal, setSelectedSavedLocal)}
+        {renderTeamTable("4. Datos del visitante", "visitante", visitRows, selectedSavedVisit, setSelectedSavedVisit)}
+
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard title="Goles esperados local" value={expectedGoalsLocal.toFixed(2)} subtitle="Simulación base" />
+          <StatCard title="Goles esperados visitante" value={expectedGoalsVisit.toFixed(2)} subtitle="Simulación base" />
+          <StatCard title="Corners esperados" value={expectedTotalCorners.toFixed(2)} subtitle="Media ponderada" />
+          <StatCard title="Tarjetas esperadas" value={expectedTotalCards.toFixed(2)} subtitle="Equipos + árbitro" />
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">5-10. Resumen estadístico</h2>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <h3 className="mb-3 font-bold text-slate-700">Local</h3>
+                <div className="space-y-1 text-sm text-slate-700">
+                  <p>GF promedio: <b>{localStats.gfAvg.toFixed(2)}</b></p>
+                  <p>GC promedio: <b>{localStats.gcAvg.toFixed(2)}</b></p>
+                  <p>Total goles promedio: <b>{localStats.totalGoalsAvg.toFixed(2)}</b></p>
+                  <p>Over 1.5: <b>{formatPct(localStats.over15Pct)}</b></p>
+                  <p>Over 2.5: <b>{formatPct(localStats.over25Pct)}</b></p>
+                  <p>Under 3.5: <b>{formatPct(localStats.under35Pct)}</b></p>
+                  <p>BTTS: <b>{formatPct(localStats.bttsPct)}</b></p>
+                  <p>Corners promedio: <b>{localStats.totalCornersAvg.toFixed(2)}</b></p>
+                  <p>Tarjetas promedio: <b>{localStats.totalYellowAvg.toFixed(2)}</b></p>
+                  <p>G / E / P: <b>{formatPct(localStats.winPct)}</b> / <b>{formatPct(localStats.drawPct)}</b> / <b>{formatPct(localStats.lossPct)}</b></p>
                 </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 p-4">
+                <h3 className="mb-3 font-bold text-slate-700">Visitante</h3>
+                <div className="space-y-1 text-sm text-slate-700">
+                  <p>GF promedio: <b>{visitStats.gfAvg.toFixed(2)}</b></p>
+                  <p>GC promedio: <b>{visitStats.gcAvg.toFixed(2)}</b></p>
+                  <p>Total goles promedio: <b>{visitStats.totalGoalsAvg.toFixed(2)}</b></p>
+                  <p>Over 1.5: <b>{formatPct(visitStats.over15Pct)}</b></p>
+                  <p>Over 2.5: <b>{formatPct(visitStats.over25Pct)}</b></p>
+                  <p>Under 3.5: <b>{formatPct(visitStats.under35Pct)}</b></p>
+                  <p>BTTS: <b>{formatPct(visitStats.bttsPct)}</b></p>
+                  <p>Corners promedio: <b>{visitStats.totalCornersAvg.toFixed(2)}</b></p>
+                  <p>Tarjetas promedio: <b>{visitStats.totalYellowAvg.toFixed(2)}</b></p>
+                  <p>G / E / P: <b>{formatPct(visitStats.winPct)}</b> / <b>{formatPct(visitStats.drawPct)}</b> / <b>{formatPct(visitStats.lossPct)}</b></p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className={`rounded-2xl border p-4 shadow-sm ${trapAlert.color}`}>
+              <h3 className="text-lg font-bold">13. Alerta</h3>
+              <p className="mt-1 text-2xl font-extrabold">{trapAlert.label}</p>
+              <div className="mt-3 space-y-1 text-sm">
+                {trapAlert.reasons.length ? (
+                  trapAlert.reasons.map((r, i) => <p key={i}>• {r}</p>)
+                ) : (
+                  <p>• El partido luce estable según los datos cargados.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="text-lg font-bold text-slate-800">14. Volatilidad</h3>
+              <p className="mt-2 text-2xl font-extrabold text-slate-900">{volatilityLabel}</p>
+              <p className="mt-1 text-sm text-slate-500">Score: {volatilityScore.toFixed(1)}</p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="text-lg font-bold text-slate-800">11-12. Ponderación</h3>
+              <div className="mt-3 space-y-2 text-sm text-slate-700">
+                <p>Local goles simple vs ponderado: <b>{localStats.totalGoalsAvg.toFixed(2)}</b> / <b>{localStats.totalGoalsWeighted.toFixed(2)}</b></p>
+                <p>Visitante goles simple vs ponderado: <b>{visitStats.totalGoalsAvg.toFixed(2)}</b> / <b>{visitStats.totalGoalsWeighted.toFixed(2)}</b></p>
+                <p>Diferencia local: <b>{normalVsWeightedDiff.goalsLocal.toFixed(2)}</b></p>
+                <p>Diferencia visitante: <b>{normalVsWeightedDiff.goalsVisit.toFixed(2)}</b></p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">15. Simulación general</h2>
+            <div className="space-y-2 text-sm text-slate-700">
+              <p>Local gana: <b>{formatPct(simulation.localWin)}</b></p>
+              <p>Empate: <b>{formatPct(simulation.draw)}</b></p>
+              <p>Visitante gana: <b>{formatPct(simulation.awayWin)}</b></p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">16. Marcadores probables</h2>
+            <div className="space-y-2 text-sm text-slate-700">
+              {simulation.topScores.map((s) => (
+                <p key={s.score}>
+                  {s.score}: <b>{formatPct(s.prob)}</b>
+                </p>
               ))}
             </div>
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
-function TeamSection({
-  title,
-  rows,
-  onChange,
-  metrics,
-  titleColor,
-  boxColor,
-  headerBg,
-  inputClass,
-  suggestions,
-}: {
-  title: string;
-  rows: Row[];
-  onChange: (index: number, field: keyof Row, value: string) => void;
-  metrics: ReturnType<typeof getMetrics>;
-  titleColor: string;
-  boxColor: string;
-  headerBg: string;
-  inputClass: string;
-  suggestions: string[];
-}) {
-  return (
-    <section className={`rounded-2xl border bg-white p-4 shadow-sm ${boxColor}`}>
-      <h2 className={`mb-3 text-lg font-bold ${titleColor}`}>{title}</h2>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">17. Monte Carlo</h2>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                value={monteCarloRuns}
+                onChange={(e) => setMonteCarloRuns(Number(e.target.value) || 5000)}
+                className="w-32 rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <button
+                onClick={runMonteCarlo}
+                className="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
+              >
+                Ejecutar
+              </button>
+            </div>
 
-      <div className="overflow-x-auto">
-        <div className="min-w-[1460px] space-y-2">
-          <div
-            className={`grid grid-cols-[40px_230px_70px_70px_88px_88px_88px_88px_88px_88px_88px_76px] gap-2 rounded-xl px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-700 ${headerBg}`}
-          >
-            <div>#</div>
-            <div>Rival</div>
-            <div>GF</div>
-            <div>GC</div>
-            <div>Am Eq.</div>
-            <div>Am Rival</div>
-            <div>R Eq.</div>
-            <div>R Rival</div>
-            <div>C. Eq.</div>
-            <div>C. Rival</div>
-            <div>Total</div>
-            <div>G/E/P</div>
+            {monteCarloResult ? (
+              <div className="mt-4 space-y-1 text-sm text-slate-700">
+                <p>Local gana: <b>{formatPct(monteCarloResult.localWin)}</b></p>
+                <p>Empate: <b>{formatPct(monteCarloResult.draw)}</b></p>
+                <p>Visitante gana: <b>{formatPct(monteCarloResult.awayWin)}</b></p>
+                <p>Más de 1.5: <b>{formatPct(monteCarloResult.over15)}</b></p>
+                <p>Más de 2.5: <b>{formatPct(monteCarloResult.over25)}</b></p>
+                <p>BTTS Sí: <b>{formatPct(monteCarloResult.btts)}</b></p>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-500">Sin ejecutar todavía.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">18. Mejores probabilidades y picks</h2>
+
+            {bestPicks.length ? (
+              <div className="grid gap-3 md:grid-cols-2">
+                {bestPicks.map((pick) => (
+                  <div
+  key={pick.id}
+  className={`rounded-2xl border p-4 ${
+    pick.mercado.toLowerCase().includes("corner")
+      ? "border-blue-200 bg-blue-50"
+      : pick.mercado.toLowerCase().includes("tarjeta")
+      ? "border-yellow-200 bg-yellow-50"
+      : "border-emerald-200 bg-emerald-50"
+  }`}
+>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-bold text-emerald-800">{pick.mercado}</p>
+                        <p className="mt-1 text-sm text-emerald-700">
+                          Probabilidad: <b>{formatPct(pick.probabilidad)}</b>
+                        </p>
+                        <p className="text-sm text-emerald-700">Riesgo: <b>{pick.riesgo}</b></p>
+                        <p className="mt-2 text-sm text-emerald-700">{pick.motivo}</p>
+                      </div>
+                      <button
+                        onClick={() => addPickToParlay(pick)}
+                        className="rounded-xl bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+                      >
+                        + Parlay
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">Todavía no hay mercados suficientemente fuertes.</p>
+            )}
           </div>
 
-          {rows.map((row, index) => {
-            const total = toNumber(row.gf) + toNumber(row.gc);
-            const outcome = getOutcome(toNumber(row.gf), toNumber(row.gc));
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">19. Mercados descartados</h2>
+            <div className="space-y-2 text-sm text-slate-700">
+              {discardedMarkets.length ? (
+                discardedMarkets.map((m, i) => <p key={i}>• {m}</p>)
+              ) : (
+                <p>• No hay descartes fuertes por ahora.</p>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">20. Comparación contra cuotas</h2>
+            <div className="grid gap-3 md:grid-cols-4">
+              <input
+                type="number"
+                placeholder="GANA LOCAL"
+                value={odds.local}
+                onChange={(e) => setOdds((p) => ({ ...p, local: e.target.value === "" ? "" : Number(e.target.value) }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <input
+                type="number"
+                placeholder="EMPATE"
+                value={odds.empate}
+                onChange={(e) => setOdds((p) => ({ ...p, empate: e.target.value === "" ? "" : Number(e.target.value) }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <input
+                type="number"
+                placeholder="GANA VISITANTE"
+                value={odds.visitante}
+                onChange={(e) => setOdds((p) => ({ ...p, visitante: e.target.value === "" ? "" : Number(e.target.value) }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <input
+                type="number"
+                placeholder="Cuota Over +2.5"
+                value={odds.over25}
+                onChange={(e) => setOdds((p) => ({ ...p, over25: e.target.value === "" ? "" : Number(e.target.value) }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <input
+                type="number"
+                placeholder="Cuota BTTS (AMBOS MARCAN)"
+                value={odds.btts}
+                onChange={(e) => setOdds((p) => ({ ...p, btts: e.target.value === "" ? "" : Number(e.target.value) }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <input
+                type="number"
+                placeholder="Cuota corners +8.5"
+                value={odds.corners85}
+                onChange={(e) => setOdds((p) => ({ ...p, corners85: e.target.value === "" ? "" : Number(e.target.value) }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+              <input
+                type="number"
+                placeholder="Cuota tarjetas +4.5"
+                value={odds.cards45}
+                onChange={(e) => setOdds((p) => ({ ...p, cards45: e.target.value === "" ? "" : Number(e.target.value) }))}
+                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
+              />
+            </div>
+
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-[720px] w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-100 text-left text-slate-700">
+                    <th className="border text-slate-900 px-3 py-2">Mercado</th>
+                    <th className="border text-slate-900 px-3 py-2">Sistema</th>
+                    <th className="border text-slate-900 px-3 py-2">Casa</th>
+                    <th className="border text-slate-900 px-3 py-2">Diferencia</th>
+                    <th className="border text-slate-900 px-3 py-2">Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {valueComparison.map((row) => {
+                    const diff = row.sistema - row.casa;
+                    return (
+                      <tr key={row.mercado}>
+                        <td className="border text-slate-900 px-3 py-2">{row.mercado}</td>
+                        <td className="border text-slate-900 px-3 py-2">{formatPct(row.sistema)}</td>
+                        <td className="border text-slate-900 px-3 py-2">{formatPct(row.casa)}</td>
+                        <td className="border text-slate-900 px-3 py-2">{diff.toFixed(1)}%</td>
+                        <td className="border text-slate-900 px-3 py-2 font-semibold">
+                          {diff >= 5 ? "✔ Sí" : "❌ No"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">Parlay Builder</h2>
+            <div className="space-y-3">
+              {parlay.length ? (
+                parlay.map((p) => (
+                  <div key={p.id} className="rounded-xl border border-slate-200 p-3">
+                    <p className="font-semibold text-slate-800">{p.mercado}</p>
+                    <p className="text-sm text-slate-600">{formatPct(p.probabilidad)} · Riesgo {p.riesgo}</p>
+                    <button
+                      onClick={() => removePickFromParlay(p.id)}
+                      className="mt-2 text-sm font-semibold text-rose-600 hover:text-rose-700"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-slate-500">No has agregado picks todavía.</p>
+              )}
+
+              <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+                <p>Correlación: <b>{correlationLabel()}</b></p>
+                <p>Riesgo total: <b>{parlayRisk}</b></p>
+                <p>Confianza media: <b>{formatPct(avgParlayProb)}</b></p>
+              </div>
+            </div>
+          </div>
+        </section>
+                      
+
+        <section className="rounded-2xl border-2 border-violet-500 bg-violet-100 p-4 shadow-sm">
+  <h2 className="text-xl font-bold text-violet-950">Rivales en común</h2>
+  <p className="mt-1 text-sm text-violet-800">
+    Esto ayuda a comparar cómo rindieron ambos equipos frente a los mismos rivales.
+  </p>
+
+  <div className="mt-4 overflow-x-auto">
+    <table className="min-w-[760px] w-full text-sm">
+      <thead>
+        <tr className="bg-violet-300 text-left text-violet-950">
+          <th className="border border-violet-500 px-3 py-2">Rival</th>
+          <th className="border border-violet-500 px-3 py-2">Local</th>
+          <th className="border border-violet-500 px-3 py-2">Visitante</th>
+          <th className="border border-violet-500 px-3 py-2">Lectura</th>
+        </tr>
+      </thead>
+      <tbody>
+        {commonOpponents.length > 0 ? (
+          commonOpponents.map((item, i) => {
+            const localDiff = item.localGF - item.localGC;
+            const visitDiff = item.visitGF - item.visitGC;
+
+            let lectura = "Parejo";
+            let lecturaClass = "text-slate-900";
+
+            if (localDiff > visitDiff) {
+              lectura = "Ventaja local";
+              lecturaClass = "text-blue-800 font-bold";
+            } else if (visitDiff > localDiff) {
+              lectura = "Ventaja visitante";
+              lecturaClass = "text-red-800 font-bold";
+            }
 
             return (
-              <div
-                key={index}
-                className="grid grid-cols-[40px_230px_70px_70px_88px_88px_88px_88px_88px_88px_88px_76px] items-center gap-2"
-              >
-                <div className="px-2 text-sm font-bold text-slate-700">{index + 1}</div>
-
-                <input
-                  list={`${title}-rivals`}
-                  className={`rounded-xl border-2 px-3 py-2 text-sm outline-none ${inputClass}`}
-                  value={row.rival}
-                  onChange={(e) => onChange(index, "rival", e.target.value)}
-                />
-
-                <input
-                  type="number"
-                  className={`rounded-xl border-2 px-3 py-2 text-sm outline-none ${inputClass}`}
-                  value={row.gf}
-                  onChange={(e) => onChange(index, "gf", e.target.value)}
-                />
-
-                <input
-                  type="number"
-                  className={`rounded-xl border-2 px-3 py-2 text-sm outline-none ${inputClass}`}
-                  value={row.gc}
-                  onChange={(e) => onChange(index, "gc", e.target.value)}
-                />
-
-                <input
-                  type="number"
-                  className={`rounded-xl border-2 px-3 py-2 text-sm outline-none ${inputClass}`}
-                  value={row.ownCards}
-                  onChange={(e) => onChange(index, "ownCards", e.target.value)}
-                />
-
-                <input
-                  type="number"
-                  className={`rounded-xl border-2 px-3 py-2 text-sm outline-none ${inputClass}`}
-                  value={row.oppCards}
-                  onChange={(e) => onChange(index, "oppCards", e.target.value)}
-                />
-
-                <input
-                  type="number"
-                  className={`rounded-xl border-2 px-3 py-2 text-sm outline-none ${inputClass}`}
-                  value={row.ownRedCards}
-                  onChange={(e) => onChange(index, "ownRedCards", e.target.value)}
-                />
-
-                <input
-                  type="number"
-                  className={`rounded-xl border-2 px-3 py-2 text-sm outline-none ${inputClass}`}
-                  value={row.oppRedCards}
-                  onChange={(e) => onChange(index, "oppRedCards", e.target.value)}
-                />
-
-                <input
-                  type="number"
-                  className={`rounded-xl border-2 px-3 py-2 text-sm outline-none ${inputClass}`}
-                  value={row.ownCorners}
-                  onChange={(e) => onChange(index, "ownCorners", e.target.value)}
-                />
-
-                <input
-                  type="number"
-                  className={`rounded-xl border-2 px-3 py-2 text-sm outline-none ${inputClass}`}
-                  value={row.oppCorners}
-                  onChange={(e) => onChange(index, "oppCorners", e.target.value)}
-                />
-
-                <div className="rounded-xl bg-slate-100 px-3 py-2 text-sm font-bold text-slate-800">
-                  {total}
-                </div>
-
-                <div className="text-center">
-                  <span className={`inline-block rounded-full border px-3 py-1 text-xs font-bold ${resultBadgeClass(outcome)}`}>
-                    {outcome}
-                  </span>
-                </div>
-              </div>
+              <tr key={`${item.rival}-${i}`} className="odd:bg-white even:bg-violet-50">
+                <td className="border border-violet-400 px-3 py-2 font-bold text-violet-950">
+                  {item.rival}
+                </td>
+                <td className="border border-violet-400 bg-white px-3 py-2 font-semibold text-slate-900">
+                  {item.localGF}-{item.localGC}
+                </td>
+                <td className="border border-violet-400 bg-white px-3 py-2 font-semibold text-slate-900">
+                  {item.visitGF}-{item.visitGC}
+                </td>
+                <td className={`border border-violet-400 bg-white px-3 py-2 ${lecturaClass}`}>
+                  {lectura}
+                </td>
+              </tr>
             );
-          })}
+          })
+        ) : (
+          <tr>
+            <td
+              colSpan={4}
+              className="border border-violet-400 bg-white px-3 py-4 text-center font-medium text-violet-900"
+            >
+              Aún no hay rivales en común detectados.
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  </div>
+</section>
 
-          <datalist id={`${title}-rivals`}>
-            {suggestions.map((name) => (
-              <option key={name} value={name} />
-            ))}
-          </datalist>
+<section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+  <h2 className="mb-4 text-xl font-bold text-slate-800">Perfil por equipo</h2>
+
+  <div className="grid gap-4 md:grid-cols-2">
+    <div className="rounded-2xl border-2 border-blue-400 bg-blue-50 p-4">
+      <h3 className="text-lg font-bold text-blue-900">
+        {matchInfo.local || "Equipo local"}
+      </h3>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div>
+          <p className="mb-1 text-sm font-semibold text-blue-900">Goles</p>
+          <span className={`inline-flex rounded-lg px-2 py-1 text-sm font-bold ${getProfileBadgeClass(localProfile.goles)}`}>
+            {localProfile.goles}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-blue-900">BTTS</p>
+          <span className={`inline-flex rounded-lg px-2 py-1 text-sm font-bold ${getProfileBadgeClass(localProfile.btts)}`}>
+            {localProfile.btts}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-blue-900">Corners</p>
+          <span className={`inline-flex rounded-lg px-2 py-1 text-sm font-bold ${getProfileBadgeClass(localProfile.corners)}`}>
+            {localProfile.corners}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-blue-900">Tarjetas</p>
+          <span className={`inline-flex rounded-lg px-2 py-1 text-sm font-bold ${getProfileBadgeClass(localProfile.tarjetas)}`}>
+            {localProfile.tarjetas}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-blue-900">Estabilidad</p>
+          <span className="inline-flex rounded-lg border border-blue-300 bg-white px-2 py-1 text-sm font-bold text-blue-900">
+            {localProfile.estabilidad}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-blue-900">Estilo</p>
+          <span className="inline-flex rounded-lg border border-blue-300 bg-white px-2 py-1 text-sm font-bold text-blue-900">
+            {localProfile.estilo}
+          </span>
         </div>
       </div>
+    </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-15">
-        {[
-          ["O1.5", pct(metrics.over15)],
-          ["O2.5", pct(metrics.over25)],
-          ["O3.5", pct(metrics.over35)],
-          ["U3.5", pct(metrics.under35)],
-          ["BTTS", pct(metrics.btts)],
-          ["GF prom.", metrics.avgGF.toFixed(2)],
-          ["GC prom.", metrics.avgGC.toFixed(2)],
-          ["Am eq.", metrics.avgOwnCards.toFixed(2)],
-          ["Am rival", metrics.avgOppCards.toFixed(2)],
-          ["Am total", metrics.avgTotalCards.toFixed(2)],
-          ["R eq.", metrics.avgOwnRedCards.toFixed(2)],
-          ["R rival", metrics.avgOppRedCards.toFixed(2)],
-          ["R total", metrics.avgTotalRedCards.toFixed(2)],
-          ["Corn eq.", metrics.avgOwnCorners.toFixed(2)],
-          ["Corn rival", metrics.avgOppCorners.toFixed(2)],
-        ].map(([label, value]) => (
-          <div key={String(label)} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs font-bold text-slate-600">{label}</p>
-            <p className="text-lg font-bold text-slate-900">{value}</p>
+    <div className="rounded-2xl border-2 border-red-400 bg-red-50 p-4">
+      <h3 className="text-lg font-bold text-red-900">
+        {matchInfo.visitante || "Equipo visitante"}
+      </h3>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div>
+          <p className="mb-1 text-sm font-semibold text-red-900">Goles</p>
+          <span className={`inline-flex rounded-lg px-2 py-1 text-sm font-bold ${getProfileBadgeClass(visitProfile.goles)}`}>
+            {visitProfile.goles}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-red-900">BTTS</p>
+          <span className={`inline-flex rounded-lg px-2 py-1 text-sm font-bold ${getProfileBadgeClass(visitProfile.btts)}`}>
+            {visitProfile.btts}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-red-900">Corners</p>
+          <span className={`inline-flex rounded-lg px-2 py-1 text-sm font-bold ${getProfileBadgeClass(visitProfile.corners)}`}>
+            {visitProfile.corners}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-red-900">Tarjetas</p>
+          <span className={`inline-flex rounded-lg px-2 py-1 text-sm font-bold ${getProfileBadgeClass(visitProfile.tarjetas)}`}>
+            {visitProfile.tarjetas}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-red-900">Estabilidad</p>
+          <span className="inline-flex rounded-lg border border-red-300 bg-white px-2 py-1 text-sm font-bold text-red-900">
+            {visitProfile.estabilidad}
+          </span>
+        </div>
+        <div>
+          <p className="mb-1 text-sm font-semibold text-red-900">Estilo</p>
+          <span className="inline-flex rounded-lg border border-red-300 bg-white px-2 py-1 text-sm font-bold text-red-900">
+            {visitProfile.estilo}
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div className="rounded-xl border border-green-200 bg-white p-4 mt-4">
+  <h2 className="text-lg font-bold text-green-700">
+    Optimización Automática 🧠
+  </h2>
+
+  {sugerencias.map((s, i) => (
+    <p key={i}>{s}</p>
+  ))}
+</div>
+
+
+<div className="rounded-xl border border-purple-200 bg-white p-4 mt-4">
+  <h2 className="text-lg font-bold text-purple-700">
+    Sistema DIOS 🤖
+  </h2>
+
+  <p>Riesgo total: {resultadoDios.riesgo}</p>
+  <p>Veredicto: {resultadoDios.veredicto}</p>
+
+  {resultadoDios.tieneTrampa && (
+    <p className="text-red-600">⚠️ Hay equipos trampa</p>
+  )}
+
+  {resultadoDios.malaCombinacion && (
+    <p className="text-red-600">💀 Mala combinación</p>
+  )}
+</div>
+
+<section className="rounded-2xl border border-purple-200 bg-white p-4 shadow-sm">
+  <h2 className="text-xl font-bold text-purple-700">Sistema DIOS</h2>
+
+  <div className="mt-3 space-y-2 text-sm text-slate-700">
+    <p>Riesgo total: <b>{resultadoDios.riesgo}</b></p>
+    <p>Veredicto: <b>{resultadoDios.veredicto}</b></p>
+    <p>Trampas: <b>{resultadoDios.tieneTrampa ? "Sí" : "No"}</b></p>
+    <p>Mezcla mala: <b>{resultadoDios.malaCombinacion ? "Sí" : "No"}</b></p>
+  </div>
+
+  <div className="mt-4">
+    <h3 className="font-semibold text-slate-800">Sugerencias</h3>
+    <div className="mt-2 space-y-1 text-sm text-slate-700">
+      {sugerencias.length ? (
+        sugerencias.map((s, i) => <p key={i}>• {s}</p>)
+      ) : (
+        <p>• Sin sugerencias por ahora.</p>
+      )}
+    </div>
+  </div>
+</section>
+
+<section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+  <h2 className="mb-4 text-xl font-bold text-slate-800">Lectura combinada del partido</h2>
+
+  <div className="grid gap-4 md:grid-cols-3">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm text-slate-500">Cruce de estilos</p>
+      <p className="mt-1 text-lg font-bold text-slate-900">{combinedReading.cruce}</p>
+    </div>
+
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm text-slate-500">Lectura de goles</p>
+      <p className="mt-1 text-lg font-bold text-slate-900">{combinedReading.lecturaGoles}</p>
+    </div>
+
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm text-slate-500">Lectura de BTTS</p>
+      <p className="mt-1 text-lg font-bold text-slate-900">{combinedReading.lecturaBTTS}</p>
+    </div>
+
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm text-slate-500">Lectura de corners</p>
+      <p className="mt-1 text-lg font-bold text-slate-900">{combinedReading.lecturaCorners}</p>
+    </div>
+
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm text-slate-500">Lectura de tarjetas</p>
+      <p className="mt-1 text-lg font-bold text-slate-900">{combinedReading.lecturaTarjetas}</p>
+    </div>
+
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <p className="text-sm text-slate-500">Riesgo del cruce</p>
+      <p className="mt-1 text-lg font-bold text-slate-900">{combinedReading.riesgo}</p>
+    </div>
+  </div>
+</section>
+
+
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-4 text-xl font-bold text-slate-800">Perfil final del partido</h2>
+          <div className="grid gap-3 md:grid-cols-5">
+            <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+              <p className="text-slate-500">Tipo</p>
+              <p className="font-bold">{profile.tipo}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+              <p className="text-slate-500">Goles</p>
+              <p className="font-bold">{profile.goles}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+              <p className="text-slate-500">Tarjetas</p>
+              <p className="font-bold">{profile.tarjetas}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+              <p className="text-slate-500">Corners</p>
+              <p className="font-bold">{profile.corners}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+              <p className="text-slate-500">Riesgo</p>
+              <p className="font-bold">{profile.riesgo}</p>
+            </div>
           </div>
-        ))}
+        </section>
       </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <div className="rounded-xl border border-green-200 bg-green-50 p-3">
-          <p className="text-xs font-bold text-green-700">Ganados</p>
-          <p className="text-xl font-bold text-slate-900">{metrics.winCount}</p>
-        </div>
-        <div className="rounded-xl border border-slate-300 bg-slate-50 p-3">
-          <p className="text-xs font-bold text-slate-700">Empatados</p>
-          <p className="text-xl font-bold text-slate-900">{metrics.drawCount}</p>
-        </div>
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3">
-          <p className="text-xs font-bold text-red-700">Perdidos</p>
-          <p className="text-xl font-bold text-slate-900">{metrics.lossCount}</p>
-        </div>
-      </div>
-    </section>
+    </main>
   );
 }
