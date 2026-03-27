@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { analizarParlay } from "@/lib/sistemaDios";
 import { optimizarParlay } from "@/lib/optimizador";
+import { guardarEquipoNube, obtenerEquiposNube, type EquipoGuardado } from "@/lib/equiposNube";
 //import { analizarParlay } from "@/lib/sistemaDios";
 
 type MatchStage =
@@ -255,6 +256,8 @@ function analyzeRows(rows: TeamRow[]) {
   };
 }
 
+
+
 function getSectionColors(side: TeamCondition) {
   if (side === "local") {
     return {
@@ -356,6 +359,46 @@ export default function AnalizadorApuestasPage() {
 
     
   });
+
+  const [equiposNube, setEquiposNube] = useState<EquipoGuardado[]>([]);
+const [cargandoEquiposNube, setCargandoEquiposNube] = useState(false);
+
+async function cargarEquiposNube() {
+  try {
+    setCargandoEquiposNube(true);
+    const data = await obtenerEquiposNube();
+    setEquiposNube(data ?? []);
+  } catch (error) {
+    console.error("Error cargando equipos de nube:", error);
+  } finally {
+    setCargandoEquiposNube(false);
+  }
+}
+
+async function guardarEquipoActualEnNube() {
+  try {
+    const nombre = matchInfo.local?.trim();
+
+    if (!nombre) {
+      alert("Primero escribe un equipo local para guardar.");
+      return;
+    }
+
+    await guardarEquipoNube({
+      nombre,
+      liga: "",
+      tipo: "",
+      mercado_ideal: "",
+    });
+
+    await cargarEquiposNube();
+    alert("Equipo guardado en la nube.");
+  } catch (error) {
+    console.error("Error guardando equipo en nube:", error);
+    alert("No se pudo guardar en la nube.");
+  }
+}
+
 
 
 
@@ -490,6 +533,47 @@ const localProfile = useMemo(() => {
     estilo,
   };
 }, [localStats]);
+
+useEffect(() => {
+  cargarEquiposNube();
+}, []);
+
+<section className="rounded-2xl border border-sky-200 bg-white p-4 shadow-sm">
+  <h2 className="text-xl font-bold text-sky-700">Equipos en la nube</h2>
+
+  <div className="mt-3 flex flex-wrap gap-2">
+    <button
+      type="button"
+      onClick={guardarEquipoActualEnNube}
+      className="rounded-xl border border-sky-300 px-4 py-2 text-sm font-semibold text-sky-700"
+    >
+      Guardar equipo local en nube
+    </button>
+
+    <button
+      type="button"
+      onClick={cargarEquiposNube}
+      className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
+    >
+      Recargar nube
+    </button>
+  </div>
+
+  <div className="mt-4 space-y-2">
+    {cargandoEquiposNube ? (
+      <p className="text-sm text-slate-500">Cargando equipos...</p>
+    ) : equiposNube.length === 0 ? (
+      <p className="text-sm text-slate-500">No hay equipos guardados todavía.</p>
+    ) : (
+      equiposNube.map((equipo) => (
+        <div key={equipo.id} className="rounded-xl border border-slate-200 p-3">
+          <p className="font-semibold text-slate-800">{equipo.nombre}</p>
+          <p className="text-sm text-slate-500">{equipo.liga || "Sin liga"}</p>
+        </div>
+      ))
+    )}
+  </div>
+</section>
 
 function getCombinedReading(
   localProfile: {
@@ -2084,8 +2168,8 @@ function resetAllForNewMatch() {
 </div>
 
 
-<div className="rounded-xl border border-purple-200 bg-white p-4 mt-4">
-  <h2 className="text-lg font-bold text-purple-700">
+<div className="rounded-xl border text-purple-900 bg-white p-4 mt-4">
+  <h2 className="text-lg font-bold text-purple-1200">
     Sistema DIOS 🤖
   </h2>
 
@@ -2093,7 +2177,7 @@ function resetAllForNewMatch() {
   <p>Veredicto: {resultadoDios.veredicto}</p>
 
   {resultadoDios.tieneTrampa && (
-    <p className="text-red-600">⚠️ Hay equipos trampa</p>
+    <p className="text-red-500">⚠️ Hay equipos trampa</p>
   )}
 
   {resultadoDios.malaCombinacion && (
