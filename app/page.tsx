@@ -523,12 +523,25 @@ export default function AnalizadorApuestasPage() {
         mercado_ideal: "",
       });
 
+console.log("Equipo a guardar:", {
+  nombre,
+  // aquí todos los campos que mandas
+});
+
       await cargarEquiposNube();
       alert("Equipo guardado en la nube.");
-    } catch (error) {
-      console.error("Error guardando equipo en nube:", error);
-      alert("No se pudo guardar en la nube.");
-    }
+    } catch (error: any) {
+  console.error("Error guardando equipo en nube:", error);
+  console.error("message:", error?.message);
+  console.error("details:", error?.details);
+  console.error("hint:", error?.hint);
+  console.error("code:", error?.code);
+  alert(
+    `No se pudo guardar en la nube.\n` +
+    `message: ${error?.message ?? "sin message"}\n` +
+    `code: ${error?.code ?? "sin code"}`
+  );
+}
   }
 
   async function cargarPartidosNube() {
