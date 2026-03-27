@@ -1498,7 +1498,7 @@ export default function AnalizadorApuestasPage() {
         <section className="rounded-3xl bg-gradient-to-r from-emerald-600 to-teal-600 p-6 text-white shadow-lg">
           <h1 className="text-3xl font-extrabold">Analizador de Apuestas Pro</h1>
           <p className="mt-2 text-sm text-emerald-50">
-            Base completa para analizar probabilidad real, no adivinación.
+            PROGRAMA PARA ANLIZAR APUESTAS
           </p>
         </section>
 
