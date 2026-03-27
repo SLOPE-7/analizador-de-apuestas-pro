@@ -98,8 +98,12 @@ function createEmptyRows(): TeamRow[] {
     ownRed: "",
     oppRed: "",
     estado: "",
+
+    
   }));
 }
+
+
 
 function toNumber(value: number | ""): number {
   return value === "" ? 0 : Number(value);

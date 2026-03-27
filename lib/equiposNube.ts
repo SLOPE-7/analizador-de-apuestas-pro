@@ -11,10 +11,7 @@ export type EquipoGuardado = {
 
 export async function guardarEquipoNube(equipo: EquipoGuardado) {
   const { error } = await supabase.from("equipos_guardados").insert([equipo]);
-
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 }
 
 export async function obtenerEquiposNube() {
@@ -23,9 +20,6 @@ export async function obtenerEquiposNube() {
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (error) {
-    throw error;
-  }
-
+  if (error) throw error;
   return data;
 }
