@@ -1,24 +1,27 @@
 import { supabase } from "@/lib/supabase";
 
-export type EquipoGuardado = {
+export type PartidoGuardado = {
   id?: number;
-  nombre: string;
+  nombre_partido: string;
+  local: string;
+  visitante: string;
   liga?: string | null;
-  tipo?: string | null;
-  mercado_ideal?: string | null;
+  fecha_partido?: string | null;
+  arbitro?: string | null;
+  payload: unknown;
   created_at?: string;
 };
 
-export async function guardarEquipoNube(equipo: EquipoGuardado) {
+export async function guardarPartidoNube(partido: PartidoGuardado) {
   if (!supabase) throw new Error("Supabase no configurado");
-  const { error } = await supabase.from("equipos_guardados").insert([equipo]);
+  const { error } = await supabase.from("partidos_guardados").insert([partido]);
   if (error) throw error;
 }
 
-export async function obtenerEquiposNube() {
+export async function obtenerPartidosNube() {
   if (!supabase) throw new Error("Supabase no configurado");
   const { data, error } = await supabase
-    .from("equipos_guardados")
+    .from("partidos_guardados")
     .select("*")
     .order("created_at", { ascending: false });
 
