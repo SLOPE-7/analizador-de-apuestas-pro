@@ -786,9 +786,6 @@ const simulation = useMemo(() => {
     let awayWin = 0;
     const scores: ScoreProb[] = [];
 
-
-
-    
     for (let l = 0; l <= 4; l++) {
       for (let v = 0; v <= 4; v++) {
         const p = poisson(expectedGoalsLocal, l) * poisson(expectedGoalsVisit, v);
@@ -799,57 +796,6 @@ const simulation = useMemo(() => {
       }
     }
 
-const chartGoalsData = useMemo(
-  () => [
-    {
-      nombre: "Local",
-      golesFavor: Number(localStats.gfWeighted.toFixed(2)),
-      golesContra: Number(localStats.gcWeighted.toFixed(2)),
-    },
-    {
-      nombre: "Visitante",
-      golesFavor: Number(visitStats.gfWeighted.toFixed(2)),
-      golesContra: Number(visitStats.gcWeighted.toFixed(2)),
-    },
-  ],
-  [
-    localStats.gfWeighted,
-    localStats.gcWeighted,
-    visitStats.gfWeighted,
-    visitStats.gcWeighted,
-  ]
-);
-
-const chartExtrasData = useMemo(
-  () => [
-    {
-      nombre: "Corners",
-      local: Number(localStats.cornersWeighted.toFixed(2)),
-      visitante: Number(visitStats.cornersWeighted.toFixed(2)),
-    },
-    {
-      nombre: "Tarjetas",
-      local: Number(localStats.cardsWeighted.toFixed(2)),
-      visitante: Number(visitStats.cardsWeighted.toFixed(2)),
-    },
-  ],
-  [
-    localStats.cornersWeighted,
-    visitStats.cornersWeighted,
-    localStats.cardsWeighted,
-    visitStats.cardsWeighted,
-  ]
-);
-
-const chartProbData = useMemo(
-  () => [
-    { nombre: "Local", prob: Number(simulation.localWin.toFixed(1)) },
-    { nombre: "Empate", prob: Number(simulation.draw.toFixed(1)) },
-    { nombre: "Visitante", prob: Number(simulation.awayWin.toFixed(1)) },
-  ],
-  [simulation.localWin, simulation.draw, simulation.awayWin]
-);
-
     const topScores = scores.sort((a, b) => b.prob - a.prob).slice(0, 5);
 
     return {
@@ -859,6 +805,57 @@ const chartProbData = useMemo(
       topScores,
     };
   }, [expectedGoalsLocal, expectedGoalsVisit]);
+
+  const chartGoalsData = useMemo(
+    () => [
+      {
+        nombre: "Local",
+        golesFavor: Number(localStats.gfWeighted.toFixed(2)),
+        golesContra: Number(localStats.gcWeighted.toFixed(2)),
+      },
+      {
+        nombre: "Visitante",
+        golesFavor: Number(visitStats.gfWeighted.toFixed(2)),
+        golesContra: Number(visitStats.gcWeighted.toFixed(2)),
+      },
+    ],
+    [
+      localStats.gfWeighted,
+      localStats.gcWeighted,
+      visitStats.gfWeighted,
+      visitStats.gcWeighted,
+    ]
+  );
+
+  const chartExtrasData = useMemo(
+    () => [
+      {
+        nombre: "Corners",
+        local: Number(localStats.cornersWeighted.toFixed(2)),
+        visitante: Number(visitStats.cornersWeighted.toFixed(2)),
+      },
+      {
+        nombre: "Tarjetas",
+        local: Number(localStats.cardsWeighted.toFixed(2)),
+        visitante: Number(visitStats.cardsWeighted.toFixed(2)),
+      },
+    ],
+    [
+      localStats.cornersWeighted,
+      visitStats.cornersWeighted,
+      localStats.cardsWeighted,
+      visitStats.cardsWeighted,
+    ]
+  );
+
+  const chartProbData = useMemo(
+    () => [
+      { nombre: "Local", prob: Number(simulation.localWin.toFixed(1)) },
+      { nombre: "Empate", prob: Number(simulation.draw.toFixed(1)) },
+      { nombre: "Visitante", prob: Number(simulation.awayWin.toFixed(1)) },
+    ],
+    [simulation.localWin, simulation.draw, simulation.awayWin]
+  );
 
 
   const trapAlert = useMemo(() => {
