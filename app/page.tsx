@@ -518,6 +518,13 @@ export default function AnalizadorApuestasPage() {
     topScores: ScoreProb[];
   } | null>(null);
 
+const [iaData, setIaData] = useState({
+  tarjetas: "" as number | "",
+  corners: "" as number | "",
+  btts: "" as "" | "Si" | "No",
+  ganador: "" as "" | "Local" | "Visitante",
+});
+
 const partidos = useMemo(() => {
   const items = [];
 
@@ -1694,10 +1701,10 @@ function resetAllForNewMatch() {
                   "BTTS",
                   "Corners propio",
                   "Corners rival",
-                  "Tarj. propio",
-                  "Tarj. rival",
-                  "Rojas propio",
-                  "Rojas rival",
+                  "TA. propio",
+                  "TA. rival",
+                  "TR propio",
+                  "TR rival",
                   "Estado",
                 ].map((h) => (
                   <th key={h} className="border border-slate-200 px-2 py-2 text-left font-semibold">
@@ -1738,7 +1745,7 @@ function resetAllForNewMatch() {
                       type="number"
                       value={row.gf}
                       onChange={(e) => handleRowChange(side, i, "gf", e.target.value)}
-                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                      className={`w-16 rounded-md px-2 py-1 font-semibold ${colors.input}`}
                     />
                   </td>
                   <td className="border border-slate-200 p-1">
@@ -1746,7 +1753,7 @@ function resetAllForNewMatch() {
                       type="number"
                       value={row.gc}
                       onChange={(e) => handleRowChange(side, i, "gc", e.target.value)}
-                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                      className={`w-16 rounded-md px-2 py-1 font-semibold ${colors.input}`}
                     />
                   </td>
                   <td className="border border-slate-200 px-2 py-1 font-semibold text-slate-700">
@@ -1760,7 +1767,7 @@ function resetAllForNewMatch() {
                       type="number"
                       value={row.ownCorners}
                       onChange={(e) => handleRowChange(side, i, "ownCorners", e.target.value)}
-                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                      className={`w-16 rounded-md px-2 py-1 font-semibold ${colors.input}`}
                     />
                   </td>
                   <td className="border border-slate-200 p-1">
@@ -1768,7 +1775,7 @@ function resetAllForNewMatch() {
                       type="number"
                       value={row.oppCorners}
                       onChange={(e) => handleRowChange(side, i, "oppCorners", e.target.value)}
-                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                      className={`w-16 rounded-md px-2 py-1 font-semibold ${colors.input}`}
                     />
                   </td>
                   <td className="border border-slate-200 p-1">
@@ -1776,7 +1783,7 @@ function resetAllForNewMatch() {
                       type="number"
                       value={row.ownYellow}
                       onChange={(e) => handleRowChange(side, i, "ownYellow", e.target.value)}
-                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                      className={`w-16 rounded-md px-2 py-1 font-semibold ${colors.input}`}
                     />
                   </td>
                   <td className="border border-slate-200 p-1">
@@ -1784,7 +1791,7 @@ function resetAllForNewMatch() {
                       type="number"
                       value={row.oppYellow}
                       onChange={(e) => handleRowChange(side, i, "oppYellow", e.target.value)}
-                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                      className={`w-16 rounded-md px-2 py-1 font-semibold ${colors.input}`}
                     />
                   </td>
                   <td className="border border-slate-200 p-1">
@@ -1792,7 +1799,7 @@ function resetAllForNewMatch() {
                       type="number"
                       value={row.ownRed}
                       onChange={(e) => handleRowChange(side, i, "ownRed", e.target.value)}
-                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                      className={`w-16 rounded-md px-2 py-1 font-semibold ${colors.input}`}
                     />
                   </td>
                   <td className="border border-slate-200 p-1">
@@ -1800,7 +1807,7 @@ function resetAllForNewMatch() {
                       type="number"
                       value={row.oppRed}
                       onChange={(e) => handleRowChange(side, i, "oppRed", e.target.value)}
-                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                      className={`w-16 rounded-md px-2 py-1 font-semibold ${colors.input}`}
                     />
                   </td>
                   <td className="border border-slate-200 px-2 py-1">
@@ -2189,6 +2196,107 @@ function resetAllForNewMatch() {
             </div>
           </div>
 
+<section className="rounded-2xl border-2 border-indigo-500 bg-indigo-50 p-4 shadow-sm">
+  <h2 className="text-xl font-bold text-indigo-900">Comparador IA (Sofascore vs Sistema)</h2>
+
+  <div className="grid gap-3 md:grid-cols-4 mt-4">
+    <input
+      type="number"
+      placeholder="Tarjetas IA"
+      value={iaData.tarjetas}
+      onChange={(e) =>
+        setIaData((p) => ({
+          ...p,
+          tarjetas: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border text-indigo-500 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+    />
+
+    <input
+      type="number"
+      placeholder="Corners IA"
+      value={iaData.corners}
+      onChange={(e) =>
+        setIaData((p) => ({
+          ...p,
+          corners: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+     className="rounded-xl border text-indigo-400 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+    />
+
+    <select
+      value={iaData.btts}
+      onChange={(e) =>
+        setIaData((p) => ({
+          ...p,
+          btts: e.target.value as "Si" | "No",
+        }))
+      }
+      className="rounded-xl border text-indigo-400 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+    >
+      <option value="">BTTS IA</option>
+      <option value="Si">Sí</option>
+      <option value="No">No</option>
+    </select>
+
+    <select
+      value={iaData.ganador}
+      onChange={(e) =>
+        setIaData((p) => ({
+          ...p,
+          ganador: e.target.value as "Local" | "Visitante",
+        }))
+      }
+     className="rounded-xl border text-indigo-400 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+    >
+      <option value="">Ganador IA</option>
+      <option value="Local">Local</option>
+      <option value="Visitante">Visitante</option>
+    </select>
+  </div>
+
+  <div className="mt-4 text-sm text-slate-800 space-y-1">
+    {iaData.tarjetas !== "" && (
+      <p>
+        Tarjetas → IA: <b>{iaData.tarjetas}</b> vs Sistema:{" "}
+        <b>{expectedTotalCards.toFixed(1)}</b>
+      </p>
+    )}
+
+    {iaData.corners !== "" && (
+      <p>
+        Corners → IA: <b>{iaData.corners}</b> vs Sistema:{" "}
+        <b>{expectedTotalCorners.toFixed(1)}</b>
+      </p>
+    )}
+
+    {iaData.btts && (
+      <p>
+        BTTS → IA: <b>{iaData.btts}</b> vs Sistema:{" "}
+        <b>
+          {(localStats.bttsPct + visitStats.bttsPct) / 2 > 55 ? "Sí" : "No"}
+        </b>
+      </p>
+    )}
+
+    {iaData.ganador && (
+      <p>
+        Ganador → IA: <b>{iaData.ganador}</b> vs Sistema:{" "}
+        <b>
+          {simulation.localWin > simulation.awayWin
+            ? "Local"
+            : "Visitante"}
+        </b>
+      </p>
+    )}
+  </div>
+</section>
+
+
+
+
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-4 text-xl font-bold text-slate-800">17. Monte Carlo</h2>
             <div className="flex gap-2">
@@ -2301,28 +2409,28 @@ function resetAllForNewMatch() {
               />
               <input
                 type="number"
-                placeholder="Cuota Over +2.5"
+                placeholder="+2.5 TOTAL"
                 value={odds.over25}
                 onChange={(e) => setOdds((p) => ({ ...p, over25: e.target.value === "" ? "" : Number(e.target.value) }))}
                 className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
               />
               <input
                 type="number"
-                placeholder="Cuota BTTS (AMBOS MARCAN)"
+                placeholder="BTTS(AMBOS MARCAN)"
                 value={odds.btts}
                 onChange={(e) => setOdds((p) => ({ ...p, btts: e.target.value === "" ? "" : Number(e.target.value) }))}
                 className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
               />
               <input
                 type="number"
-                placeholder="Cuota corners +8.5"
+                placeholder="Corners +8.5"
                 value={odds.corners85}
                 onChange={(e) => setOdds((p) => ({ ...p, corners85: e.target.value === "" ? "" : Number(e.target.value) }))}
                 className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
               />
               <input
                 type="number"
-                placeholder="Cuota tarjetas +4.5"
+                placeholder="Tarjetas +4.5"
                 value={odds.cards45}
                 onChange={(e) => setOdds((p) => ({ ...p, cards45: e.target.value === "" ? "" : Number(e.target.value) }))}
                 className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
@@ -2407,6 +2515,7 @@ function resetAllForNewMatch() {
         </tr>
       </thead>
       <tbody>
+
         {commonOpponents.length > 0 ? (
           commonOpponents.map((item, i) => {
             const localDiff = item.localGF - item.localGC;
