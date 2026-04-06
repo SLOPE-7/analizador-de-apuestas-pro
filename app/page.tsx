@@ -106,10 +106,17 @@ type ExportedMatchFile = {
       local: number | "";
       empate: number | "";
       visitante: number | "";
+      over15: number | "";
       over25: number | "";
+      under35: number | "";
+      under45: number | "";
       btts: number | "";
+      corners75: number | "";
       corners85: number | "";
+      corners105: number | "";
+      cards35: number | "";
       cards45: number | "";
+      cards55: number | "";
     };
     parlay: PickItem[];
     monteCarloResult: {
@@ -142,6 +149,7 @@ const TYPES: MatchType[] = ["Liga", "Ida", "Vuelta", "Clásico", "Copa"];
 
 const TEAM_STORAGE_KEY = "analizador_saved_teams_v1";
 const REF_STORAGE_KEY = "analizador_saved_refs_v1";
+const MATCH_DRAFT_KEY = "analizador_match_draft_v2";
 
 function createEmptyRows(): TeamRow[] {
   return Array.from({ length: 10 }, () => ({
@@ -278,6 +286,69 @@ function hasUsefulRows(rows: TeamRow[]) {
   );
 }
 
+
+function parseFlexibleDate(value: string): Date | null {
+  const raw = value.trim();
+  if (!raw) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const parsed = new Date(`${raw}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const slashMatch = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (!slashMatch) return null;
+
+  let a = Number(slashMatch[1]);
+  let b = Number(slashMatch[2]);
+  let year = Number(slashMatch[3]);
+
+  if (year < 100) {
+    year += year >= 70 ? 1900 : 2000;
+  }
+
+  const monthFirst = a <= 12;
+  const dayFirst = b <= 12 ? false : true;
+  const month = monthFirst && !dayFirst ? a : b;
+  const day = monthFirst && !dayFirst ? b : a;
+
+  const parsed = new Date(year, month - 1, day, 12, 0, 0);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getAgeInDays(value: string): number | null {
+  const parsed = parseFlexibleDate(value);
+  if (!parsed) return null;
+  const diffMs = Date.now() - parsed.getTime();
+  return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+}
+
+function getRecencyBoost(ageDays: number | null, index: number): number {
+  const positionWeights = [1.5, 1.42, 1.34, 1.26, 1.18, 1.05, 0.98, 0.9, 0.82, 0.74];
+  const positionWeight = positionWeights[index] ?? 0.72;
+
+  if (ageDays === null) return positionWeight;
+  if (ageDays <= 45) return positionWeight * 1.2;
+  if (ageDays <= 90) return positionWeight * 1.08;
+  if (ageDays <= 150) return positionWeight;
+  if (ageDays <= 210) return positionWeight * 0.82;
+  return positionWeight * 0.6;
+}
+
+function weightedAvgBy(values: number[], weights: number[]): number {
+  if (!values.length || !weights.length) return 0;
+  const totalW = weights.reduce((a, b) => a + b, 0);
+  if (!totalW) return 0;
+  return values.reduce((acc, value, i) => acc + value * (weights[i] ?? 0), 0) / totalW;
+}
+
+function getFreshnessLabel(veryOldCount: number, staleCount: number, count: number) {
+  if (!count) return "Sin datos";
+  if (veryOldCount >= 3) return "Muy vieja";
+  if (staleCount >= 4) return "Mezclada";
+  return "Buena";
+}
+
 function getTotalGoals(row: TeamRow) {
   return toNumber(row.gf) + toNumber(row.gc);
 }
@@ -289,6 +360,8 @@ function getBTTS(row: TeamRow) {
 function analyzeRows(rows: TeamRow[]) {
   const valid = rows.filter((r) => r.fecha || r.rival || r.gf !== "" || r.gc !== "");
   const count = valid.length || 1;
+  const ages = valid.map((r) => getAgeInDays(r.fecha));
+  const recencyWeights = valid.map((_, i) => getRecencyBoost(ages[i], i));
 
   const gfList = valid.map((r) => toNumber(r.gf));
   const gcList = valid.map((r) => toNumber(r.gc));
@@ -300,6 +373,12 @@ function analyzeRows(rows: TeamRow[]) {
   const oppYellowList = valid.map((r) => toNumber(r.oppYellow));
   const totalYellowList = valid.map((r) => toNumber(r.ownYellow) + toNumber(r.oppYellow));
   const redList = valid.map((r) => toNumber(r.ownRed) + toNumber(r.oppRed));
+
+  const recentCount = ages.filter((age) => age !== null && age <= 90).length;
+  const staleCount = ages.filter((age) => age !== null && age > 150).length;
+  const veryOldCount = ages.filter((age) => age !== null && age > 210).length;
+  const knownAgeValues = ages.filter((age): age is number => age !== null);
+  const averageAgeDays = knownAgeValues.length ? avg(knownAgeValues) : 0;
 
   const wins = valid.filter((r) => r.estado === "G").length;
   const draws = valid.filter((r) => r.estado === "E").length;
@@ -320,6 +399,8 @@ function analyzeRows(rows: TeamRow[]) {
   const cardsOver55 = totalYellowList.filter((x) => x > 5.5).length;
   const cardsUnder65 = totalYellowList.filter((x) => x < 6.5).length;
 
+  const freshnessScore = clamp(100 - staleCount * 9 - veryOldCount * 10 - Math.max(0, averageAgeDays - 90) * 0.1, 35, 100);
+
   return {
     count: valid.length,
     gfAvg: avg(gfList),
@@ -333,11 +414,11 @@ function analyzeRows(rows: TeamRow[]) {
     totalYellowAvg: avg(totalYellowList),
     redAvg: avg(redList),
 
-    gfWeighted: weightedAvg(gfList),
-    gcWeighted: weightedAvg(gcList),
-    totalGoalsWeighted: weightedAvg(totalGoalsList),
-    cornersWeighted: weightedAvg(totalCornersList),
-    cardsWeighted: weightedAvg(totalYellowList),
+    gfWeighted: weightedAvgBy(gfList, recencyWeights),
+    gcWeighted: weightedAvgBy(gcList, recencyWeights),
+    totalGoalsWeighted: weightedAvgBy(totalGoalsList, recencyWeights),
+    cornersWeighted: weightedAvgBy(totalCornersList, recencyWeights),
+    cardsWeighted: weightedAvgBy(totalYellowList, recencyWeights),
 
     over15Pct: pct(over15, count),
     over25Pct: pct(over25, count),
@@ -362,8 +443,16 @@ function analyzeRows(rows: TeamRow[]) {
     totalGoalsStd: stdDev(totalGoalsList),
     cornersStd: stdDev(totalCornersList),
     cardsStd: stdDev(totalYellowList),
+
+    recentCount,
+    staleCount,
+    veryOldCount,
+    averageAgeDays,
+    freshnessScore,
+    freshnessLabel: getFreshnessLabel(veryOldCount, staleCount, valid.length),
   };
 }
+
 
 
 
@@ -453,6 +542,27 @@ function getProfileBadgeClass(level: "Alto" | "Medio" | "Bajo") {
   return "bg-slate-200 text-slate-700 border border-slate-300";
 }
 
+
+
+function getEdgeBadge(edge: number) {
+  if (edge >= 10) return "bg-emerald-100 text-emerald-800 border border-emerald-300";
+  if (edge >= 5) return "bg-blue-100 text-blue-800 border border-blue-300";
+  if (edge >= 2) return "bg-amber-100 text-amber-800 border border-amber-300";
+  return "bg-slate-100 text-slate-700 border border-slate-300";
+}
+
+function getEdgeLabel(edge: number) {
+  if (edge >= 10) return "Fuerte";
+  if (edge >= 5) return "Jugable";
+  if (edge >= 2) return "Justo";
+  return "Sin valor";
+}
+
+function getSignalColor(level: "Alto" | "Medio" | "Bajo") {
+  if (level === "Alto") return "text-emerald-700";
+  if (level === "Medio") return "text-amber-700";
+  return "text-slate-600";
+}
 export default function AnalizadorApuestasPage() {
 
 
@@ -499,10 +609,17 @@ export default function AnalizadorApuestasPage() {
     local: "" as number | "",
     empate: "" as number | "",
     visitante: "" as number | "",
+    over15: "" as number | "",
     over25: "" as number | "",
+    under35: "" as number | "",
+    under45: "" as number | "",
     btts: "" as number | "",
+    corners75: "" as number | "",
     corners85: "" as number | "",
+    corners105: "" as number | "",
+    cards35: "" as number | "",
     cards45: "" as number | "",
+    cards55: "" as number | "",
   });
 
 
@@ -523,6 +640,17 @@ const [iaData, setIaData] = useState({
   corners: "" as number | "",
   btts: "" as "" | "Si" | "No",
   ganador: "" as "" | "Local" | "Visitante",
+});
+
+const [h2hData, setH2hData] = useState({
+  totalMatches: "" as number | "",
+  localWins: "" as number | "",
+  draws: "" as number | "",
+  visitWins: "" as number | "",
+  over25Hits: "" as number | "",
+  bttsHits: "" as number | "",
+  cornersHighHits: "" as number | "",
+  cardsLowHits: "" as number | "",
 });
 
 const partidos = useMemo(() => {
@@ -546,7 +674,66 @@ const sugerencias = useMemo(() => optimizarParlay(partidos), [partidos]);
   useEffect(() => {
     setSavedTeams(safeParse<SavedTeamPack[]>(localStorage.getItem(TEAM_STORAGE_KEY), []));
     setSavedRefs(safeParse<SavedReferee[]>(localStorage.getItem(REF_STORAGE_KEY), []));
+
+    const draft = safeParse<ExportedMatchFile["payload"] | null>(localStorage.getItem(MATCH_DRAFT_KEY), null);
+    if (!draft) return;
+
+    setMatchInfo(draft.matchInfo ?? {
+      local: "",
+      visitante: "",
+      liga: "",
+      fecha: "",
+      posicionLocal: "",
+      posicionVisitante: "",
+      etapa: "Liga",
+      tipo: "Liga",
+      globalScore: "",
+      notas: "",
+    });
+
+    setRefInfo(draft.refInfo ?? {
+      nombre: "",
+      promedioAmarillas: "",
+      promedioRojas: "",
+    });
+
+    setLocalRows(draft.localRows ?? createEmptyRows());
+    setVisitRows(draft.visitRows ?? createEmptyRows());
+    setOdds(
+      draft.odds ?? {
+        local: "",
+        empate: "",
+        visitante: "",
+        over15: "",
+        over25: "",
+        under35: "",
+        under45: "",
+        btts: "",
+        corners75: "",
+        corners85: "",
+        corners105: "",
+        cards35: "",
+        cards45: "",
+        cards55: "",
+      }
+    );
+    setParlay(draft.parlay ?? []);
+    setMonteCarloResult(draft.monteCarloResult ?? null);
   }, []);
+
+  useEffect(() => {
+    const draft = {
+      matchInfo,
+      refInfo,
+      localRows,
+      visitRows,
+      odds,
+      parlay,
+      monteCarloResult,
+    };
+
+    localStorage.setItem(MATCH_DRAFT_KEY, JSON.stringify(draft));
+  }, [matchInfo, refInfo, localRows, visitRows, odds, parlay, monteCarloResult]);
 
   const localStats = useMemo(() => analyzeRows(localRows), [localRows]);
   const visitStats = useMemo(() => analyzeRows(visitRows), [visitRows]);
@@ -787,6 +974,44 @@ const commonOpponents = useMemo(() => {
   return commons;
 }, [localRows, visitRows]);
 
+
+const commonAnalysis = useMemo(() => {
+  if (!commonOpponents.length) {
+    return {
+      total: 0,
+      localBetter: 0,
+      visitBetter: 0,
+      parejos: 0,
+      resumen: "Sin rivales en común suficientes.",
+    };
+  }
+
+  let localBetter = 0;
+  let visitBetter = 0;
+  let parejos = 0;
+
+  commonOpponents.forEach((item) => {
+    const localDiff = item.localGF - item.localGC;
+    const visitDiff = item.visitGF - item.visitGC;
+
+    if (localDiff > visitDiff) localBetter++;
+    else if (visitDiff > localDiff) visitBetter++;
+    else parejos++;
+  });
+
+  let resumen = "Rendimiento muy parejo ante rivales compartidos.";
+  if (localBetter >= visitBetter + 2) resumen = "El local rindió mejor contra rivales en común.";
+  if (visitBetter >= localBetter + 2) resumen = "El visitante rindió mejor contra rivales en común.";
+
+  return {
+    total: commonOpponents.length,
+    localBetter,
+    visitBetter,
+    parejos,
+    resumen,
+  };
+}, [commonOpponents]);
+
 const simulation = useMemo(() => {
     let localWin = 0;
     let draw = 0;
@@ -940,158 +1165,144 @@ const simulation = useMemo(() => {
   ]);
 
   const bestPicks = useMemo<PickItem[]>(() => {
-  const picks: PickItem[] = [];
+    const picks: PickItem[] = [];
 
-  const over15Prob = clamp((localStats.over15Pct + visitStats.over15Pct) / 2, 0, 100);
-  const over25Prob = clamp((localStats.over25Pct + visitStats.over25Pct) / 2, 0, 100);
-  const under35Prob = clamp((localStats.under35Pct + visitStats.under35Pct) / 2, 0, 100);
-  const bttsProb = clamp((localStats.bttsPct + visitStats.bttsPct) / 2, 0, 100);
-  const corners85Prob = clamp((localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2, 0, 100);
-  const cards45Prob =
-    clamp((localStats.cardsOver45Pct + visitStats.cardsOver45Pct) / 2, 0, 100) * 0.7 +
-    (refInfo.promedioAmarillas === "" ? 0 : Number(refInfo.promedioAmarillas) * 5);
+    const over15Prob = clamp((localStats.over15Pct + visitStats.over15Pct) / 2, 0, 100);
+    const over25Prob = clamp((localStats.over25Pct + visitStats.over25Pct) / 2, 0, 100);
+    const under35Prob = clamp((localStats.under35Pct + visitStats.under35Pct) / 2, 0, 100);
+    const bttsProb = clamp((localStats.bttsPct + visitStats.bttsPct) / 2, 0, 100);
+    const corners85Prob = clamp((localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2, 0, 100);
+    const cards45Prob =
+      clamp((localStats.cardsOver45Pct + visitStats.cardsOver45Pct) / 2, 0, 100) * 0.7 +
+      (refInfo.promedioAmarillas === "" ? 0 : Number(refInfo.promedioAmarillas) * 5);
 
-  const strongGoalSignal =
-    expectedTotalGoals >= 2.4 &&
-    bttsProb >= 60;
+    const freshnessPenalty =
+      (100 - localStats.freshnessScore) * 0.12 +
+      (100 - visitStats.freshnessScore) * 0.12;
 
-  const mediumGoalSignal =
-    expectedTotalGoals >= 2.2 &&
-    bttsProb >= 55;
+    const knockoutCaution = matchInfo.tipo === "Vuelta" || matchInfo.tipo === "Copa" || matchInfo.etapa !== "Liga";
+    const strongGoalSignal = expectedTotalGoals >= 2.55 && bttsProb >= 58;
+    const mediumGoalSignal = expectedTotalGoals >= 2.3 && bttsProb >= 52;
+    const lowGoalWarning =
+      expectedTotalGoals < 2.2 ||
+      (bttsProb < 52 && simulation.draw >= 22) ||
+      (knockoutCaution && expectedTotalGoals < 2.55);
 
-  const lowGoalWarning =
-    expectedTotalGoals < 2.2 &&
-    bttsProb < 55 &&
-    simulation.draw >= 20;
+    const over15Adjusted = clamp(over15Prob - freshnessPenalty - (lowGoalWarning ? 7 : 0), 0, 100);
+    const over25Adjusted = clamp(over25Prob - freshnessPenalty - (knockoutCaution ? 5 : 0), 0, 100);
+    const under35Adjusted = clamp(under35Prob - freshnessPenalty * 0.35, 0, 100);
+    const cornersAdjusted = clamp(corners85Prob - freshnessPenalty * 0.4, 0, 100);
+    const cardsAdjusted = clamp(cards45Prob - freshnessPenalty * 0.25, 0, 100);
 
-  if (over15Prob >= 72 && mediumGoalSignal) {
-    picks.push({
-      id: "over15",
-      mercado: "Más de 1.5 goles",
-      probabilidad: lowGoalWarning ? Math.max(68, over15Prob - 8) : over15Prob,
-      riesgo: strongGoalSignal ? "Bajo" : "Medio",
-      motivo: strongGoalSignal
-        ? "Partido con clara tendencia ofensiva en ambos equipos."
-        : "Hay señal moderada de goles, pero no es un partido totalmente abierto.",
-    });
-  }
+    if (over15Adjusted >= 73 && mediumGoalSignal && !lowGoalWarning) {
+      picks.push({
+        id: "over15",
+        mercado: "Más de 1.5 goles",
+        probabilidad: over15Adjusted,
+        riesgo: strongGoalSignal ? "Bajo" : "Medio",
+        motivo: strongGoalSignal
+          ? "Línea jugable: hay señal ofensiva suficiente y el partido no luce cerrado."
+          : "Línea aceptable, pero no conviene combinarla con más goles del mismo juego.",
+      });
+    }
 
-  if (under35Prob >= 68) {
-    picks.push({
-      id: "under35",
-      mercado: "Menos de 3.5 goles",
-      probabilidad: under35Prob,
-      riesgo: "Bajo",
-      motivo: "La línea aparece estable y suele sostenerse en ambos historiales.",
-    });
-  }
+    if (under35Adjusted >= 69) {
+      picks.push({
+        id: "under35",
+        mercado: "Menos de 3.5 goles",
+        probabilidad: under35Adjusted,
+        riesgo: under35Adjusted >= 76 ? "Bajo" : "Medio",
+        motivo: knockoutCaution
+          ? "Línea sólida para cruce tenso o eliminatorio; protege del partido corto."
+          : "Buena línea de control cuando el partido no apunta a festival de goles.",
+      });
+    }
 
-  if (over25Prob >= 63 && strongGoalSignal && !lowGoalWarning) {
-    picks.push({
-      id: "over25",
-      mercado: "Más de 2.5 goles",
-      probabilidad: over25Prob,
-      riesgo: "Medio",
-      motivo: "Ambos equipos generan suficiente volumen ofensivo para una línea alta.",
-    });
-  }
+    if (over25Adjusted >= 66 && expectedTotalGoals >= 2.75 && strongGoalSignal && !lowGoalWarning && under35Prob < 78) {
+      picks.push({
+        id: "over25",
+        mercado: "Más de 2.5 goles",
+        probabilidad: over25Adjusted,
+        riesgo: "Medio",
+        motivo: "Línea exigente pero jugable: ambos equipos sí sostienen ritmo para 3 goles.",
+      });
+    }
 
-  if (bttsProb >= 62) {
-    picks.push({
-      id: "btts",
-      mercado: "Ambos marcan: Sí",
-      probabilidad: bttsProb,
-      riesgo: "Medio",
-      motivo: "Ambos equipos muestran tendencia razonable a conceder y marcar.",
-    });
-  }
+    if (bttsProb >= 63 && expectedGoalsLocal >= 0.95 && expectedGoalsVisit >= 0.95) {
+      picks.push({
+        id: "btts",
+        mercado: "Ambos marcan: Sí",
+        probabilidad: clamp(bttsProb - freshnessPenalty * 0.3, 0, 100),
+        riesgo: "Medio",
+        motivo: "Ambos lados tienen base ofensiva suficiente; mejor cuando ninguno depende de un solo gol.",
+      });
+    }
 
-const isBigMatch =
-  Math.max(simulation.localWin, simulation.awayWin) >= 60 &&
-  volatilityLabel === "Baja";
-  //);
+    const strongCornerSignal = expectedTotalCorners >= 9.4;
+    const mediumCornerSignal = expectedTotalCorners >= 8.1;
 
-const strongCornerSignal = expectedTotalCorners >= 9.5;
-const mediumCornerSignal = expectedTotalCorners >= 8.0;
+    if (cornersAdjusted >= 60 && (strongCornerSignal || mediumCornerSignal)) {
+      picks.push({
+        id: "corners85",
+        mercado: strongCornerSignal ? "Más de 8.5 corners" : "Más de 7.5 corners",
+        probabilidad: clamp(Math.max(cornersAdjusted, expectedTotalCorners * 8.4), 0, 100),
+        riesgo: strongCornerSignal ? "Medio" : "Bajo",
+        motivo: strongCornerSignal
+          ? "Señal fuerte de volumen por bandas y presión sostenida."
+          : "La línea media de corners se ve más cómoda que la línea alta.",
+      });
+    }
 
-  if (mediumCornerSignal || corners85Prob >= 58) {
-  // ❌ evitar corners en partidos grandes si no hay señal fuerte
-  if (isBigMatch && !strongCornerSignal) {
-    // no hacer nada
-  } else {
-    picks.push({
-      id: "corners85",
-      mercado: strongCornerSignal ? "Más de 8.5 corners" : "Más de 7.5 corners",
-      probabilidad: clamp(
-        Math.max(
-          corners85Prob,
-          strongCornerSignal
-            ? expectedTotalCorners * 8
-            : expectedTotalCorners * 10
-        ),
-        0,
-        100
-      ),
-      riesgo: strongCornerSignal ? "Medio" : "Bajo",
-      motivo: strongCornerSignal
-        ? "Alta generación de corners en ambos equipos."
-        : "Señal moderada de corners.",
-    });
-  }
-}
+    if (expectedTotalCards >= 3.6) {
+      picks.push({
+        id: "cards45",
+        mercado: expectedTotalCards >= 4.8 ? "Más de 4.5 tarjetas" : "Más de 3.5 tarjetas",
+        probabilidad: clamp(Math.max(cardsAdjusted, expectedTotalCards * 12.5), 0, 100),
+        riesgo: expectedTotalCards >= 4.8 ? "Medio" : "Bajo",
+        motivo:
+          expectedTotalCards >= 4.8
+            ? "Buena línea cuando equipos y árbitro empujan el partido hacia fricción real."
+            : "La línea base es más cómoda que una línea alta de tarjetas.",
+      });
+    }
 
-  if (expectedTotalCards >= 3.5) {
-    picks.push({
-      id: "cards45",
-      mercado: expectedTotalCards >= 4.8 ? "Más de 4.5 tarjetas" : "Más de 3.5 tarjetas",
-      probabilidad: clamp(
-        Math.max(
-          cards45Prob,
-          expectedTotalCards >= 4.8 ? expectedTotalCards * 12 : expectedTotalCards * 15
-        ),
-        0,
-        100
-      ),
-      riesgo: expectedTotalCards >= 4.8 ? "Medio" : "Bajo",
-      motivo:
-        expectedTotalCards >= 4.8
-          ? "Equipos y árbitro sostienen una línea media-alta de tarjetas."
-          : "Hay suficiente señal para una línea base de tarjetas.",
-    });
-  }
-
-    const noLoseLocalProb = clamp(
-      (localStats.noLosePct + (100 - visitStats.winPct)) / 2,
-      0,
-      100
-    );
+    const noLoseLocalProb = clamp((localStats.noLosePct + (100 - visitStats.winPct)) / 2, 0, 100);
     if (simulation.localWin + simulation.draw >= 68 && noLoseLocalProb >= 68) {
       picks.push({
         id: "1x",
         mercado: "Local o empate (1X)",
-        probabilidad: (simulation.localWin + simulation.draw + noLoseLocalProb) / 2,
+        probabilidad: clamp((simulation.localWin + simulation.draw + noLoseLocalProb) / 2 - freshnessPenalty * 0.2, 0, 100),
         riesgo: "Bajo",
-        motivo: "El local sostiene buena probabilidad de no perder según forma y simulación.",
+        motivo: "Mercado más sano que ganador directo cuando el local es superior pero no avasalla.",
       });
     }
 
-    const noLoseVisitProb = clamp(
-      (visitStats.noLosePct + (100 - localStats.winPct)) / 2,
-      0,
-      100
-    );
+    const noLoseVisitProb = clamp((visitStats.noLosePct + (100 - localStats.winPct)) / 2, 0, 100);
     if (simulation.awayWin + simulation.draw >= 68 && noLoseVisitProb >= 68) {
       picks.push({
         id: "x2",
         mercado: "Visitante o empate (X2)",
-        probabilidad: (simulation.awayWin + simulation.draw + noLoseVisitProb) / 2,
+        probabilidad: clamp((simulation.awayWin + simulation.draw + noLoseVisitProb) / 2 - freshnessPenalty * 0.2, 0, 100),
         riesgo: "Bajo",
-        motivo: "El visitante sostiene buena probabilidad de no perder según forma y simulación.",
+        motivo: "Mercado más sano que ganador directo cuando el visitante compite bien pero el partido sigue cerrado.",
       });
     }
 
     return picks.sort((a, b) => b.probabilidad - a.probabilidad);
-  }, [localStats, visitStats, refInfo.promedioAmarillas, simulation]);
+  }, [
+    localStats,
+    visitStats,
+    refInfo.promedioAmarillas,
+    simulation,
+    expectedTotalGoals,
+    expectedTotalCorners,
+    expectedTotalCards,
+    expectedGoalsLocal,
+    expectedGoalsVisit,
+    matchInfo.tipo,
+    matchInfo.etapa,
+  ]);
+
 
   const discardedMarkets = useMemo(() => {
     const items: string[] = [];
@@ -1135,6 +1346,393 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
       riesgo: trapAlert.label,
     };
   }, [expectedTotalGoals, expectedTotalCards, expectedTotalCorners, trapAlert.label]);
+
+
+  const dominanceInfo = useMemo(() => {
+    const probs = [
+      { key: "local", value: simulation.localWin },
+      { key: "empate", value: simulation.draw },
+      { key: "visitante", value: simulation.awayWin },
+    ].sort((a, b) => b.value - a.value);
+
+    const top = probs[0];
+    const second = probs[1];
+    const gap = top.value - second.value;
+
+    let level = "Mixto";
+    if ((top.key === "local" || top.key === "visitante") && top.value >= 60 && gap >= 14) {
+      level = "Dominado";
+    } else if (top.value <= 42 || simulation.draw >= 28 || gap < 8) {
+      level = "Cerrado";
+    }
+
+    return {
+      level,
+      gap,
+      topKey: top.key,
+      topValue: top.value,
+    };
+  }, [simulation]);
+
+  const h2hSummary = useMemo(() => {
+    const total = Number(h2hData.totalMatches || 0);
+    if (!total) {
+      return {
+        hasData: false,
+        totalMatches: 0,
+        localWinPct: 0,
+        drawPct: 0,
+        visitWinPct: 0,
+        over25Pct: 0,
+        bttsPct: 0,
+        cornersHighPct: 0,
+        cardsLowPct: 0,
+      };
+    }
+
+    return {
+      hasData: true,
+      totalMatches: total,
+      localWinPct: pct(Number(h2hData.localWins || 0), total),
+      drawPct: pct(Number(h2hData.draws || 0), total),
+      visitWinPct: pct(Number(h2hData.visitWins || 0), total),
+      over25Pct: pct(Number(h2hData.over25Hits || 0), total),
+      bttsPct: pct(Number(h2hData.bttsHits || 0), total),
+      cornersHighPct: pct(Number(h2hData.cornersHighHits || 0), total),
+      cardsLowPct: pct(Number(h2hData.cardsLowHits || 0), total),
+    };
+  }, [h2hData]);
+
+  const h2hReading = useMemo(() => {
+    if (!h2hSummary.hasData) {
+      return {
+        label: "Sin H2H cargado",
+        color: "border-slate-200 bg-slate-50 text-slate-700",
+        notes: ["Carga el H2H manual si quieres una capa extra de validación."],
+      };
+    }
+
+    const notes: string[] = [];
+    let label = "H2H mixto";
+    let color = "border-amber-200 bg-amber-50 text-amber-800";
+
+    if (h2hSummary.over25Pct >= 65) notes.push("El historial acompaña over 2.5.");
+    if (h2hSummary.over25Pct <= 40) notes.push("El historial sugiere partido corto de goles.");
+    if (h2hSummary.bttsPct >= 60) notes.push("El H2H respalda ambos marcan.");
+    if (h2hSummary.bttsPct <= 40) notes.push("El H2H debilita ambos marcan.");
+    if (h2hSummary.cornersHighPct >= 60) notes.push("Los corners altos tienen respaldo histórico.");
+    if (h2hSummary.cornersHighPct <= 40) notes.push("El historial no acompaña corners altos.");
+    if (h2hSummary.cardsLowPct >= 60) notes.push("Las tarjetas tienden a ir más bajas.");
+    if (h2hSummary.drawPct >= 30) notes.push("El empate aparece bastante en el H2H.");
+
+    if (h2hSummary.over25Pct >= 65 && h2hSummary.bttsPct >= 58) {
+      label = "H2H abierto";
+      color = "border-emerald-200 bg-emerald-50 text-emerald-800";
+    } else if (h2hSummary.over25Pct <= 40 && h2hSummary.bttsPct <= 45) {
+      label = "H2H cerrado";
+      color = "border-blue-200 bg-blue-50 text-blue-800";
+    }
+
+    return { label, color, notes };
+  }, [h2hSummary]);
+
+  const h2hFavoriteValidation = useMemo(() => {
+    if (!h2hSummary.hasData) {
+      return "Sin H2H suficiente para validar favorito vs cuota.";
+    }
+
+    const localHouse = impliedProb(odds.local);
+    const visitHouse = impliedProb(odds.visitante);
+
+    if (localHouse > 0) {
+      const diff = h2hSummary.localWinPct - localHouse;
+      if (diff >= 5) return "El H2H respalda más al local de lo que dice la cuota.";
+      if (diff <= -5) return "La cuota del local parece exigente para lo que respalda el H2H.";
+    }
+
+    if (visitHouse > 0) {
+      const diff = h2hSummary.visitWinPct - visitHouse;
+      if (diff >= 5) return "El H2H respalda más al visitante de lo que dice la cuota.";
+      if (diff <= -5) return "La cuota del visitante parece exigente para lo que respalda el H2H.";
+    }
+
+    return "H2H y cuota sin diferencia fuerte de valor.";
+  }, [h2hSummary, odds.local, odds.visitante]);
+
+
+  const finalReading = useMemo(() => {
+    const underLean =
+      expectedTotalGoals <= 2.2 ||
+      ((localStats.under35Pct + visitStats.under35Pct) / 2 >= 72 &&
+        (localStats.bttsPct + visitStats.bttsPct) / 2 <= 55);
+
+    const overLean =
+      expectedTotalGoals >= 2.8 &&
+      expectedGoalsLocal >= 1.1 &&
+      expectedGoalsVisit >= 0.9 &&
+      (localStats.bttsPct + visitStats.bttsPct) / 2 >= 55;
+
+    let tipo = "Mixto";
+    let recomendacion = "Mercados selectivos";
+    let semaforo = "🟡";
+    const razones: string[] = [];
+
+    if (dominanceInfo.level === "Dominado") {
+      tipo = "Dominado";
+      recomendacion = "Se puede atacar favorito o líneas moderadas";
+      semaforo = "🟢";
+      razones.push("Hay dominancia real en probabilidades.");
+    }
+
+    if (underLean && dominanceInfo.level !== "Dominado") {
+      tipo = "Cerrado";
+      recomendacion = "Evitar overs altos y ganador directo";
+      semaforo = "🔴";
+      razones.push("El partido tiene señales claras de under.");
+    }
+
+    if (overLean && dominanceInfo.level !== "Cerrado") {
+      tipo = "Abierto";
+      recomendacion = "Partido apto para goles moderados";
+      semaforo = dominanceInfo.level === "Dominado" ? "🟢" : "🟡";
+      razones.push("Hay base ofensiva en ambos lados.");
+    }
+
+    if (trapAlert.label === "Partido trampa") {
+      semaforo = "🔴";
+      recomendacion = "No entrar fuerte; partido con alertas.";
+      razones.push("Se activó el detector de partido trampa.");
+    }
+
+    if (simulation.draw >= 28) {
+      razones.push("El empate viene alto en la simulación.");
+    }
+
+    if (commonAnalysis.total >= 2) {
+      razones.push(commonAnalysis.resumen);
+    }
+
+    if (h2hSummary.hasData) {
+      razones.push(`H2H: ${h2hReading.label}.`);
+      if (h2hSummary.drawPct >= 30 && dominanceInfo.level !== "Dominado") {
+        razones.push("El historial añade riesgo de empate.");
+      }
+      if (h2hReading.label === "H2H cerrado" && dominanceInfo.level !== "Dominado") {
+        recomendacion = "El historial pide cautela con overs y ganador directo";
+      }
+    }
+
+    return {
+      tipo,
+      recomendacion,
+      semaforo,
+      razones,
+    };
+  }, [
+    commonAnalysis,
+    dominanceInfo.level,
+    expectedGoalsLocal,
+    expectedGoalsVisit,
+    expectedTotalGoals,
+    localStats.under35Pct,
+    visitStats.under35Pct,
+    localStats.bttsPct,
+    visitStats.bttsPct,
+    trapAlert.label,
+    simulation.draw,
+    h2hReading.label,
+    h2hSummary.hasData,
+    h2hSummary.drawPct,
+  ]);
+
+  const noBetZone = useMemo(() => {
+    const reasons: string[] = [];
+
+    if (trapAlert.label === "Partido trampa") reasons.push("El detector marcó partido trampa.");
+    if (volatilityLabel === "Alta" && dominanceInfo.level !== "Dominado") reasons.push("La volatilidad es alta.");
+    if (simulation.draw >= 30 && dominanceInfo.level !== "Dominado") reasons.push("El empate es demasiado alto.");
+    if (
+      finalReading.tipo === "Cerrado" &&
+      ((localStats.bttsPct + visitStats.bttsPct) / 2 < 56)
+    ) reasons.push("Cruce cerrado con señal débil de BTTS.");
+    if (
+      expectedTotalCorners < 8 &&
+      (localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2 < 55
+    ) reasons.push("No hay volumen claro de corners.");
+    if (commonAnalysis.total >= 3 && commonAnalysis.parejos >= commonAnalysis.total - 1)
+      reasons.push("Los rivales en común no marcan ventaja clara.");
+    if (h2hSummary.hasData && h2hReading.label === "H2H cerrado" && dominanceInfo.level !== "Dominado")
+      reasons.push("El H2H también sugiere cautela con goles y ganador.");
+
+    return {
+      active: reasons.length >= 2,
+      reasons,
+    };
+  }, [
+    trapAlert.label,
+    volatilityLabel,
+    simulation.draw,
+    dominanceInfo.level,
+    finalReading.tipo,
+    localStats.bttsPct,
+    visitStats.bttsPct,
+    expectedTotalCorners,
+    localStats.cornersOver85Pct,
+    visitStats.cornersOver85Pct,
+    commonAnalysis,
+    h2hSummary.hasData,
+    h2hReading.label,
+  ]);
+
+  const valueComparison = useMemo(
+    () => [
+      {
+        mercado: "1",
+        sistema: simulation.localWin,
+        casa: impliedProb(odds.local),
+      },
+      {
+        mercado: "X",
+        sistema: simulation.draw,
+        casa: impliedProb(odds.empate),
+      },
+      {
+        mercado: "2",
+        sistema: simulation.awayWin,
+        casa: impliedProb(odds.visitante),
+      },
+      {
+        mercado: "Más de 1.5 goles",
+        sistema: monteCarloResult?.over15 ?? Math.min(95, Math.max(0, (localStats.over15Pct + visitStats.over15Pct) / 2)),
+        casa: impliedProb(odds.over15),
+      },
+      {
+        mercado: "Más de 2.5 goles",
+        sistema: monteCarloResult?.over25 ?? (localStats.over25Pct + visitStats.over25Pct) / 2,
+        casa: impliedProb(odds.over25),
+      },
+      {
+        mercado: "Menos de 3.5 goles",
+        sistema: (localStats.under35Pct + visitStats.under35Pct) / 2,
+        casa: impliedProb(odds.under35),
+      },
+      {
+        mercado: "Menos de 4.5 goles",
+        sistema: clamp(((localStats.under35Pct + visitStats.under35Pct) / 2) + 12, 0, 100),
+        casa: impliedProb(odds.under45),
+      },
+      {
+        mercado: "BTTS Sí",
+        sistema: monteCarloResult?.btts ?? (localStats.bttsPct + visitStats.bttsPct) / 2,
+        casa: impliedProb(odds.btts),
+      },
+      {
+        mercado: "Más de 7.5 corners",
+        sistema: (localStats.cornersOver75Pct + visitStats.cornersOver75Pct) / 2,
+        casa: impliedProb(odds.corners75),
+      },
+      {
+        mercado: "Más de 8.5 corners",
+        sistema: (localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2,
+        casa: impliedProb(odds.corners85),
+      },
+      {
+        mercado: "Menos de 10.5 corners",
+        sistema: clamp(
+          100 - ((localStats.cornersOver95Pct + visitStats.cornersOver95Pct) / 2),
+          0,
+          100
+        ),
+        casa: impliedProb(odds.corners105),
+      },
+      {
+        mercado: "Más de 3.5 tarjetas",
+        sistema: (localStats.cardsOver35Pct + visitStats.cardsOver35Pct) / 2,
+        casa: impliedProb(odds.cards35),
+      },
+      {
+        mercado: "Más de 4.5 tarjetas",
+        sistema: (localStats.cardsOver45Pct + visitStats.cardsOver45Pct) / 2,
+        casa: impliedProb(odds.cards45),
+      },
+      {
+        mercado: "Más de 5.5 tarjetas",
+        sistema: (localStats.cardsOver55Pct + visitStats.cardsOver55Pct) / 2,
+        casa: impliedProb(odds.cards55),
+      },
+    ],
+    [simulation, monteCarloResult, localStats, visitStats, odds]
+  );
+
+  const valueBets = useMemo(() => {
+    return valueComparison
+      .map((item) => ({
+        ...item,
+        edge: item.sistema - item.casa,
+      }))
+      .filter((item) => item.casa > 0)
+      .sort((a, b) => b.edge - a.edge);
+  }, [valueComparison]);
+
+  const strongValueBets = useMemo(() => valueBets.filter((item) => item.edge >= 5), [valueBets]);
+
+  const iaValidation = useMemo(() => {
+    let matches = 0;
+    let total = 0;
+    const notes: string[] = [];
+
+    if (iaData.tarjetas !== "") {
+      total++;
+      const diff = Math.abs(Number(iaData.tarjetas) - expectedTotalCards);
+      if (diff <= 1.2) {
+        matches++;
+        notes.push("Tarjetas bastante alineadas.");
+      } else {
+        notes.push("Tarjetas con diferencia importante.");
+      }
+    }
+
+    if (iaData.corners !== "") {
+      total++;
+      const diff = Math.abs(Number(iaData.corners) - expectedTotalCorners);
+      if (diff <= 1.8) {
+        matches++;
+        notes.push("Corners alineados.");
+      } else {
+        notes.push("Corners con diferencia clara.");
+      }
+    }
+
+    if (iaData.btts) {
+      total++;
+      const systemBTTS = (monteCarloResult?.btts ?? (localStats.bttsPct + visitStats.bttsPct) / 2) >= 55 ? "Si" : "No";
+      if (systemBTTS === iaData.btts) {
+        matches++;
+        notes.push("BTTS coincide.");
+      } else {
+        notes.push("BTTS no coincide.");
+      }
+    }
+
+    if (iaData.ganador) {
+      total++;
+      const systemWinner =
+        simulation.localWin >= simulation.awayWin ? "Local" : "Visitante";
+      if (systemWinner === iaData.ganador) {
+        matches++;
+        notes.push("Ganador coincide.");
+      } else {
+        notes.push("Ganador no coincide.");
+      }
+    }
+
+    return {
+      total,
+      matches,
+      score: total ? Math.round((matches / total) * 100) : 0,
+      notes,
+    };
+  }, [iaData, expectedTotalCards, expectedTotalCorners, monteCarloResult, localStats.bttsPct, visitStats.bttsPct, simulation.localWin, simulation.awayWin]);
 
   function handleRowChange(
     side: TeamCondition,
@@ -1467,14 +2065,40 @@ function resetAllForNewMatch() {
     local: "",
     empate: "",
     visitante: "",
+    over15: "",
     over25: "",
+    under35: "",
+    under45: "",
     btts: "",
+    corners75: "",
     corners85: "",
+    corners105: "",
+    cards35: "",
     cards45: "",
+    cards55: "",
+  });
+
+  setIaData({
+    tarjetas: "",
+    corners: "",
+    btts: "",
+    ganador: "",
+  });
+
+  setH2hData({
+    totalMatches: "",
+    localWins: "",
+    draws: "",
+    visitWins: "",
+    over25Hits: "",
+    bttsHits: "",
+    cornersHighHits: "",
+    cardsLowHits: "",
   });
 
   setParlay([]);
   setMonteCarloResult(null);
+  localStorage.removeItem(MATCH_DRAFT_KEY);
 }
   
   function runMonteCarlo() {
@@ -1558,43 +2182,6 @@ function resetAllForNewMatch() {
   const avgParlayProb =
     parlay.length === 0 ? 0 : avg(parlay.map((p) => p.probabilidad));
 
-  const valueComparison = [
-    {
-      mercado: "1",
-      sistema: simulation.localWin,
-      casa: impliedProb(odds.local),
-    },
-    {
-      mercado: "X",
-      sistema: simulation.draw,
-      casa: impliedProb(odds.empate),
-    },
-    {
-      mercado: "2",
-      sistema: simulation.awayWin,
-      casa: impliedProb(odds.visitante),
-    },
-    {
-      mercado: "Más de 2.5 goles",
-      sistema: (localStats.over25Pct + visitStats.over25Pct) / 2,
-      casa: impliedProb(odds.over25),
-    },
-    {
-      mercado: "BTTS Sí",
-      sistema: (localStats.bttsPct + visitStats.bttsPct) / 2,
-      casa: impliedProb(odds.btts),
-    },
-    {
-      mercado: "Más de 8.5 corners",
-      sistema: (localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2,
-      casa: impliedProb(odds.corners85),
-    },
-    {
-      mercado: "Más de 4.5 tarjetas",
-      sistema: (localStats.cardsOver45Pct + visitStats.cardsOver45Pct) / 2,
-      casa: impliedProb(odds.cards45),
-    },
-  ];
 
   function renderTeamTable(
     title: string,
@@ -1856,9 +2443,9 @@ function resetAllForNewMatch() {
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
         <section className="rounded-3xl bg-gradient-to-r from-emerald-600 to-teal-600 p-6 text-white shadow-lg">
-          <h1 className="text-3xl font-extrabold">Analizador de Apuestas Pro</h1>
+          <h1 className="text-3xl font-extrabold">Analizador de Apuestas KAL</h1>
           <p className="mt-2 text-sm text-emerald-50">
-            Base completa para analizar probabilidad real, no adivinación.
+            Base para llenar datos de partidos
           </p>
         </section>
 
@@ -2098,12 +2685,307 @@ function resetAllForNewMatch() {
         {renderTeamTable("3. Datos del local", "local", localRows, selectedSavedLocal, setSelectedSavedLocal)}
         {renderTeamTable("4. Datos del visitante", "visitante", visitRows, selectedSavedVisit, setSelectedSavedVisit)}
 
+        <section className="grid gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2 space-y-6">
+            <section className="w-full rounded-2xl border-2 border-indigo-500 bg-indigo-50 p-5 shadow-sm">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-indigo-900">Datos manuales IA</h2>
+                  <p className="text-sm text-indigo-800">Llena aquí lo que ves antes del partido en SofaScore u otra IA.</p>
+                </div>
+                <span className={`inline-flex rounded-xl px-3 py-1 text-sm font-bold ${iaValidation.score >= 75 ? "bg-emerald-100 text-emerald-800" : iaValidation.score >= 50 ? "bg-amber-100 text-amber-800" : "bg-rose-100 text-rose-800"}`}>
+                  Coincidencia: {iaValidation.score}%
+                </span>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-4">
+                <input type="number" placeholder="Tarjetas IA" value={iaData.tarjetas} onChange={(e) => setIaData((p) => ({ ...p, tarjetas: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border text-indigo-700 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                <input type="number" placeholder="Corners IA" value={iaData.corners} onChange={(e) => setIaData((p) => ({ ...p, corners: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border text-indigo-700 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                <select value={iaData.btts} onChange={(e) => setIaData((p) => ({ ...p, btts: e.target.value as "Si" | "No" }))} className="rounded-xl border text-indigo-700 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                  <option value="">BTTS IA</option>
+                  <option value="Si">Sí</option>
+                  <option value="No">No</option>
+                </select>
+                <select value={iaData.ganador} onChange={(e) => setIaData((p) => ({ ...p, ganador: e.target.value as "Local" | "Visitante" }))} className="rounded-xl border text-indigo-700 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                  <option value="">Ganador IA</option>
+                  <option value="Local">Local</option>
+                  <option value="Visitante">Visitante</option>
+                </select>
+              </div>
+                                     <div className="mt-4 rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm">
+                <h3 className="mb-3 text-base font-bold text-indigo-900">
+                  Comparación IA vs Sistema
+                </h3>
+
+                <div className="grid grid-cols-[1.2fr_1fr_1fr] border-b border-slate-200 pb-2 text-sm font-semibold text-slate-700">
+                  <span>Mercado</span>
+                  <span className="text-center">IA</span>
+                  <span className="text-center">Sistema</span>
+                </div>
+
+                <div className="mt-2 space-y-2 text-sm text-slate-800">
+                  {iaData.tarjetas !== "" && (
+                    <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center rounded-lg bg-slate-50 px-3 py-2">
+                      <span>Tarjetas</span>
+                      <span className="text-center font-semibold">{iaData.tarjetas}</span>
+                      <span className="text-center font-semibold">
+                        {expectedTotalCards.toFixed(1)}
+                      </span>
+                    </div>
+                  )}
+
+                  {iaData.corners !== "" && (
+                    <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center rounded-lg bg-slate-50 px-3 py-2">
+                      <span>Corners</span>
+                      <span className="text-center font-semibold">{iaData.corners}</span>
+                      <span className="text-center font-semibold">
+                        {expectedTotalCorners.toFixed(1)}
+                      </span>
+                    </div>
+                  )}
+
+                  {iaData.btts && (
+                    <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center rounded-lg bg-slate-50 px-3 py-2">
+                      <span>BTTS</span>
+                      <span className="text-center font-semibold">{iaData.btts}</span>
+                      <span className="text-center font-semibold">
+                        {(monteCarloResult?.btts ??
+                          (localStats.bttsPct + visitStats.bttsPct) / 2) >= 55
+                          ? "Sí"
+                          : "No"}
+                      </span>
+                    </div>
+                  )}
+
+                  {iaData.ganador && (
+                    <div className="grid grid-cols-[1.2fr_1fr_1fr] items-center rounded-lg bg-slate-50 px-3 py-2">
+                      <span>Ganador</span>
+                      <span className="text-center font-semibold">{iaData.ganador}</span>
+                      <span className="text-center font-semibold">
+                        {simulation.localWin >= simulation.awayWin ? "Local" : "Visitante"}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h2 className="mb-4 text-xl font-bold text-slate-800">Cuotas de la casa (entrada manual)</h2>
+              <p className="mb-4 text-sm text-slate-600">Primero llena las líneas reales de la casa. Más abajo verás el edge calculado automáticamente.</p>
+              <div className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                <input type="number" placeholder="Gana local" value={odds.local} onChange={(e) => setOdds((p) => ({ ...p, local: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="Empate" value={odds.empate} onChange={(e) => setOdds((p) => ({ ...p, empate: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="Gana visitante" value={odds.visitante} onChange={(e) => setOdds((p) => ({ ...p, visitante: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="+1.5 goles" value={odds.over15} onChange={(e) => setOdds((p) => ({ ...p, over15: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="+2.5 goles" value={odds.over25} onChange={(e) => setOdds((p) => ({ ...p, over25: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="-3.5 goles" value={odds.under35} onChange={(e) => setOdds((p) => ({ ...p, under35: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="-4.5 goles" value={odds.under45} onChange={(e) => setOdds((p) => ({ ...p, under45: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="BTTS Sí" value={odds.btts} onChange={(e) => setOdds((p) => ({ ...p, btts: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="+7.5 corners" value={odds.corners75} onChange={(e) => setOdds((p) => ({ ...p, corners75: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="+8.5 corners" value={odds.corners85} onChange={(e) => setOdds((p) => ({ ...p, corners85: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="-10.5 corners" value={odds.corners105} onChange={(e) => setOdds((p) => ({ ...p, corners105: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="+3.5 tarjetas" value={odds.cards35} onChange={(e) => setOdds((p) => ({ ...p, cards35: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="+4.5 tarjetas" value={odds.cards45} onChange={(e) => setOdds((p) => ({ ...p, cards45: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="+5.5 tarjetas" value={odds.cards55} onChange={(e) => setOdds((p) => ({ ...p, cards55: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              </div>
+
+
+
+                     <section className="grid gap-8 xl:grid-cols-2">
+          <div className="xl:col-span-5 rounded-4xl border border-slate-900 bg-white p-9 shadow-sm">
+            <h2 className="mb-5 text-xl font-bold text-slate-900">Líneas de la casa y edge real</h2>
+            <p className="mb-5 text-sm text-slate-900">
+              Mete la línea real de la casa. La app compara probabilidad del sistema vs probabilidad implícita y te marca si hay margen real.
+            </p>
+
+            <div className="grid gap-2 grid-cols-2 md:grid-cols-2 xl:grid-cols-2">
+              
+              <input type="number" placeholder="Gana local" value={odds.local} onChange={(e) => setOdds((p) => ({ ...p, local: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-5 py-5 font-semibold text-slate-950" />
+              <input type="number" placeholder="Empate" value={odds.empate} onChange={(e) => setOdds((p) => ({ ...p, empate: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              <input type="number" placeholder="Gana visitante" value={odds.visitante} onChange={(e) => setOdds((p) => ({ ...p, visitante: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+           
+              <input type="number" placeholder="+1.5 goles" value={odds.over15} onChange={(e) => setOdds((p) => ({ ...p, over15: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              <input type="number" placeholder="+2.5 goles" value={odds.over25} onChange={(e) => setOdds((p) => ({ ...p, over25: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              <input type="number" placeholder="-3.5 goles" value={odds.under35} onChange={(e) => setOdds((p) => ({ ...p, under35: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              <input type="number" placeholder="-4.5 goles" value={odds.under45} onChange={(e) => setOdds((p) => ({ ...p, under45: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+
+              <input type="number" placeholder="BTTS Sí" value={odds.btts} onChange={(e) => setOdds((p) => ({ ...p, btts: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              <input type="number" placeholder="+7.5 corners" value={odds.corners75} onChange={(e) => setOdds((p) => ({ ...p, corners75: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              <input type="number" placeholder="+8.5 corners" value={odds.corners85} onChange={(e) => setOdds((p) => ({ ...p, corners85: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              <input type="number" placeholder="-10.5 corners" value={odds.corners105} onChange={(e) => setOdds((p) => ({ ...p, corners105: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+
+              <input type="number" placeholder="+3.5 tarjetas" value={odds.cards35} onChange={(e) => setOdds((p) => ({ ...p, cards35: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              <input type="number" placeholder="+4.5 tarjetas" value={odds.cards45} onChange={(e) => setOdds((p) => ({ ...p, cards45: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+              <input type="number" placeholder="+5.5 tarjetas" value={odds.cards55} onChange={(e) => setOdds((p) => ({ ...p, cards55: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+            </div>
+   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                Aquí importan más el <b>edge</b> y el tipo de partido que el nombre del equipo.
+              </div>
+            <div className="mt-6 overflow-x-auto">
+              <table className="min-w-[860px] w-full border-collapse text-sm">
+                <thead>
+                  <tr className="bg-slate-100 text-left text-slate-700">
+                    <th className="border px-3 py-2">Mercado</th>
+                    <th className="border px-3 py-2">Sistema</th>
+                    <th className="border px-3 py-2">Casa</th>
+                    <th className="border px-3 py-2">Edge</th>
+                    <th className="border px-3 py-2">Lectura</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {valueBets.map((row) => (
+                    <tr key={row.mercado} className="odd:bg-white even:bg-slate-50">
+                      <td className="border px-3 py-2 font-semibold text-slate-900">{row.mercado}</td>
+                      <td className="border px-3 py-2 text-slate-900">{formatPct(row.sistema)}</td>
+                      <td className="border px-3 py-2 text-slate-900">{row.casa ? formatPct(row.casa) : "-"}</td>
+                      <td className="border px-3 py-2 text-slate-900 font-bold">{row.edge.toFixed(1)}%</td>
+                      <td className="border px-3 py-2">
+                        <span className={`inline-flex rounded-lg px-2 py-1 text-xs font-bold ${getEdgeBadge(row.edge)}`}>
+                          {getEdgeLabel(row.edge)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-8 grid gap-6 md:grid-cols-1">
+              <div className="rounded-4xl border border-emerald-500 bg-emerald-50 p-6">
+                <h3 className="font-bold text-emerald-800">Value bets fuertes</h3>
+                <div className="mt-3 space-y-2 text-sm text-emerald-900">
+                  {strongValueBets.length ? strongValueBets.slice(0, 6).map((item) => (
+                    <p key={item.mercado}>
+                      • <b>{item.mercado}</b> — edge {item.edge.toFixed(1)}%
+                    </p>
+                  )) : <p>• Aún no hay mercados con edge fuerte.</p>}
+                </div>
+              </div>
+              <div className={`rounded-2xl border p-4 ${noBetZone.active ? "border-rose-300 bg-rose-50" : "border-blue-200 bg-blue-50"}`}>
+                <h3 className={`font-bold ${noBetZone.active ? "text-rose-800" : "text-blue-800"}`}>Bloque de decisión</h3>
+                <p className={`mt-2 text-sm ${noBetZone.active ? "text-rose-900" : "text-blue-900"}`}>
+                  {noBetZone.active ? "NO APOSTAR fuerte este partido." : "No está bloqueado; aún así apuesta solo si hay edge."}
+                </p>
+                <div className="mt-3 space-y-1 text-sm">
+                  {noBetZone.reasons.length ? noBetZone.reasons.map((reason, i) => <p key={i}>• {reason}</p>) : <p>• No hay bloqueos fuertes automáticos.</p>}
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+            </section>
+
+            <section className="rounded-2xl border-2 border-violet-400 bg-violet-50 p-4 shadow-sm">
+              <h2 className="text-xl font-bold text-violet-900">H2H manual</h2>
+              <p className="mt-1 text-sm text-violet-800">Llena aquí el cara a cara previo que ves en SofaScore. No reemplaza el análisis, pero sí ayuda a validar.</p>
+              <div className="mt-4 grid gap-3 md:grid-cols-4">
+                <input type="number" placeholder="Total H2H" value={h2hData.totalMatches} onChange={(e) => setH2hData((p) => ({ ...p, totalMatches: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-violet-300 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="Victorias local" value={h2hData.localWins} onChange={(e) => setH2hData((p) => ({ ...p, localWins: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-violet-300 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="Empates" value={h2hData.draws} onChange={(e) => setH2hData((p) => ({ ...p, draws: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-violet-300 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="Victorias visita" value={h2hData.visitWins} onChange={(e) => setH2hData((p) => ({ ...p, visitWins: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-violet-300 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="Hits over 2.5" value={h2hData.over25Hits} onChange={(e) => setH2hData((p) => ({ ...p, over25Hits: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-violet-300 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="Hits BTTS" value={h2hData.bttsHits} onChange={(e) => setH2hData((p) => ({ ...p, bttsHits: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-violet-300 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="Hits corners altos" value={h2hData.cornersHighHits} onChange={(e) => setH2hData((p) => ({ ...p, cornersHighHits: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-violet-300 bg-white px-3 py-2 font-semibold text-slate-950" />
+                <input type="number" placeholder="Hits tarjetas bajas" value={h2hData.cardsLowHits} onChange={(e) => setH2hData((p) => ({ ...p, cardsLowHits: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-violet-300 bg-white px-3 py-2 font-semibold text-slate-950" />
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-violet-200 bg-white p-3 text-sm text-slate-800">
+                  <p>Total H2H: <b>{h2hSummary.totalMatches || 0}</b></p>
+                  <p>Local: <b>{formatPct(h2hSummary.localWinPct)}</b></p>
+                  <p>Empate: <b>{formatPct(h2hSummary.drawPct)}</b></p>
+                  <p>Visita: <b>{formatPct(h2hSummary.visitWinPct)}</b></p>
+                </div>
+                <div className="rounded-xl border border-violet-200 bg-white p-3 text-sm text-slate-800">
+                  <p>Over 2.5: <b>{formatPct(h2hSummary.over25Pct)}</b></p>
+                  <p>BTTS: <b>{formatPct(h2hSummary.bttsPct)}</b></p>
+                  <p>Corners altos: <b>{formatPct(h2hSummary.cornersHighPct)}</b></p>
+                  <p>Tarjetas bajas: <b>{formatPct(h2hSummary.cardsLowPct)}</b></p>
+                </div>
+                <div className={`rounded-xl border p-3 text-sm ${h2hReading.color}`}>
+                  <p className="font-semibold">Lectura H2H</p>
+                  <p className="mt-1 text-lg font-extrabold">{h2hReading.label}</p>
+                  <div className="mt-2 space-y-1">
+                    {h2hReading.notes.length ? h2hReading.notes.map((note, i) => <p key={i}>• {note}</p>) : <p>• Sin lectura fuerte.</p>}
+                  </div>
+                  <p className="mt-2 font-semibold">{h2hFavoriteValidation}</p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <h3 className="text-lg font-bold text-slate-800">Entrada manual completa</h3>
+              <div className="mt-3 space-y-2 text-sm text-slate-700">
+                <p>✅ Partido, árbitro, local y visitante</p>
+                <p>✅ IA previa</p>
+                <p>✅ Cuotas de la casa</p>
+                <p>✅ H2H manual</p>
+                <p className="text-slate-500">Después de llenar esto, baja a revisar resultados y picks.</p>
+              </div>
+            </div>
+            <div className={`rounded-2xl border p-4 shadow-sm ${h2hReading.color}`}>
+              <h3 className="text-lg font-bold">Resumen rápido H2H</h3>
+              <p className="mt-2 text-sm">{h2hFavoriteValidation}</p>
+            </div>
+          </div>
+ 
+        </section>
+
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard title="Goles esperados local" value={expectedGoalsLocal.toFixed(2)} subtitle="Simulación base" />
           <StatCard title="Goles esperados visitante" value={expectedGoalsVisit.toFixed(2)} subtitle="Simulación base" />
           <StatCard title="Corners esperados" value={expectedTotalCorners.toFixed(2)} subtitle="Media ponderada" />
           <StatCard title="Tarjetas esperadas" value={expectedTotalCards.toFixed(2)} subtitle="Equipos + árbitro" />
         </section>
+
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            title="Recencia local"
+            value={localStats.freshnessLabel}
+            subtitle={`Recientes: ${localStats.recentCount} · Viejos: ${localStats.staleCount} · Edad media: ${localStats.averageAgeDays.toFixed(0)} días`}
+          />
+          <StatCard
+            title="Recencia visitante"
+            value={visitStats.freshnessLabel}
+            subtitle={`Recientes: ${visitStats.recentCount} · Viejos: ${visitStats.staleCount} · Edad media: ${visitStats.averageAgeDays.toFixed(0)} días`}
+          />
+          <StatCard
+            title="Lectura +1.5 goles"
+            value={expectedTotalGoals >= 2.45 ? "Jugable" : expectedTotalGoals >= 2.2 ? "Justa" : "Evitar"}
+            subtitle="No fuerces esta línea solo porque un equipo anota mucho"
+          />
+          <StatCard
+            title="Lectura +2.5 goles"
+            value={expectedTotalGoals >= 2.75 ? "Jugable" : expectedTotalGoals >= 2.45 ? "Exigente" : "Evitar"}
+            subtitle="Solo para partidos realmente abiertos"
+          />
+        </section>
+
+        {(localStats.staleCount > 0 || visitStats.staleCount > 0) ? (
+          <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
+            <h2 className="text-lg font-bold text-amber-900">Alerta de recencia</h2>
+            <p className="mt-1 text-sm text-amber-800">
+              Estás mezclando partidos viejos. Cuando metes juegos de más de 5 a 6 meses, la lectura puede engañarte aunque el equipo siga pareciendo goleador.
+            </p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 text-sm text-amber-900">
+              <div className="rounded-xl border border-amber-300 bg-white p-3">
+                <p className="font-semibold">{matchInfo.local || "Local"}</p>
+                <p>Partidos viejos: <b>{localStats.staleCount}</b></p>
+                <p>Muy viejos (+7 meses): <b>{localStats.veryOldCount}</b></p>
+              </div>
+              <div className="rounded-xl border border-amber-300 bg-white p-3">
+                <p className="font-semibold">{matchInfo.visitante || "Visitante"}</p>
+                <p>Partidos viejos: <b>{visitStats.staleCount}</b></p>
+                <p>Muy viejos (+7 meses): <b>{visitStats.veryOldCount}</b></p>
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         <section className="grid gap-6 xl:grid-cols-3">
           <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -2176,6 +3058,59 @@ function resetAllForNewMatch() {
         </section>
 
         <section className="grid gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-slate-800">Lectura final del partido</h2>
+            <div className="grid gap-4 md:grid-cols-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm text-slate-500">Semáforo</p>
+                <p className="mt-1 text-2xl font-bold text-slate-900">{finalReading.semaforo}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm text-slate-500">Tipo de partido</p>
+                <p className="mt-1 text-lg font-bold text-slate-900">{finalReading.tipo}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm text-slate-500">Dominancia</p>
+                <p className="mt-1 text-lg font-bold text-slate-900">{dominanceInfo.level}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm text-slate-500">Recomendación</p>
+                <p className="mt-1 text-lg font-bold text-slate-900">{finalReading.recomendacion}</p>
+              </div>
+            </div>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <p className="font-semibold text-slate-900">Razones</p>
+              <div className="mt-2 space-y-1">
+                {finalReading.razones.map((reason, i) => <p key={i}>• {reason}</p>)}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4 shadow-sm">
+              <h3 className="text-lg font-bold text-violet-900">Comparación real de rivales</h3>
+              <div className="mt-3 space-y-1 text-sm text-violet-900">
+                <p>Rivales en común: <b>{commonAnalysis.total}</b></p>
+                <p>Mejor local: <b>{commonAnalysis.localBetter}</b></p>
+                <p>Mejor visitante: <b>{commonAnalysis.visitBetter}</b></p>
+                <p>Parejos: <b>{commonAnalysis.parejos}</b></p>
+              </div>
+              <p className="mt-3 text-sm text-violet-800">{commonAnalysis.resumen}</p>
+            </div>
+
+            <div className={`rounded-2xl border p-4 shadow-sm ${noBetZone.active ? "border-rose-300 bg-rose-50" : "border-emerald-300 bg-emerald-50"}`}>
+              <h3 className={`text-lg font-bold ${noBetZone.active ? "text-rose-900" : "text-emerald-900"}`}>Zona de apuesta</h3>
+              <p className={`mt-2 text-2xl font-extrabold ${noBetZone.active ? "text-rose-700" : "text-emerald-700"}`}>
+                {noBetZone.active ? "NO APOSTAR" : "APUESTA SELECTIVA"}
+              </p>
+              <div className="mt-3 space-y-1 text-sm">
+                {noBetZone.reasons.length ? noBetZone.reasons.map((reason, i) => <p key={i}>• {reason}</p>) : <p>• Sin bloqueo fuerte.</p>}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-4 text-xl font-bold text-slate-800">15. Simulación general</h2>
             <div className="space-y-2 text-sm text-slate-700">
@@ -2195,107 +3130,6 @@ function resetAllForNewMatch() {
               ))}
             </div>
           </div>
-
-<section className="rounded-2xl border-2 border-indigo-500 bg-indigo-50 p-4 shadow-sm">
-  <h2 className="text-xl font-bold text-indigo-900">Comparador IA (Sofascore vs Sistema)</h2>
-
-  <div className="grid gap-3 md:grid-cols-4 mt-4">
-    <input
-      type="number"
-      placeholder="Tarjetas IA"
-      value={iaData.tarjetas}
-      onChange={(e) =>
-        setIaData((p) => ({
-          ...p,
-          tarjetas: e.target.value === "" ? "" : Number(e.target.value),
-        }))
-      }
-      className="rounded-xl border text-indigo-500 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-    />
-
-    <input
-      type="number"
-      placeholder="Corners IA"
-      value={iaData.corners}
-      onChange={(e) =>
-        setIaData((p) => ({
-          ...p,
-          corners: e.target.value === "" ? "" : Number(e.target.value),
-        }))
-      }
-     className="rounded-xl border text-indigo-400 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-    />
-
-    <select
-      value={iaData.btts}
-      onChange={(e) =>
-        setIaData((p) => ({
-          ...p,
-          btts: e.target.value as "Si" | "No",
-        }))
-      }
-      className="rounded-xl border text-indigo-400 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-    >
-      <option value="">BTTS IA</option>
-      <option value="Si">Sí</option>
-      <option value="No">No</option>
-    </select>
-
-    <select
-      value={iaData.ganador}
-      onChange={(e) =>
-        setIaData((p) => ({
-          ...p,
-          ganador: e.target.value as "Local" | "Visitante",
-        }))
-      }
-     className="rounded-xl border text-indigo-400 bg-white px-3 py-2 text-sm shadow-sm hover:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400"
-    >
-      <option value="">Ganador IA</option>
-      <option value="Local">Local</option>
-      <option value="Visitante">Visitante</option>
-    </select>
-  </div>
-
-  <div className="mt-4 text-sm text-slate-800 space-y-1">
-    {iaData.tarjetas !== "" && (
-      <p>
-        Tarjetas → IA: <b>{iaData.tarjetas}</b> vs Sistema:{" "}
-        <b>{expectedTotalCards.toFixed(1)}</b>
-      </p>
-    )}
-
-    {iaData.corners !== "" && (
-      <p>
-        Corners → IA: <b>{iaData.corners}</b> vs Sistema:{" "}
-        <b>{expectedTotalCorners.toFixed(1)}</b>
-      </p>
-    )}
-
-    {iaData.btts && (
-      <p>
-        BTTS → IA: <b>{iaData.btts}</b> vs Sistema:{" "}
-        <b>
-          {(localStats.bttsPct + visitStats.bttsPct) / 2 > 55 ? "Sí" : "No"}
-        </b>
-      </p>
-    )}
-
-    {iaData.ganador && (
-      <p>
-        Ganador → IA: <b>{iaData.ganador}</b> vs Sistema:{" "}
-        <b>
-          {simulation.localWin > simulation.awayWin
-            ? "Local"
-            : "Visitante"}
-        </b>
-      </p>
-    )}
-  </div>
-</section>
-
-
-
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-4 text-xl font-bold text-slate-800">17. Monte Carlo</h2>
@@ -2382,93 +3216,7 @@ function resetAllForNewMatch() {
           </div>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-3">
-          <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h2 className="mb-4 text-xl font-bold text-slate-800">20. Comparación contra cuotas</h2>
-            <div className="grid gap-3 md:grid-cols-4">
-              <input
-                type="number"
-                placeholder="GANA LOCAL"
-                value={odds.local}
-                onChange={(e) => setOdds((p) => ({ ...p, local: e.target.value === "" ? "" : Number(e.target.value) }))}
-                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
-              />
-              <input
-                type="number"
-                placeholder="EMPATE"
-                value={odds.empate}
-                onChange={(e) => setOdds((p) => ({ ...p, empate: e.target.value === "" ? "" : Number(e.target.value) }))}
-                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
-              />
-              <input
-                type="number"
-                placeholder="GANA VISITANTE"
-                value={odds.visitante}
-                onChange={(e) => setOdds((p) => ({ ...p, visitante: e.target.value === "" ? "" : Number(e.target.value) }))}
-                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
-              />
-              <input
-                type="number"
-                placeholder="+2.5 TOTAL"
-                value={odds.over25}
-                onChange={(e) => setOdds((p) => ({ ...p, over25: e.target.value === "" ? "" : Number(e.target.value) }))}
-                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
-              />
-              <input
-                type="number"
-                placeholder="BTTS(AMBOS MARCAN)"
-                value={odds.btts}
-                onChange={(e) => setOdds((p) => ({ ...p, btts: e.target.value === "" ? "" : Number(e.target.value) }))}
-                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
-              />
-              <input
-                type="number"
-                placeholder="Corners +8.5"
-                value={odds.corners85}
-                onChange={(e) => setOdds((p) => ({ ...p, corners85: e.target.value === "" ? "" : Number(e.target.value) }))}
-                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
-              />
-              <input
-                type="number"
-                placeholder="Tarjetas +4.5"
-                value={odds.cards45}
-                onChange={(e) => setOdds((p) => ({ ...p, cards45: e.target.value === "" ? "" : Number(e.target.value) }))}
-                className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950 placeholder:text-slate-500 focus:border-slate-700 focus:ring-2 focus:ring-slate-300"
-              />
-            </div>
-
-            <div className="mt-4 overflow-x-auto">
-              <table className="min-w-[720px] w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-100 text-left text-slate-700">
-                    <th className="border text-slate-900 px-3 py-2">Mercado</th>
-                    <th className="border text-slate-900 px-3 py-2">Sistema</th>
-                    <th className="border text-slate-900 px-3 py-2">Casa</th>
-                    <th className="border text-slate-900 px-3 py-2">Diferencia</th>
-                    <th className="border text-slate-900 px-3 py-2">Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {valueComparison.map((row) => {
-                    const diff = row.sistema - row.casa;
-                    return (
-                      <tr key={row.mercado}>
-                        <td className="border text-slate-900 px-3 py-2">{row.mercado}</td>
-                        <td className="border text-slate-900 px-3 py-2">{formatPct(row.sistema)}</td>
-                        <td className="border text-slate-900 px-3 py-2">{formatPct(row.casa)}</td>
-                        <td className="border text-slate-900 px-3 py-2">{diff.toFixed(1)}%</td>
-                        <td className="border text-slate-900 px-3 py-2 font-semibold">
-                          {diff >= 5 ? "✔ Sí" : "❌ No"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-4 text-xl font-bold text-slate-800">Parlay Builder</h2>
             <div className="space-y-3">
               {parlay.length ? (
@@ -2494,9 +3242,7 @@ function resetAllForNewMatch() {
                 <p>Confianza media: <b>{formatPct(avgParlayProb)}</b></p>
               </div>
             </div>
-          </div>
-        </section>
-                      
+          </div>        
 
         <section className="rounded-2xl border-2 border-violet-500 bg-violet-100 p-4 shadow-sm">
   <h2 className="text-xl font-bold text-violet-950">Rivales en común</h2>
@@ -2658,33 +3404,6 @@ function resetAllForNewMatch() {
   </div>
 </section>
 
-<div className="rounded-xl border border-green-200 bg-white p-4 mt-4">
-  <h2 className="text-lg font-bold text-green-700">
-    Optimización Automática 🧠
-  </h2>
-
-  {sugerencias.map((s, i) => (
-    <p key={i}>{s}</p>
-  ))}
-</div>
-
-
-<div className="rounded-xl border text-purple-900 bg-white p-4 mt-4">
-  <h2 className="text-lg font-bold text-purple-1200">
-    Sistema DIOS 🤖
-  </h2>
-
-  <p>Riesgo total: {resultadoDios.riesgo}</p>
-  <p>Veredicto: {resultadoDios.veredicto}</p>
-
-  {resultadoDios.tieneTrampa && (
-    <p className="text-red-500">⚠️ Hay equipos trampa</p>
-  )}
-
-  {resultadoDios.malaCombinacion && (
-    <p className="text-red-600">💀 Mala combinación</p>
-  )}
-</div>
 
 <section className="rounded-2xl border border-purple-200 bg-white p-4 shadow-sm">
   <h2 className="text-xl font-bold text-purple-700">Sistema DIOS</h2>
