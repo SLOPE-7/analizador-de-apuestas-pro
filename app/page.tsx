@@ -103,21 +103,30 @@ type ExportedMatchFile = {
     localRows: TeamRow[];
     visitRows: TeamRow[];
     odds: {
-      local: number | "";
-      empate: number | "";
-      visitante: number | "";
-      over15: number | "";
-      over25: number | "";
-      under35: number | "";
-      under45: number | "";
-      btts: number | "";
-      corners75: number | "";
-      corners85: number | "";
-      corners105: number | "";
-      cards35: number | "";
-      cards45: number | "";
-      cards55: number | "";
-    };
+  local: number | "";
+  empate: number | "";
+  visitante: number | "";
+
+  over05: number | "";
+  over15: number | "";
+  over25: number | "";
+  under35: number | "";
+  under45: number | "";
+  under55: number | "";
+
+  btts: number | "";
+
+  corners55: number | "";
+  corners65: number | "";
+  corners75: number | "";
+  corners85: number | "";
+  corners115: number | "";
+
+  cards25: number | "";
+  cards35: number | "";
+  cards45: number | "";
+  cards55: number | "";
+};
     parlay: PickItem[];
     monteCarloResult: {
       localWin: number;
@@ -606,22 +615,35 @@ export default function AnalizadorApuestasPage() {
   const importRefInputRef = useRef<HTMLInputElement | null>(null);
 
   const [odds, setOdds] = useState({
-    local: "" as number | "",
-    empate: "" as number | "",
-    visitante: "" as number | "",
-    over15: "" as number | "",
-    over25: "" as number | "",
-    under35: "" as number | "",
-    under45: "" as number | "",
-    btts: "" as number | "",
-    corners75: "" as number | "",
-    corners85: "" as number | "",
-    corners105: "" as number | "",
-    cards35: "" as number | "",
-    cards45: "" as number | "",
-    cards55: "" as number | "",
-  });
+  local: "" as number | "",
+  empate: "" as number | "",
+  visitante: "" as number | "",
 
+  over05: "" as number | "",
+  over15: "" as number | "",
+  over25: "" as number | "",
+  under35: "" as number | "",
+  under45: "" as number | "",
+  under55: "" as number | "",
+
+  btts: "" as number | "",
+
+  corners55: "" as number | "",
+  corners65: "" as number | "",
+  corners75: "" as number | "",
+  corners85: "" as number | "",
+  corners105: "" as number | "",
+  corners115: "" as number | "",
+
+  cards25: "" as number | "",
+  cards35: "" as number | "",
+  cards45: "" as number | "",
+  cards55: "" as number | "",
+  cardsUnder25: "" as number | "",
+  cardsUnder35: "" as number | "",
+  cardsUnder45: "" as number | "",
+  cardsUnder55: "" as number | "",
+});
 
   const [parlay, setParlay] = useState<PickItem[]>([]);
   const [monteCarloRuns, setMonteCarloRuns] = useState(5000);
@@ -700,22 +722,37 @@ const sugerencias = useMemo(() => optimizarParlay(partidos), [partidos]);
     setLocalRows(draft.localRows ?? createEmptyRows());
     setVisitRows(draft.visitRows ?? createEmptyRows());
     setOdds(
-      draft.odds ?? {
-        local: "",
-        empate: "",
-        visitante: "",
-        over15: "",
-        over25: "",
-        under35: "",
-        under45: "",
-        btts: "",
-        corners75: "",
-        corners85: "",
-        corners105: "",
-        cards35: "",
-        cards45: "",
-        cards55: "",
-      }
+    draft.odds ?? {
+    local: "",
+   empate: "",
+   visitante: "",
+
+    over05: "",
+    over15: "",
+    over25: "",
+   under35: "",
+    under45: "",
+    under55: "",
+
+   btts: "",
+
+    corners55: "",
+    corners65: "",
+    corners75: "",
+    corners85: "",
+    corners105: "",
+    corners115: "",
+
+  cards25: "",
+  cards35: "",
+  cards45: "",
+  cards55: "",
+  under25: "",
+  under35: "",
+  under45: "",
+  under55: "",
+ 
+}
     );
     setParlay(draft.parlay ?? []);
     setMonteCarloResult(draft.monteCarloResult ?? null);
@@ -2061,22 +2098,34 @@ function resetAllForNewMatch() {
   setSelectedSavedVisit("");
   setSelectedSavedRef("");
 
-  setOdds({
-    local: "",
-    empate: "",
-    visitante: "",
-    over15: "",
-    over25: "",
-    under35: "",
-    under45: "",
-    btts: "",
-    corners75: "",
-    corners85: "",
-    corners105: "",
-    cards35: "",
-    cards45: "",
-    cards55: "",
-  });
+setOdds({
+  local: "",
+  empate: "",
+  visitante: "",
+  over05: "",
+  over15: "",
+  over25: "",
+  under35: "",
+  under45: "",
+  under55: "",
+  btts: "",
+  corners55: "",
+  corners65: "",
+  corners75: "",
+  corners85: "",
+  corners105: "",
+  corners115: "",
+  
+  cardsOver25: "",
+  cardsOver35: "",
+  cardsOver45: "",
+  cardsOver55: "",
+
+  cardsUnder25: "",
+  cardsUnder35: "",
+  cardsUnder45: "",
+  cardsUnder55: "",
+});;
 
   setIaData({
     tarjetas: "",
@@ -2685,6 +2734,27 @@ function resetAllForNewMatch() {
         {renderTeamTable("3. Datos del local", "local", localRows, selectedSavedLocal, setSelectedSavedLocal)}
         {renderTeamTable("4. Datos del visitante", "visitante", visitRows, selectedSavedVisit, setSelectedSavedVisit)}
 
+    {(localStats.staleCount > 0 || visitStats.staleCount > 0) ? (
+          <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
+            <h2 className="text-lg font-bold text-amber-900">Alerta de recencia</h2>
+            <p className="mt-1 text-sm text-amber-800">
+              Estás mezclando partidos viejos. Cuando metes juegos de más de 5 a 6 meses, la lectura puede engañarte aunque el equipo siga pareciendo goleador.
+            </p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 text-sm text-amber-900">
+              <div className="rounded-xl border border-amber-300 bg-white p-3">
+                <p className="font-semibold">{matchInfo.local || "Local"}</p>
+                <p>Partidos viejos: <b>{localStats.staleCount}</b></p>
+                <p>Muy viejos (+7 meses): <b>{localStats.veryOldCount}</b></p>
+              </div>
+              <div className="rounded-xl border border-amber-300 bg-white p-3">
+                <p className="font-semibold">{matchInfo.visitante || "Visitante"}</p>
+                <p>Partidos viejos: <b>{visitStats.staleCount}</b></p>
+                <p>Muy viejos (+7 meses): <b>{visitStats.veryOldCount}</b></p>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         <section className="grid gap-6 xl:grid-cols-3">
           <div className="xl:col-span-2 space-y-6">
             <section className="w-full rounded-2xl border-2 border-indigo-500 bg-indigo-50 p-5 shadow-sm">
@@ -2770,113 +2840,338 @@ function resetAllForNewMatch() {
               </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h2 className="mb-4 text-xl font-bold text-slate-800">Cuotas de la casa (entrada manual)</h2>
-              <p className="mb-4 text-sm text-slate-600">Primero llena las líneas reales de la casa. Más abajo verás el edge calculado automáticamente.</p>
-              <div className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-                <input type="number" placeholder="Gana local" value={odds.local} onChange={(e) => setOdds((p) => ({ ...p, local: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="Empate" value={odds.empate} onChange={(e) => setOdds((p) => ({ ...p, empate: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="Gana visitante" value={odds.visitante} onChange={(e) => setOdds((p) => ({ ...p, visitante: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="+1.5 goles" value={odds.over15} onChange={(e) => setOdds((p) => ({ ...p, over15: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="+2.5 goles" value={odds.over25} onChange={(e) => setOdds((p) => ({ ...p, over25: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="-3.5 goles" value={odds.under35} onChange={(e) => setOdds((p) => ({ ...p, under35: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="-4.5 goles" value={odds.under45} onChange={(e) => setOdds((p) => ({ ...p, under45: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="BTTS Sí" value={odds.btts} onChange={(e) => setOdds((p) => ({ ...p, btts: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="+7.5 corners" value={odds.corners75} onChange={(e) => setOdds((p) => ({ ...p, corners75: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="+8.5 corners" value={odds.corners85} onChange={(e) => setOdds((p) => ({ ...p, corners85: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="-10.5 corners" value={odds.corners105} onChange={(e) => setOdds((p) => ({ ...p, corners105: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="+3.5 tarjetas" value={odds.cards35} onChange={(e) => setOdds((p) => ({ ...p, cards35: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="+4.5 tarjetas" value={odds.cards45} onChange={(e) => setOdds((p) => ({ ...p, cards45: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-                <input type="number" placeholder="+5.5 tarjetas" value={odds.cards55} onChange={(e) => setOdds((p) => ({ ...p, cards55: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              </div>
+     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+  <h2 className="mb-4 text-xl font-bold text-slate-800">
+    Cuotas de la casa (entrada manual)
+  </h2>
+  <p className="mb-4 text-sm text-slate-600">
+    Primero llena las líneas reales de la casa. Más abajo verás el edge calculado automáticamente.
+  </p>
+
+  <div className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+    <input
+      type="number"
+      placeholder="Gana local"
+      value={odds.local}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          local: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input
+      type="number"
+      placeholder="Empate"
+      value={odds.empate}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          empate: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input
+      type="number"
+      placeholder="Gana visitante"
+      value={odds.visitante}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          visitante: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input type="number" placeholder="+0.5 goles" value={odds.over05}
+  onChange={(e) => setOdds((p) => ({ ...p, over05: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+
+    <input
+      type="number"
+      placeholder="+1.5 goles"
+      value={odds.over15}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          over15: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input
+      type="number"
+      placeholder="+2.5 goles"
+      value={odds.over25}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          over25: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input
+      type="number"
+      placeholder="-3.5 goles"
+      value={odds.under35}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          under35: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input
+      type="number"
+      placeholder="-4.5 goles"
+      value={odds.under45}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          under45: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input type="number" placeholder="-5.5 goles" value={odds.under55}
+  onChange={(e) => setOdds((p) => ({ ...p, under55: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+
+    <input
+      type="number"
+      placeholder="BTTS Sí"
+      value={odds.btts}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          btts: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+<input type="number" placeholder="+5.5 corners" value={odds.corners55}
+  onChange={(e) => setOdds((p) => ({ ...p, corners55: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+
+<input type="number" placeholder="+6.5 corners" value={odds.corners65}
+  onChange={(e) => setOdds((p) => ({ ...p, corners65: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+
+    <input
+      type="number"
+      placeholder="+7.5 corners"
+      value={odds.corners75}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          corners75: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input
+      type="number"
+      placeholder="+8.5 corners"
+      value={odds.corners85}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          corners85: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input
+      type="number"
+      placeholder="-10.5 corners"
+      value={odds.corners105}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          corners105: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+
+<input type="number" placeholder="-11.5 corners" value={odds.corners115}
+  onChange={(e) => setOdds((p) => ({ ...p, corners115: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+
+<input type="number" placeholder="+2.5 tarjetas" value={odds.cards25}
+  onChange={(e) => setOdds((p) => ({ ...p, cards25: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+
+    <input
+      type="number"
+      placeholder="+3.5 tarjetas"
+      value={odds.cards35}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          cards35: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input
+      type="number"
+      placeholder="+4.5 tarjetas"
+      value={odds.cards45}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          cards45: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+    <input
+      type="number"
+      placeholder="+5.5 tarjetas"
+      value={odds.cards55}
+      onChange={(e) =>
+        setOdds((p) => ({
+          ...p,
+          cards55: e.target.value === "" ? "" : Number(e.target.value),
+        }))
+      }
+      className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+<input type="number" placeholder="-2.5 tarjetas"
+  value={odds.cardsUnder25}
+  onChange={(e) => setOdds(p => ({ ...p, cardsUnder25: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
 
 
+<input type="number" placeholder="-3.5 tarjetas"
+  value={odds.cardsUnder35}
+  onChange={(e) => setOdds(p => ({ ...p, cardsUnder35: e.target.value === "" ? "" : Number(e.target.value) }))}
+ className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
 
-                     <section className="grid gap-8 xl:grid-cols-2">
-          <div className="xl:col-span-5 rounded-4xl border border-slate-900 bg-white p-9 shadow-sm">
-            <h2 className="mb-5 text-xl font-bold text-slate-900">Líneas de la casa y edge real</h2>
-            <p className="mb-5 text-sm text-slate-900">
-              Mete la línea real de la casa. La app compara probabilidad del sistema vs probabilidad implícita y te marca si hay margen real.
+<input type="number" placeholder="-4.5 tarjetas"
+  value={odds.cardsUnder45}
+  onChange={(e) => setOdds(p => ({ ...p, cardsUnder45: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+
+<input type="number" placeholder="-5.5 tarjetas"
+  value={odds.cardsUnder55}
+  onChange={(e) => setOdds(p => ({ ...p, cardsUnder55: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+    />
+  </div>
+</section>
+
+<section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+  <h2 className="mb-5 text-xl font-bold text-slate-900">
+    Líneas de la casa y edge real
+  </h2>
+  <p className="mb-5 text-sm text-slate-700">
+    Aquí se comparan automáticamente las probabilidades del sistema vs la probabilidad implícita de la casa.
+  </p>
+
+  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+    Aquí importan más el <b>edge</b> y el tipo de partido que el nombre del equipo.
+  </div>
+
+  <div className="mt-6 overflow-x-auto">
+    <table className="min-w-[860px] w-full border-collapse text-sm">
+      <thead>
+        <tr className="bg-slate-100 text-left text-slate-700">
+          <th className="border px-3 py-2">Mercado</th>
+          <th className="border px-3 py-2">Sistema</th>
+          <th className="border px-3 py-2">Casa</th>
+          <th className="border px-3 py-2">Edge</th>
+          <th className="border px-3 py-2">Lectura</th>
+        </tr>
+      </thead>
+      <tbody>
+        {valueBets.map((row) => (
+          <tr key={row.mercado} className="odd:bg-white even:bg-slate-50">
+            <td className="border px-3 py-2 font-semibold text-slate-900">
+              {row.mercado}
+            </td>
+            <td className="border px-3 py-2 text-slate-900">
+              {formatPct(row.sistema)}
+            </td>
+            <td className="border px-3 py-2 text-slate-900">
+              {row.casa ? formatPct(row.casa) : "-"}
+            </td>
+            <td className="border px-3 py-2 font-bold text-slate-900">
+              {row.edge.toFixed(1)}%
+            </td>
+            <td className="border px-3 py-2">
+              <span
+                className={`inline-flex rounded-lg px-2 py-1 text-xs font-bold ${getEdgeBadge(
+                  row.edge
+                )}`}
+              >
+                {getEdgeLabel(row.edge)}
+              </span>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+
+  <div className="mt-8 grid gap-6 md:grid-cols-2">
+    <div className="rounded-2xl border border-emerald-500 bg-emerald-50 p-6">
+      <h3 className="font-bold text-emerald-800">Value bets fuertes</h3>
+      <div className="mt-3 space-y-2 text-sm text-emerald-900">
+        {strongValueBets.length ? (
+          strongValueBets.slice(0, 6).map((item) => (
+            <p key={item.mercado}>
+              • <b>{item.mercado}</b> — edge {item.edge.toFixed(1)}%
             </p>
+          ))
+        ) : (
+          <p>• Aún no hay mercados con edge fuerte.</p>
+        )}
+      </div>
+    </div>
 
-            <div className="grid gap-2 grid-cols-2 md:grid-cols-2 xl:grid-cols-2">
-              
-              <input type="number" placeholder="Gana local" value={odds.local} onChange={(e) => setOdds((p) => ({ ...p, local: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-5 py-5 font-semibold text-slate-950" />
-              <input type="number" placeholder="Empate" value={odds.empate} onChange={(e) => setOdds((p) => ({ ...p, empate: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              <input type="number" placeholder="Gana visitante" value={odds.visitante} onChange={(e) => setOdds((p) => ({ ...p, visitante: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-           
-              <input type="number" placeholder="+1.5 goles" value={odds.over15} onChange={(e) => setOdds((p) => ({ ...p, over15: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              <input type="number" placeholder="+2.5 goles" value={odds.over25} onChange={(e) => setOdds((p) => ({ ...p, over25: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              <input type="number" placeholder="-3.5 goles" value={odds.under35} onChange={(e) => setOdds((p) => ({ ...p, under35: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              <input type="number" placeholder="-4.5 goles" value={odds.under45} onChange={(e) => setOdds((p) => ({ ...p, under45: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-
-              <input type="number" placeholder="BTTS Sí" value={odds.btts} onChange={(e) => setOdds((p) => ({ ...p, btts: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              <input type="number" placeholder="+7.5 corners" value={odds.corners75} onChange={(e) => setOdds((p) => ({ ...p, corners75: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              <input type="number" placeholder="+8.5 corners" value={odds.corners85} onChange={(e) => setOdds((p) => ({ ...p, corners85: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              <input type="number" placeholder="-10.5 corners" value={odds.corners105} onChange={(e) => setOdds((p) => ({ ...p, corners105: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-
-              <input type="number" placeholder="+3.5 tarjetas" value={odds.cards35} onChange={(e) => setOdds((p) => ({ ...p, cards35: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              <input type="number" placeholder="+4.5 tarjetas" value={odds.cards45} onChange={(e) => setOdds((p) => ({ ...p, cards45: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-              <input type="number" placeholder="+5.5 tarjetas" value={odds.cards55} onChange={(e) => setOdds((p) => ({ ...p, cards55: e.target.value === "" ? "" : Number(e.target.value) }))} className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-            </div>
-   <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                Aquí importan más el <b>edge</b> y el tipo de partido que el nombre del equipo.
-              </div>
-            <div className="mt-6 overflow-x-auto">
-              <table className="min-w-[860px] w-full border-collapse text-sm">
-                <thead>
-                  <tr className="bg-slate-100 text-left text-slate-700">
-                    <th className="border px-3 py-2">Mercado</th>
-                    <th className="border px-3 py-2">Sistema</th>
-                    <th className="border px-3 py-2">Casa</th>
-                    <th className="border px-3 py-2">Edge</th>
-                    <th className="border px-3 py-2">Lectura</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {valueBets.map((row) => (
-                    <tr key={row.mercado} className="odd:bg-white even:bg-slate-50">
-                      <td className="border px-3 py-2 font-semibold text-slate-900">{row.mercado}</td>
-                      <td className="border px-3 py-2 text-slate-900">{formatPct(row.sistema)}</td>
-                      <td className="border px-3 py-2 text-slate-900">{row.casa ? formatPct(row.casa) : "-"}</td>
-                      <td className="border px-3 py-2 text-slate-900 font-bold">{row.edge.toFixed(1)}%</td>
-                      <td className="border px-3 py-2">
-                        <span className={`inline-flex rounded-lg px-2 py-1 text-xs font-bold ${getEdgeBadge(row.edge)}`}>
-                          {getEdgeLabel(row.edge)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="mt-8 grid gap-6 md:grid-cols-1">
-              <div className="rounded-4xl border border-emerald-500 bg-emerald-50 p-6">
-                <h3 className="font-bold text-emerald-800">Value bets fuertes</h3>
-                <div className="mt-3 space-y-2 text-sm text-emerald-900">
-                  {strongValueBets.length ? strongValueBets.slice(0, 6).map((item) => (
-                    <p key={item.mercado}>
-                      • <b>{item.mercado}</b> — edge {item.edge.toFixed(1)}%
-                    </p>
-                  )) : <p>• Aún no hay mercados con edge fuerte.</p>}
-                </div>
-              </div>
-              <div className={`rounded-2xl border p-4 ${noBetZone.active ? "border-rose-300 bg-rose-50" : "border-blue-200 bg-blue-50"}`}>
-                <h3 className={`font-bold ${noBetZone.active ? "text-rose-800" : "text-blue-800"}`}>Bloque de decisión</h3>
-                <p className={`mt-2 text-sm ${noBetZone.active ? "text-rose-900" : "text-blue-900"}`}>
-                  {noBetZone.active ? "NO APOSTAR fuerte este partido." : "No está bloqueado; aún así apuesta solo si hay edge."}
-                </p>
-                <div className="mt-3 space-y-1 text-sm">
-                  {noBetZone.reasons.length ? noBetZone.reasons.map((reason, i) => <p key={i}>• {reason}</p>) : <p>• No hay bloqueos fuertes automáticos.</p>}
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </section>
-
-            </section>
+    <div
+      className={`rounded-2xl border p-4 ${
+        noBetZone.active
+          ? "border-rose-500 bg-rose-90"
+          : "border-blue-200 bg-blue-90"
+      }`}
+    >
+      <h3
+        className={`font-bold ${
+          noBetZone.active ? "text-rose-500" : "text-blue-900"
+        }`}
+      >
+        Bloque de decisión
+      </h3>
+      <p
+        className={`mt-2 text-sm ${
+          noBetZone.active ? "text-rose-500" : "text-blue-900"
+        }`}
+      >
+        {noBetZone.active
+          ? "NO APOSTAR fuerte este partido."
+          : "No está bloqueado; aún así apuesta solo si hay edge."}
+      </p>
+      <div className="mt-4 space-y-2 text-sm text-red-800 ">
+        {noBetZone.reasons.length ? (
+          noBetZone.reasons.map((reason, i) => <p key={i}>• {reason}</p>)
+        ) : (
+          <p>• No hay bloqueos fuertes automáticos.</p>
+        )}
+      </div>
+    </div>
+  </div>
+</section>
+    
 
             <section className="rounded-2xl border-2 border-violet-400 bg-violet-50 p-4 shadow-sm">
               <h2 className="text-xl font-bold text-violet-900">H2H manual</h2>
@@ -2917,7 +3212,7 @@ function resetAllForNewMatch() {
             </section>
           </div>
 
-          <div className="space-y-4">
+         // <div className="space-y-4">
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <h3 className="text-lg font-bold text-slate-800">Entrada manual completa</h3>
               <div className="mt-3 space-y-2 text-sm text-slate-700">
@@ -2965,27 +3260,6 @@ function resetAllForNewMatch() {
             subtitle="Solo para partidos realmente abiertos"
           />
         </section>
-
-        {(localStats.staleCount > 0 || visitStats.staleCount > 0) ? (
-          <section className="rounded-2xl border border-amber-300 bg-amber-50 p-4 shadow-sm">
-            <h2 className="text-lg font-bold text-amber-900">Alerta de recencia</h2>
-            <p className="mt-1 text-sm text-amber-800">
-              Estás mezclando partidos viejos. Cuando metes juegos de más de 5 a 6 meses, la lectura puede engañarte aunque el equipo siga pareciendo goleador.
-            </p>
-            <div className="mt-3 grid gap-3 md:grid-cols-2 text-sm text-amber-900">
-              <div className="rounded-xl border border-amber-300 bg-white p-3">
-                <p className="font-semibold">{matchInfo.local || "Local"}</p>
-                <p>Partidos viejos: <b>{localStats.staleCount}</b></p>
-                <p>Muy viejos (+7 meses): <b>{localStats.veryOldCount}</b></p>
-              </div>
-              <div className="rounded-xl border border-amber-300 bg-white p-3">
-                <p className="font-semibold">{matchInfo.visitante || "Visitante"}</p>
-                <p>Partidos viejos: <b>{visitStats.staleCount}</b></p>
-                <p>Muy viejos (+7 meses): <b>{visitStats.veryOldCount}</b></p>
-              </div>
-            </div>
-          </section>
-        ) : null}
 
         <section className="grid gap-6 xl:grid-cols-3">
           <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -3103,7 +3377,7 @@ function resetAllForNewMatch() {
               <p className={`mt-2 text-2xl font-extrabold ${noBetZone.active ? "text-rose-700" : "text-emerald-700"}`}>
                 {noBetZone.active ? "NO APOSTAR" : "APUESTA SELECTIVA"}
               </p>
-              <div className="mt-3 space-y-1 text-sm">
+              <div className="mt-3 space-y-1 text-sm text-blue-800">
                 {noBetZone.reasons.length ? noBetZone.reasons.map((reason, i) => <p key={i}>• {reason}</p>) : <p>• Sin bloqueo fuerte.</p>}
               </div>
             </div>
