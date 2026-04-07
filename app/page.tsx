@@ -40,6 +40,10 @@ type TeamRow = {
   oppYellow: number | "";
   ownRed: number | "";
   oppRed: number | "";
+  xg: number | "";
+  xgAgainst: number | "";
+  shotsOnTarget: number | "";
+  shotsOnTargetAgainst: number | "";
   estado: ResultState;
 };
 
@@ -103,30 +107,35 @@ type ExportedMatchFile = {
     localRows: TeamRow[];
     visitRows: TeamRow[];
     odds: {
-  local: number | "";
-  empate: number | "";
-  visitante: number | "";
+      local: number | "";
+      empate: number | "";
+      visitante: number | "";
 
-  over05: number | "";
-  over15: number | "";
-  over25: number | "";
-  under35: number | "";
-  under45: number | "";
-  under55: number | "";
+      over05: number | "";
+      over15: number | "";
+      over25: number | "";
+      under35: number | "";
+      under45: number | "";
+      under55: number | "";
 
-  btts: number | "";
+      btts: number | "";
 
-  corners55: number | "";
-  corners65: number | "";
-  corners75: number | "";
-  corners85: number | "";
-  corners115: number | "";
+      cornersOver55: number | "";
+      cornersOver65: number | "";
+      cornersOver75: number | "";
+      cornersOver85: number | "";
+      cornersUnder105: number | "";
+      cornersUnder115: number | "";
 
-  cards25: number | "";
-  cards35: number | "";
-  cards45: number | "";
-  cards55: number | "";
-};
+      cardsOver25: number | "";
+      cardsOver35: number | "";
+      cardsOver45: number | "";
+      cardsOver55: number | "";
+
+      cardsUnder35: number | "";
+      cardsUnder45: number | "";
+      cardsUnder55: number | "";
+    };
     parlay: PickItem[];
     monteCarloResult: {
       localWin: number;
@@ -172,9 +181,11 @@ function createEmptyRows(): TeamRow[] {
     oppYellow: "",
     ownRed: "",
     oppRed: "",
+    xg: "",
+    xgAgainst: "",
+    shotsOnTarget: "",
+    shotsOnTargetAgainst: "",
     estado: "",
-
-    
   }));
 }
 
@@ -291,7 +302,11 @@ function hasUsefulRows(rows: TeamRow[]) {
       r.ownYellow !== "" ||
       r.oppYellow !== "" ||
       r.ownRed !== "" ||
-      r.oppRed !== ""
+      r.oppRed !== "" ||
+      r.xg !== "" ||
+      r.xgAgainst !== "" ||
+      r.shotsOnTarget !== "" ||
+      r.shotsOnTargetAgainst !== ""
   );
 }
 
@@ -382,6 +397,10 @@ function analyzeRows(rows: TeamRow[]) {
   const oppYellowList = valid.map((r) => toNumber(r.oppYellow));
   const totalYellowList = valid.map((r) => toNumber(r.ownYellow) + toNumber(r.oppYellow));
   const redList = valid.map((r) => toNumber(r.ownRed) + toNumber(r.oppRed));
+  const xgList = valid.map((r) => toNumber(r.xg));
+  const xgAgainstList = valid.map((r) => toNumber(r.xgAgainst));
+  const shotsOnTargetList = valid.map((r) => toNumber(r.shotsOnTarget));
+  const shotsOnTargetAgainstList = valid.map((r) => toNumber(r.shotsOnTargetAgainst));
 
   const recentCount = ages.filter((age) => age !== null && age <= 90).length;
   const staleCount = ages.filter((age) => age !== null && age > 150).length;
@@ -422,12 +441,20 @@ function analyzeRows(rows: TeamRow[]) {
     oppYellowAvg: avg(oppYellowList),
     totalYellowAvg: avg(totalYellowList),
     redAvg: avg(redList),
+    xgAvg: avg(xgList),
+    xgAgainstAvg: avg(xgAgainstList),
+    shotsOnTargetAvg: avg(shotsOnTargetList),
+    shotsOnTargetAgainstAvg: avg(shotsOnTargetAgainstList),
 
     gfWeighted: weightedAvgBy(gfList, recencyWeights),
     gcWeighted: weightedAvgBy(gcList, recencyWeights),
     totalGoalsWeighted: weightedAvgBy(totalGoalsList, recencyWeights),
     cornersWeighted: weightedAvgBy(totalCornersList, recencyWeights),
     cardsWeighted: weightedAvgBy(totalYellowList, recencyWeights),
+    xgWeighted: weightedAvgBy(xgList, recencyWeights),
+    xgAgainstWeighted: weightedAvgBy(xgAgainstList, recencyWeights),
+    shotsOnTargetWeighted: weightedAvgBy(shotsOnTargetList, recencyWeights),
+    shotsOnTargetAgainstWeighted: weightedAvgBy(shotsOnTargetAgainstList, recencyWeights),
 
     over15Pct: pct(over15, count),
     over25Pct: pct(over25, count),
@@ -614,7 +641,7 @@ export default function AnalizadorApuestasPage() {
   const importVisitInputRef = useRef<HTMLInputElement | null>(null);
   const importRefInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [odds, setOdds] = useState({
+const [odds, setOdds] = useState({
   local: "" as number | "",
   empate: "" as number | "",
   visitante: "" as number | "",
@@ -628,18 +655,18 @@ export default function AnalizadorApuestasPage() {
 
   btts: "" as number | "",
 
-  corners55: "" as number | "",
-  corners65: "" as number | "",
-  corners75: "" as number | "",
-  corners85: "" as number | "",
-  corners105: "" as number | "",
-  corners115: "" as number | "",
+  cornersOver55: "" as number | "",
+  cornersOver65: "" as number | "",
+  cornersOver75: "" as number | "",
+  cornersOver85: "" as number | "",
+  cornersUnder105: "" as number | "",
+  cornersUnder115: "" as number | "",
 
-  cards25: "" as number | "",
-  cards35: "" as number | "",
-  cards45: "" as number | "",
-  cards55: "" as number | "",
-  cardsUnder25: "" as number | "",
+  cardsOver25: "" as number | "",
+  cardsOver35: "" as number | "",
+  cardsOver45: "" as number | "",
+  cardsOver55: "" as number | "",
+
   cardsUnder35: "" as number | "",
   cardsUnder45: "" as number | "",
   cardsUnder55: "" as number | "",
@@ -722,36 +749,35 @@ const sugerencias = useMemo(() => optimizarParlay(partidos), [partidos]);
     setLocalRows(draft.localRows ?? createEmptyRows());
     setVisitRows(draft.visitRows ?? createEmptyRows());
     setOdds(
-    draft.odds ?? {
-    local: "",
-   empate: "",
-   visitante: "",
+draft.odds ?? {
+  local: "",
+  empate: "",
+  visitante: "",
 
-    over05: "",
-    over15: "",
-    over25: "",
-   under35: "",
-    under45: "",
-    under55: "",
-
-   btts: "",
-
-    corners55: "",
-    corners65: "",
-    corners75: "",
-    corners85: "",
-    corners105: "",
-    corners115: "",
-
-  cards25: "",
-  cards35: "",
-  cards45: "",
-  cards55: "",
-  under25: "",
+  over05: "",
+  over15: "",
+  over25: "",
   under35: "",
   under45: "",
   under55: "",
- 
+
+  btts: "",
+
+  cornersOver55: "",
+  cornersOver65: "",
+  cornersOver75: "",
+  cornersOver85: "",
+  cornersUnder105: "",
+  cornersUnder115: "",
+
+  cardsOver25: "",
+  cardsOver35: "",
+  cardsOver45: "",
+  cardsOver55: "",
+
+  cardsUnder35: "",
+  cardsUnder45: "",
+  cardsUnder55: "",
 }
     );
     setParlay(draft.parlay ?? []);
@@ -1582,6 +1608,87 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
     h2hSummary.drawPct,
   ]);
 
+
+  const advancedReading = useMemo(() => {
+    const totalSamples = Math.max(localStats.count, visitStats.count);
+    const localAttack = localStats.xgWeighted * 0.65 + localStats.shotsOnTargetWeighted * 0.35;
+    const visitAttack = visitStats.xgWeighted * 0.65 + visitStats.shotsOnTargetWeighted * 0.35;
+    const localDefLeak = localStats.xgAgainstWeighted * 0.6 + localStats.shotsOnTargetAgainstWeighted * 0.4;
+    const visitDefLeak = visitStats.xgAgainstWeighted * 0.6 + visitStats.shotsOnTargetAgainstWeighted * 0.4;
+
+    const localEdge = localAttack - visitAttack + (visitDefLeak - localDefLeak) * 0.35;
+    const visitEdge = visitAttack - localAttack + (localDefLeak - visitDefLeak) * 0.35;
+    const totalXgSignal = localStats.xgWeighted + visitStats.xgWeighted;
+    const totalShotsSignal = localStats.shotsOnTargetWeighted + visitStats.shotsOnTargetWeighted;
+
+    let signal: "local_domina" | "visit_domina" | "parejo" | "bajo_ritmo" = "parejo";
+    const notes: string[] = [];
+
+    if (totalXgSignal < 1.9 && totalShotsSignal < 7) {
+      signal = "bajo_ritmo";
+      notes.push("Producción ofensiva baja en xG y tiros a puerta.");
+    } else if (localEdge >= 0.55 && localStats.xgWeighted >= 1.2) {
+      signal = "local_domina";
+      notes.push("El local genera más peligro real y sostiene mejor volumen.");
+    } else if (visitEdge >= 0.55 && visitStats.xgWeighted >= 1.2) {
+      signal = "visit_domina";
+      notes.push("El visitante genera más peligro real y sostiene mejor volumen.");
+    } else {
+      notes.push("No hay dominador claro por xG y tiros a puerta.");
+    }
+
+    if (Math.abs(localStats.xgWeighted - visitStats.xgWeighted) <= 0.2) {
+      notes.push("El xG está bastante parejo.");
+    }
+
+    if (totalSamples < 4) {
+      notes.push("Pocos partidos con datos completos; lectura más frágil.");
+    }
+
+    return {
+      signal,
+      notes,
+      totalXgSignal,
+      totalShotsSignal,
+      localXg: localStats.xgWeighted,
+      visitXg: visitStats.xgWeighted,
+      localShots: localStats.shotsOnTargetWeighted,
+      visitShots: visitStats.shotsOnTargetWeighted,
+    };
+  }, [localStats, visitStats]);
+
+  const smartMarket = useMemo(() => {
+    if (advancedReading.signal === "local_domina") {
+      return {
+        label: "Local marca / Local gana una mitad",
+        reason: "El local domina en xG y tiros a puerta.",
+        color: "border-emerald-300 bg-emerald-50 text-emerald-900",
+      };
+    }
+
+    if (advancedReading.signal === "visit_domina") {
+      return {
+        label: "Visitante marca / Visitante gana una mitad",
+        reason: "El visitante domina en xG y tiros a puerta.",
+        color: "border-blue-300 bg-blue-50 text-blue-900",
+      };
+    }
+
+    if (advancedReading.signal === "bajo_ritmo") {
+      return {
+        label: "Under goles o no apostar",
+        reason: "El partido viene corto de producción ofensiva real.",
+        color: "border-amber-300 bg-amber-50 text-amber-900",
+      };
+    }
+
+    return {
+      label: "Sin mercado fuerte por xG / tiros",
+      reason: "Se ve partido parejo o sin señal suficiente.",
+      color: "border-slate-300 bg-slate-50 text-slate-900",
+    };
+  }, [advancedReading]);
+
   const noBetZone = useMemo(() => {
     const reasons: string[] = [];
 
@@ -1666,12 +1773,12 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
       {
         mercado: "Más de 7.5 corners",
         sistema: (localStats.cornersOver75Pct + visitStats.cornersOver75Pct) / 2,
-        casa: impliedProb(odds.corners75),
+        casa: impliedProb(odds.cornersOver75),
       },
       {
         mercado: "Más de 8.5 corners",
         sistema: (localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2,
-        casa: impliedProb(odds.corners85),
+        casa: impliedProb(odds.cornersOver85),
       },
       {
         mercado: "Menos de 10.5 corners",
@@ -1680,22 +1787,22 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
           0,
           100
         ),
-        casa: impliedProb(odds.corners105),
+        casa: impliedProb(odds.cornersUnder105),
       },
       {
         mercado: "Más de 3.5 tarjetas",
         sistema: (localStats.cardsOver35Pct + visitStats.cardsOver35Pct) / 2,
-        casa: impliedProb(odds.cards35),
+        casa: impliedProb(odds.cardsOver35),
       },
       {
         mercado: "Más de 4.5 tarjetas",
         sistema: (localStats.cardsOver45Pct + visitStats.cardsOver45Pct) / 2,
-        casa: impliedProb(odds.cards45),
+        casa: impliedProb(odds.cardsOver45),
       },
       {
         mercado: "Más de 5.5 tarjetas",
         sistema: (localStats.cardsOver55Pct + visitStats.cardsOver55Pct) / 2,
-        casa: impliedProb(odds.cards55),
+        casa: impliedProb(odds.cardsOver55),
       },
     ],
     [simulation, monteCarloResult, localStats, visitStats, odds]
@@ -1791,6 +1898,10 @@ else if (field === "ownYellow") row.ownYellow = value === "" ? "" : Number(value
 else if (field === "oppYellow") row.oppYellow = value === "" ? "" : Number(value);
 else if (field === "ownRed") row.ownRed = value === "" ? "" : Number(value);
 else if (field === "oppRed") row.oppRed = value === "" ? "" : Number(value);
+else if (field === "xg") row.xg = value === "" ? "" : Number(value);
+else if (field === "xgAgainst") row.xgAgainst = value === "" ? "" : Number(value);
+else if (field === "shotsOnTarget") row.shotsOnTarget = value === "" ? "" : Number(value);
+else if (field === "shotsOnTargetAgainst") row.shotsOnTargetAgainst = value === "" ? "" : Number(value);
 else if (field === "rival") row.rival = value;
 else if (field === "fecha") row.fecha = value;
 else if (field === "estado") row.estado = value as ResultState;
@@ -2013,10 +2124,31 @@ setter(next);
           local: "",
           empate: "",
           visitante: "",
+
+          over05: "",
+          over15: "",
           over25: "",
+          under35: "",
+          under45: "",
+          under55: "",
+
           btts: "",
-          corners85: "",
-          cards45: "",
+
+          cornersOver55: "",
+          cornersOver65: "",
+          cornersOver75: "",
+          cornersOver85: "",
+          cornersUnder105: "",
+          cornersUnder115: "",
+
+          cardsOver25: "",
+          cardsOver35: "",
+          cardsOver45: "",
+          cardsOver55: "",
+
+          cardsUnder35: "",
+          cardsUnder45: "",
+          cardsUnder55: "",
         }
       );
       setParlay(parsed.payload.parlay ?? []);
@@ -2109,19 +2241,18 @@ setOdds({
   under45: "",
   under55: "",
   btts: "",
-  corners55: "",
-  corners65: "",
-  corners75: "",
-  corners85: "",
-  corners105: "",
-  corners115: "",
-  
+  cornersOver55: "",
+  cornersOver65: "",
+  cornersOver75: "",
+  cornersOver85: "",
+  cornersUnder105: "",
+  cornersUnder115: "",
+
   cardsOver25: "",
   cardsOver35: "",
   cardsOver45: "",
   cardsOver55: "",
 
-  cardsUnder25: "",
   cardsUnder35: "",
   cardsUnder45: "",
   cardsUnder55: "",
@@ -2325,7 +2456,7 @@ setOdds({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-[1250px] w-full border-collapse text-sm">
+          <table className="min-w-[1570px] w-full border-collapse text-sm">
             <thead>
               <tr className={colors.tableHead}>
                 {[
@@ -2335,6 +2466,10 @@ setOdds({
                   "GC",
                   "Total",
                   "BTTS",
+                  "xG",
+                  "xG rival",
+                  "Tiros a puerta",
+                  "Tiros a puerta rival",
                   "Corners propio",
                   "Corners rival",
                   "TA. propio",
@@ -2397,6 +2532,40 @@ setOdds({
                   </td>
                   <td className="border border-slate-200 px-2 py-1 font-semibold text-slate-700">
                     {getBTTS(row) ? "Sí" : "No"}
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={row.xg}
+                      onChange={(e) => handleRowChange(side, i, "xg", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={row.xgAgainst}
+                      onChange={(e) => handleRowChange(side, i, "xgAgainst", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.shotsOnTarget}
+                      onChange={(e) => handleRowChange(side, i, "shotsOnTarget", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
+                  </td>
+                  <td className="border border-slate-200 p-1">
+                    <input
+                      type="number"
+                      value={row.shotsOnTargetAgainst}
+                      onChange={(e) => handleRowChange(side, i, "shotsOnTargetAgainst", e.target.value)}
+                      className={`w-20 rounded-md px-2 py-1 font-semibold ${colors.input}`}
+                    />
                   </td>
                   <td className="border border-slate-200 p-1">
                     <input
@@ -2492,7 +2661,7 @@ setOdds({
     <main className="min-h-screen bg-slate-100 p-4 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
         <section className="rounded-3xl bg-gradient-to-r from-emerald-600 to-teal-600 p-6 text-white shadow-lg">
-          <h1 className="text-3xl font-extrabold">Analizador de Apuestas KAL</h1>
+          <h1 className="text-3xl font-extrabold">Analizador de Apuestas KAL 07</h1>
           <p className="mt-2 text-sm text-emerald-50">
             Base para llenar datos de partidos
           </p>
@@ -2506,6 +2675,7 @@ setOdds({
     Nuevo partido / Limpiar todo
   </button>
 </div>
+
 
         <section className="grid gap-6 xl:grid-cols-3">
           <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -2755,6 +2925,37 @@ setOdds({
           </section>
         ) : null}
 
+    <section className={`rounded-2xl border p-4 shadow-sm ${smartMarket.color}`}>
+          <h2 className="text-xl font-bold">Lectura avanzada xG + tiros</h2>
+          <p className="mt-2 text-lg font-extrabold">{smartMarket.label}</p>
+          <p className="mt-1 text-sm">{smartMarket.reason}</p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4 text-sm">
+            <div className="rounded-xl border border-white/60 bg-white/70 p-3">
+              <p className="text-slate-600">xG local</p>
+              <p className="text-xl font-bold text-slate-900">{advancedReading.localXg.toFixed(2)}</p>
+            </div>
+            <div className="rounded-xl border border-white/60 bg-white/70 p-3">
+              <p className="text-slate-600">xG visitante</p>
+              <p className="text-xl font-bold text-slate-900">{advancedReading.visitXg.toFixed(2)}</p>
+            </div>
+            <div className="rounded-xl border border-white/60 bg-white/70 p-3">
+              <p className="text-slate-600">Tiros a puerta local</p>
+              <p className="text-xl font-bold text-slate-900">{advancedReading.localShots.toFixed(2)}</p>
+            </div>
+            <div className="rounded-xl border border-white/60 bg-white/70 p-3">
+              <p className="text-slate-600">Tiros a puerta visitante</p>
+              <p className="text-xl font-bold text-slate-900">{advancedReading.visitShots.toFixed(2)}</p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-1 text-sm">
+            {advancedReading.notes.map((note, i) => (
+              <p key={i}>• {note}</p>
+            ))}
+          </div>
+        </section>
+
+
+
         <section className="grid gap-6 xl:grid-cols-3">
           <div className="xl:col-span-2 space-y-6">
             <section className="w-full rounded-2xl border-2 border-indigo-500 bg-indigo-50 p-5 shadow-sm">
@@ -2953,22 +3154,22 @@ setOdds({
       }
       className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
     />
-<input type="number" placeholder="+5.5 corners" value={odds.corners55}
-  onChange={(e) => setOdds((p) => ({ ...p, corners55: e.target.value === "" ? "" : Number(e.target.value) }))}
+<input type="number" placeholder="+5.5 corners" value={odds.cornersOver55}
+  onChange={(e) => setOdds((p) => ({ ...p, cornersOver55: e.target.value === "" ? "" : Number(e.target.value) }))}
   className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
 
-<input type="number" placeholder="+6.5 corners" value={odds.corners65}
-  onChange={(e) => setOdds((p) => ({ ...p, corners65: e.target.value === "" ? "" : Number(e.target.value) }))}
+<input type="number" placeholder="+6.5 corners" value={odds.cornersOver65}
+  onChange={(e) => setOdds((p) => ({ ...p, cornersOver65: e.target.value === "" ? "" : Number(e.target.value) }))}
   className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
 
     <input
       type="number"
       placeholder="+7.5 corners"
-      value={odds.corners75}
+      value={odds.cornersOver75}
       onChange={(e) =>
         setOdds((p) => ({
           ...p,
-          corners75: e.target.value === "" ? "" : Number(e.target.value),
+          cornersOver75: e.target.value === "" ? "" : Number(e.target.value),
         }))
       }
       className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
@@ -2976,44 +3177,54 @@ setOdds({
     <input
       type="number"
       placeholder="+8.5 corners"
-      value={odds.corners85}
+      value={odds.cornersOver85}
       onChange={(e) =>
         setOdds((p) => ({
           ...p,
-          corners85: e.target.value === "" ? "" : Number(e.target.value),
+          cornersOver85: e.target.value === "" ? "" : Number(e.target.value),
         }))
       }
       className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
     />
+<input
+  type="number"
+  placeholder="-10.5 corners"
+  value={odds.cornersUnder105}
+  onChange={(e) =>
+    setOdds((p) => ({
+      ...p,
+      cornersUnder105: e.target.value === "" ? "" : Number(e.target.value),
+    }))
+  }
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
+/>
+
+<input type="number" placeholder="-11.5 corners" value={odds.cornersUnder115}
+  onChange={(e) => setOdds((p) => ({ ...p, cornersUnder115: e.target.value === "" ? "" : Number(e.target.value) }))}
+  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
+
+
+
     <input
       type="number"
-      placeholder="-10.5 corners"
-      value={odds.corners105}
+      placeholder="+2.5 tarjetas"
+      value={odds.cardsOver25}
       onChange={(e) =>
         setOdds((p) => ({
           ...p,
-          corners105: e.target.value === "" ? "" : Number(e.target.value),
+          cardsOver25: e.target.value === "" ? "" : Number(e.target.value),
         }))
       }
       className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
     />
-
-<input type="number" placeholder="-11.5 corners" value={odds.corners115}
-  onChange={(e) => setOdds((p) => ({ ...p, corners115: e.target.value === "" ? "" : Number(e.target.value) }))}
-  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-
-<input type="number" placeholder="+2.5 tarjetas" value={odds.cards25}
-  onChange={(e) => setOdds((p) => ({ ...p, cards25: e.target.value === "" ? "" : Number(e.target.value) }))}
-  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950" />
-
     <input
       type="number"
       placeholder="+3.5 tarjetas"
-      value={odds.cards35}
+      value={odds.cardsOver35}
       onChange={(e) =>
         setOdds((p) => ({
           ...p,
-          cards35: e.target.value === "" ? "" : Number(e.target.value),
+          cardsOver35: e.target.value === "" ? "" : Number(e.target.value),
         }))
       }
       className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
@@ -3021,11 +3232,11 @@ setOdds({
     <input
       type="number"
       placeholder="+4.5 tarjetas"
-      value={odds.cards45}
+      value={odds.cardsOver45}
       onChange={(e) =>
         setOdds((p) => ({
           ...p,
-          cards45: e.target.value === "" ? "" : Number(e.target.value),
+          cardsOver45: e.target.value === "" ? "" : Number(e.target.value),
         }))
       }
       className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
@@ -3033,21 +3244,15 @@ setOdds({
     <input
       type="number"
       placeholder="+5.5 tarjetas"
-      value={odds.cards55}
+      value={odds.cardsOver55}
       onChange={(e) =>
         setOdds((p) => ({
           ...p,
-          cards55: e.target.value === "" ? "" : Number(e.target.value),
+          cardsOver55: e.target.value === "" ? "" : Number(e.target.value),
         }))
       }
       className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
     />
-<input type="number" placeholder="-2.5 tarjetas"
-  value={odds.cardsUnder25}
-  onChange={(e) => setOdds(p => ({ ...p, cardsUnder25: e.target.value === "" ? "" : Number(e.target.value) }))}
-  className="rounded-xl border-2 border-slate-500 bg-white px-3 py-2 font-semibold text-slate-950"
-    />
-
 
 <input type="number" placeholder="-3.5 tarjetas"
   value={odds.cardsUnder35}
@@ -3212,7 +3417,7 @@ setOdds({
             </section>
           </div>
 
-         // <div className="space-y-4">
+          <div className="space-y-4">
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <h3 className="text-lg font-bold text-slate-800">Entrada manual completa</h3>
               <div className="mt-3 space-y-2 text-sm text-slate-700">
