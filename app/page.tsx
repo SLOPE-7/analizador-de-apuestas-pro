@@ -44,7 +44,10 @@ type TeamRow = {
   xgAgainst: number | "";
   shotsOnTarget: number | "";
   shotsOnTargetAgainst: number | "";
+  shots: number | "";
+  shotsAgainst: number | "";
   estado: ResultState;
+  
 };
 
 type MatchInfo = {
@@ -169,8 +172,8 @@ const TEAM_STORAGE_KEY = "analizador_saved_teams_v1";
 const REF_STORAGE_KEY = "analizador_saved_refs_v1";
 const MATCH_DRAFT_KEY = "analizador_match_draft_v2";
 
-function createEmptyRows(): TeamRow[] {
-  return Array.from({ length: 10 }, () => ({
+function createEmptyRow(): TeamRow {
+  return {
     rival: "",
     fecha: "",
     gf: "",
@@ -185,8 +188,18 @@ function createEmptyRows(): TeamRow[] {
     xgAgainst: "",
     shotsOnTarget: "",
     shotsOnTargetAgainst: "",
+    shots: "",
+    shotsAgainst: "",
     estado: "",
-  }));
+  };
+}
+
+function createEmptyRows(): TeamRow[] {
+  return Array.from({ length: 10 }, () => createEmptyRow());
+}
+
+function shiftRowsForNewEntry(rows: TeamRow[]): TeamRow[] {
+  return [createEmptyRow(), ...rows.slice(0, 9)];
 }
 
 
@@ -305,6 +318,8 @@ function hasUsefulRows(rows: TeamRow[]) {
       r.oppRed !== "" ||
       r.xg !== "" ||
       r.xgAgainst !== "" ||
+      r.shots !== "" ||
+       r.shotsAgainst !== "" ||
       r.shotsOnTarget !== "" ||
       r.shotsOnTargetAgainst !== ""
   );
@@ -412,22 +427,40 @@ function analyzeRows(rows: TeamRow[]) {
   const draws = valid.filter((r) => r.estado === "E").length;
   const losses = valid.filter((r) => r.estado === "P").length;
 
+  const over05 = valid.filter((r) => getTotalGoals(r) > 0.5).length;  
   const over15 = valid.filter((r) => getTotalGoals(r) > 1.5).length;
   const over25 = valid.filter((r) => getTotalGoals(r) > 2.5).length;
   const over35 = valid.filter((r) => getTotalGoals(r) > 3.5).length;
+  
   const under35 = valid.filter((r) => getTotalGoals(r) < 3.5).length;
+  const under45 = valid.filter((r) => getTotalGoals(r) < 4.5).length;
+  const under55 = valid.filter((r) => getTotalGoals(r) < 5.5).length;
+  
   const bttsYes = valid.filter((r) => getBTTS(r) === 1).length;
 
+  const cornersOver55 = totalCornersList.filter((x) => x > 5.5).length;
+  const cornersOver65 = totalCornersList.filter((x) => x > 6.5).length;
   const cornersOver75 = totalCornersList.filter((x) => x > 7.5).length;
   const cornersOver85 = totalCornersList.filter((x) => x > 8.5).length;
   const cornersOver95 = totalCornersList.filter((x) => x > 9.5).length;
 
+  const cornersUnder105 = totalCornersList.filter((x) => x < 10.5).length;
+  const cornersUnder115 = totalCornersList.filter((x) => x < 11.5).length;
+
+  const cardsOver25 = totalYellowList.filter((x) => x > 2.5).length;
   const cardsOver35 = totalYellowList.filter((x) => x > 3.5).length;
   const cardsOver45 = totalYellowList.filter((x) => x > 4.5).length;
   const cardsOver55 = totalYellowList.filter((x) => x > 5.5).length;
+
+  const cardsUnder35 = totalYellowList.filter((x) => x < 3.5).length;
+  const cardsUnder45 = totalYellowList.filter((x) => x < 4.5).length;
+  const cardsUnder55 = totalYellowList.filter((x) => x < 5.5).length;
   const cardsUnder65 = totalYellowList.filter((x) => x < 6.5).length;
 
   const freshnessScore = clamp(100 - staleCount * 9 - veryOldCount * 10 - Math.max(0, averageAgeDays - 90) * 0.1, 35, 100);
+
+  const shotsList = valid.map((r) => toNumber(r.shots));
+  const shotsAgainstList = valid.map((r) => toNumber(r.shotsAgainst));
 
   return {
     count: valid.length,
@@ -456,19 +489,34 @@ function analyzeRows(rows: TeamRow[]) {
     shotsOnTargetWeighted: weightedAvgBy(shotsOnTargetList, recencyWeights),
     shotsOnTargetAgainstWeighted: weightedAvgBy(shotsOnTargetAgainstList, recencyWeights),
 
+    over05Pct: pct(over05, count),
     over15Pct: pct(over15, count),
     over25Pct: pct(over25, count),
     over35Pct: pct(over35, count),
+
     under35Pct: pct(under35, count),
+    under45Pct: pct(under45, count),
+    under55Pct: pct(under55, count),
+    
     bttsPct: pct(bttsYes, count),
 
+    cornersOver55Pct: pct(cornersOver55, count),
+    cornersOver65Pct: pct(cornersOver65, count),
     cornersOver75Pct: pct(cornersOver75, count),
     cornersOver85Pct: pct(cornersOver85, count),
     cornersOver95Pct: pct(cornersOver95, count),
 
+    cornersUnder105Pct: pct(cornersUnder105, count),
+    cornersUnder115Pct: pct(cornersUnder115, count),
+
+    cardsOver25Pct: pct(cardsOver25, count),
     cardsOver35Pct: pct(cardsOver35, count),
     cardsOver45Pct: pct(cardsOver45, count),
     cardsOver55Pct: pct(cardsOver55, count),
+
+    cardsUnder35Pct: pct(cardsUnder35, count),
+    cardsUnder45Pct: pct(cardsUnder45, count),
+    cardsUnder55Pct: pct(cardsUnder55, count),
     cardsUnder65Pct: pct(cardsUnder65, count),
 
     winPct: pct(wins, count),
@@ -486,6 +534,12 @@ function analyzeRows(rows: TeamRow[]) {
     averageAgeDays,
     freshnessScore,
     freshnessLabel: getFreshnessLabel(veryOldCount, staleCount, valid.length),
+
+    shotsAvg: avg(shotsList),
+    shotsAgainstAvg: avg(shotsAgainstList),
+
+    shotsWeighted: weightedAvgBy(shotsList, recencyWeights),
+    shotsAgainstWeighted: weightedAvgBy(shotsAgainstList, recencyWeights),
   };
 }
 
@@ -599,6 +653,74 @@ function getSignalColor(level: "Alto" | "Medio" | "Bajo") {
   if (level === "Medio") return "text-amber-700";
   return "text-slate-600";
 }
+
+function dampProbability(
+  base: number,
+  config: {
+    floor?: number;
+    ceiling?: number;
+    shrink?: number;
+    shift?: number;
+  } = {}
+) {
+  const {
+    floor = 42,
+    ceiling = 88,
+    shrink = 0.82,
+    shift = -4,
+  } = config;
+
+  const adjusted = base * shrink + shift;
+  return clamp(adjusted, floor, ceiling);
+}
+
+function marketAdjustedProbability(
+  market: "goals" | "corners" | "cards" | "result",
+  raw: number,
+  context?: {
+    volatilityLabel?: string;
+    trapLabel?: string;
+    expectedTotalCorners?: number;
+    expectedTotalCards?: number;
+    expectedTotalGoals?: number;
+  }
+) {
+  let value = raw;
+
+ if (market === "goals") {
+  value = dampProbability(value, { floor: 48, ceiling: 90, shrink: 0.90, shift: -1.5 });
+  if ((context?.volatilityLabel ?? "") === "Alta") value -= 2;
+  if ((context?.trapLabel ?? "") === "Partido trampa") value -= 2;
+}
+
+  if (market === "corners") {
+  value = dampProbability(value, { floor: 44, ceiling: 85, shrink: 0.82, shift: -4 });
+  if ((context?.expectedTotalCorners ?? 0) < 8.0) value -= 2.5;
+  if ((context?.volatilityLabel ?? "") === "Alta") value -= 1.5;
+  if ((context?.trapLabel ?? "") === "Partido trampa") value -= 1.5;
+}
+
+ if (market === "cards") {
+  value = dampProbability(value, { floor: 43, ceiling: 84, shrink: 0.80, shift: -4 });
+
+  if ((context?.expectedTotalCards ?? 0) < 4.0) value -= 2.5;
+
+  // NUEVO 👇
+  if ((context?.expectedTotalGoals ?? 0) > 2.6) {
+    value -= 3; // partidos abiertos suelen tener menos tarjetas
+  }
+
+  if ((context?.volatilityLabel ?? "") === "Alta") value -= 1.5;
+}
+
+if (market === "result") {
+  value = dampProbability(value, { floor: 45, ceiling: 84, shrink: 0.88, shift: -2 });
+  if ((context?.trapLabel ?? "") === "Partido trampa") value -= 2;
+  if ((context?.volatilityLabel ?? "") === "Alta") value -= 1.5;
+}
+  return clamp(value, 35, 90);
+}
+
 export default function AnalizadorApuestasPage() {
 
 
@@ -1227,144 +1349,296 @@ const simulation = useMemo(() => {
     matchInfo.posicionVisitante,
   ]);
 
-  const bestPicks = useMemo<PickItem[]>(() => {
-    const picks: PickItem[] = [];
+  const dominanceInfo = useMemo(() => {
+    const probs = [
+      { key: "local", value: simulation.localWin },
+      { key: "empate", value: simulation.draw },
+      { key: "visitante", value: simulation.awayWin },
+    ].sort((a, b) => b.value - a.value);
 
-    const over15Prob = clamp((localStats.over15Pct + visitStats.over15Pct) / 2, 0, 100);
-    const over25Prob = clamp((localStats.over25Pct + visitStats.over25Pct) / 2, 0, 100);
-    const under35Prob = clamp((localStats.under35Pct + visitStats.under35Pct) / 2, 0, 100);
-    const bttsProb = clamp((localStats.bttsPct + visitStats.bttsPct) / 2, 0, 100);
-    const corners85Prob = clamp((localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2, 0, 100);
-    const cards45Prob =
-      clamp((localStats.cardsOver45Pct + visitStats.cardsOver45Pct) / 2, 0, 100) * 0.7 +
-      (refInfo.promedioAmarillas === "" ? 0 : Number(refInfo.promedioAmarillas) * 5);
+    const top = probs[0];
+    const second = probs[1];
+    const gap = top.value - second.value;
 
-    const freshnessPenalty =
-      (100 - localStats.freshnessScore) * 0.12 +
-      (100 - visitStats.freshnessScore) * 0.12;
+    let level = "Mixto";
+    if ((top.key === "local" || top.key === "visitante") && top.value >= 60 && gap >= 14) {
+      level = "Dominado";
+    } else if (top.value <= 42 || simulation.draw >= 28 || gap < 8) {
+      level = "Cerrado";
 
-    const knockoutCaution = matchInfo.tipo === "Vuelta" || matchInfo.tipo === "Copa" || matchInfo.etapa !== "Liga";
-    const strongGoalSignal = expectedTotalGoals >= 2.55 && bttsProb >= 58;
-    const mediumGoalSignal = expectedTotalGoals >= 2.3 && bttsProb >= 52;
-    const lowGoalWarning =
-      expectedTotalGoals < 2.2 ||
-      (bttsProb < 52 && simulation.draw >= 22) ||
-      (knockoutCaution && expectedTotalGoals < 2.55);
-
-    const over15Adjusted = clamp(over15Prob - freshnessPenalty - (lowGoalWarning ? 7 : 0), 0, 100);
-    const over25Adjusted = clamp(over25Prob - freshnessPenalty - (knockoutCaution ? 5 : 0), 0, 100);
-    const under35Adjusted = clamp(under35Prob - freshnessPenalty * 0.35, 0, 100);
-    const cornersAdjusted = clamp(corners85Prob - freshnessPenalty * 0.4, 0, 100);
-    const cardsAdjusted = clamp(cards45Prob - freshnessPenalty * 0.25, 0, 100);
-
-    if (over15Adjusted >= 73 && mediumGoalSignal && !lowGoalWarning) {
-      picks.push({
-        id: "over15",
-        mercado: "Más de 1.5 goles",
-        probabilidad: over15Adjusted,
-        riesgo: strongGoalSignal ? "Bajo" : "Medio",
-        motivo: strongGoalSignal
-          ? "Línea jugable: hay señal ofensiva suficiente y el partido no luce cerrado."
-          : "Línea aceptable, pero no conviene combinarla con más goles del mismo juego.",
-      });
     }
 
-    if (under35Adjusted >= 69) {
-      picks.push({
-        id: "under35",
-        mercado: "Menos de 3.5 goles",
-        probabilidad: under35Adjusted,
-        riesgo: under35Adjusted >= 76 ? "Bajo" : "Medio",
-        motivo: knockoutCaution
-          ? "Línea sólida para cruce tenso o eliminatorio; protege del partido corto."
-          : "Buena línea de control cuando el partido no apunta a festival de goles.",
-      });
+    return {
+      level,
+      gap,
+      topKey: top.key,
+      topValue: top.value,
+    };
+  }, [simulation]);
+
+const resultPrediction = useMemo(() => {
+  const local = simulation.localWin;
+  const draw = simulation.draw;
+  const away = simulation.awayWin;
+
+  const localOrDraw = local + draw;
+  const awayOrDraw = away + draw;
+
+  let principal = "Partido parejo";
+  let recomendacion = "No hay ganador claro";
+  let riesgo: "Bajo" | "Medio" | "Alto" = "Alto";
+
+  if (local >= away && local >= draw) {
+    principal = "Ligera ventaja local";
+    recomendacion = "Local o empate";
+    riesgo = localOrDraw >= 72 ? "Bajo" : localOrDraw >= 62 ? "Medio" : "Alto";
+  }
+
+  if (away > local && away >= draw) {
+    principal = "Ligera ventaja visitante";
+    recomendacion = "Visitante o empate";
+    riesgo = awayOrDraw >= 72 ? "Bajo" : awayOrDraw >= 62 ? "Medio" : "Alto";
+  }
+
+  if (draw >= 28) {
+    principal = "Empate bastante vivo";
+    recomendacion = "Cuidado con ganador directo";
+    riesgo = "Medio";
+  }
+
+  return {
+    local,
+    draw,
+    away,
+    localOrDraw,
+    awayOrDraw,
+    principal,
+    recomendacion,
+    riesgo,
+  };
+}, [simulation.localWin, simulation.draw, simulation.awayWin]);
+
+ const bestPicks = useMemo<PickItem[]>(() => {
+  const picks: PickItem[] = [];
+
+  const safeNum = (v: unknown) =>
+    typeof v === "number" && Number.isFinite(v) ? v : 0;
+
+  const volatilityPenalty =
+    volatilityLabel === "Alta" ? 6 : volatilityLabel === "Media" ? 3 : 0;
+
+  const trapPenalty =
+    trapAlert.label === "Partido trampa" ? 6 : trapAlert.label === "Cuidado" ? 3 : 0;
+
+  const freshnessPenalty =
+    ((100 - safeNum(localStats.freshnessScore)) + (100 - safeNum(visitStats.freshnessScore))) / 25;
+
+  const totalPenalty = volatilityPenalty + trapPenalty + freshnessPenalty;
+
+  const avgProb = (a: number, b: number) =>
+    clamp((safeNum(a) + safeNum(b)) / 2 - totalPenalty, 0, 100);
+
+  const over05Raw = avgProb(localStats.over05Pct, visitStats.over05Pct);
+  const over15Raw = avgProb(localStats.over15Pct, visitStats.over15Pct);
+  const over25Raw = avgProb(localStats.over25Pct, visitStats.over25Pct);
+  const under45Raw = avgProb(localStats.under45Pct, visitStats.under45Pct);
+  const under55Raw = avgProb(localStats.under55Pct, visitStats.under55Pct);
+
+  const cornersOver55Raw = avgProb(localStats.cornersOver55Pct, visitStats.cornersOver55Pct);
+  const cornersOver65Raw = avgProb(localStats.cornersOver65Pct, visitStats.cornersOver65Pct);
+  const cornersOver75Raw = avgProb(localStats.cornersOver75Pct, visitStats.cornersOver75Pct);
+  const cornersUnder105Raw = avgProb(localStats.cornersUnder105Pct, visitStats.cornersUnder105Pct);
+  const cornersUnder115Raw = avgProb(localStats.cornersUnder115Pct, visitStats.cornersUnder115Pct);
+
+  const refCards = safeNum(Number(refInfo.promedioAmarillas || 0));
+
+  const cardsOver25Raw = clamp(
+    avgProb(localStats.cardsOver25Pct, visitStats.cardsOver25Pct) * 0.78 + refCards * 3.2,
+    0,
+    100
+  );
+
+  const cardsOver35Raw = clamp(
+    avgProb(localStats.cardsOver35Pct, visitStats.cardsOver35Pct) * 0.78 + refCards * 3.0,
+    0,
+    100
+  );
+
+  const cardsUnder45Raw = clamp(
+    avgProb(localStats.cardsUnder45Pct, visitStats.cardsUnder45Pct) * 0.8 + (5.8 - refCards) * 2.6,
+    0,
+    100
+  );
+
+  const cardsUnder55Raw = clamp(
+    avgProb(localStats.cardsUnder55Pct, visitStats.cardsUnder55Pct) * 0.82 + (6.3 - refCards) * 2.2,
+    0,
+    100
+  );
+
+  const addPick = (
+    mercado: string,
+    rawProb: number,
+    marketType: "goals" | "corners" | "cards" | "result",
+    motivo: string
+  ) => {
+    const probabilidad = marketAdjustedProbability(marketType, rawProb, {
+      volatilityLabel,
+      trapLabel: trapAlert.label,
+      expectedTotalGoals,
+      expectedTotalCorners,
+      expectedTotalCards,
+    });
+
+   const minByMarket =
+  marketType === "goals" ? 50 :
+  marketType === "corners" ? 50 :
+  marketType === "cards" ? 50 :
+  48;
+
+if (!Number.isFinite(probabilidad) || probabilidad < minByMarket) return;
+
+    picks.push({
+      id: `${mercado}-${probabilidad.toFixed(1)}`,
+      mercado,
+      probabilidad,
+      riesgo:
+        probabilidad >= 70 ? "Bajo" :
+        probabilidad >= 60 ? "Medio" : "Alto",
+      motivo,
+    });
+  };
+
+  // GOLES
+  if (expectedTotalGoals <= 2.0 && under55Raw >= 58) {
+    addPick("Menos de 5.5 goles", under55Raw, "goals", "Partido de producción limitada.");
+  }
+  if (expectedTotalGoals <= 2.5 && under45Raw >= 56) {
+    addPick("Menos de 4.5 goles", under45Raw, "goals", "Lectura conservadora de goles.");
+  }
+  if (expectedTotalGoals >= 1.35 && over05Raw >= 57) {
+  addPick("Más de 0.5 goles", over05Raw, "goals", "Base mínima de gol.");
+}
+if (expectedTotalGoals >= 1.95 && over15Raw >= 54) {
+  addPick("Más de 1.5 goles", over15Raw, "goals", "Señal razonable de over.");
+}
+if (expectedTotalGoals >= 2.55 && over25Raw >= 53) {
+  addPick("Más de 2.5 goles", over25Raw, "goals", "Solo cuando la lectura sí sube.");
+}
+
+  // CORNERS
+  if (expectedTotalCorners <= 8.2 && cornersUnder115Raw >= 58) {
+    addPick("Menos de 11.5 corners", cornersUnder115Raw, "corners", "Partido sin volumen alto de corners.");
+  }
+  if (expectedTotalCorners <= 8.9 && cornersUnder105Raw >= 56) {
+    addPick("Menos de 10.5 corners", cornersUnder105Raw, "corners", "Lectura moderada de corners.");
+  }
+  if (expectedTotalCorners >= 6.0 && expectedTotalCorners <= 8.8 && cornersOver55Raw >= 60) {
+    addPick("Más de 5.5 corners", cornersOver55Raw, "corners", "Actividad base de corners.");
+  }
+  if (expectedTotalCorners >= 6.8 && expectedTotalCorners <= 9.2 && cornersOver65Raw >= 58) {
+    addPick("Más de 6.5 corners", cornersOver65Raw, "corners", "Lectura aceptable de corners.");
+  }
+  if (expectedTotalCorners >= 8.8 && cornersOver75Raw >= 57 && volatilityLabel !== "Alta") {
+    addPick("Más de 7.5 corners", cornersOver75Raw, "corners", "Over algo más exigente.");
+  }
+
+  // TARJETAS
+  if (expectedTotalCards <= 4.0 && cardsUnder55Raw >= 58) {
+    addPick("Menos de 5.5 tarjetas", cardsUnder55Raw, "cards", "Partido de tarjetas moderadas.");
+  }
+  if (expectedTotalCards <= 3.5 && cardsUnder45Raw >= 56) {
+    addPick("Menos de 4.5 tarjetas", cardsUnder45Raw, "cards", "Escenario más limpio.");
+  }
+  if (expectedTotalCards >= 2.9 && expectedTotalCards <= 5.0 && cardsOver25Raw >= 60) {
+    addPick("Más de 2.5 tarjetas", cardsOver25Raw, "cards", "Actividad mínima disciplinaria.");
+  }
+  if (expectedTotalCards >= 3.8 && expectedTotalCards <= 5.6 && cardsOver35Raw >= 58) {
+    addPick("Más de 3.5 tarjetas", cardsOver35Raw, "cards", "Buen ritmo de faltas.");
+  }
+
+  // RESULTADO
+  const localDoubleChanceRaw = clamp(simulation.localWin + simulation.draw - trapPenalty * 0.6, 0, 100);
+  const visitDoubleChanceRaw = clamp(simulation.awayWin + simulation.draw - trapPenalty * 0.6, 0, 100);
+
+  if (simulation.localWin >= simulation.awayWin && localDoubleChanceRaw >= 58) {
+    addPick("Local o empate", localDoubleChanceRaw, "result", "Cobertura útil cuando el local luce más sólido que para ir directo.");
+  } else if (visitDoubleChanceRaw >= 58) {
+    addPick("Visitante o empate", visitDoubleChanceRaw, "result", "Cobertura útil cuando el visitante luce más sólido que para ir directo.");
+  }
+
+const localOrDrawProb = clamp(simulation.localWin + simulation.draw, 0, 100);
+const awayOrDrawProb = clamp(simulation.awayWin + simulation.draw, 0, 100);
+
+if (simulation.draw < 34) {
+  if (simulation.localWin >= simulation.awayWin && localOrDrawProb >= 58) {
+    addPick(
+      "Local o empate",
+      localOrDrawProb,
+      "result",
+      "Cobertura útil cuando el local luce más sólido que para ir directo."
+    );
+  } else if (awayOrDrawProb >= 58) {
+    addPick(
+      "Visitante o empate",
+      awayOrDrawProb,
+      "result",
+      "Cobertura útil cuando el visitante luce más sólido que para ir directo."
+    );
+  }
+}
+
+  // RESPALDOS
+ if (!picks.some((p) => p.mercado.includes("goles"))) {
+  if (expectedTotalGoals >= 2.0 && over15Raw >= 52) {
+    addPick("Más de 1.5 goles", over15Raw, "goals", "Respaldo automático.");
+  } else if (over05Raw >= under55Raw) {
+    addPick("Más de 0.5 goles", over05Raw, "goals", "Respaldo automático.");
+  } else {
+    addPick("Menos de 5.5 goles", under55Raw, "goals", "Respaldo automático.");
+  }
+}
+
+  if (!picks.some((p) => p.mercado.includes("corners"))) {
+    if (cornersUnder115Raw >= cornersOver55Raw) {
+      addPick("Menos de 11.5 corners", cornersUnder115Raw, "corners", "Respaldo automático.");
+    } else {
+      addPick("Más de 5.5 corners", cornersOver55Raw, "corners", "Respaldo automático.");
     }
+  }
 
-    if (over25Adjusted >= 66 && expectedTotalGoals >= 2.75 && strongGoalSignal && !lowGoalWarning && under35Prob < 78) {
-      picks.push({
-        id: "over25",
-        mercado: "Más de 2.5 goles",
-        probabilidad: over25Adjusted,
-        riesgo: "Medio",
-        motivo: "Línea exigente pero jugable: ambos equipos sí sostienen ritmo para 3 goles.",
-      });
+  if (!picks.some((p) => p.mercado.includes("tarjetas"))) {
+    if (cardsUnder55Raw >= cardsOver25Raw) {
+      addPick("Menos de 5.5 tarjetas", cardsUnder55Raw, "cards", "Respaldo automático.");
+    } else {
+      addPick("Más de 2.5 tarjetas", cardsOver25Raw, "cards", "Respaldo automático.");
     }
+  }
 
-    if (bttsProb >= 63 && expectedGoalsLocal >= 0.95 && expectedGoalsVisit >= 0.95) {
-      picks.push({
-        id: "btts",
-        mercado: "Ambos marcan: Sí",
-        probabilidad: clamp(bttsProb - freshnessPenalty * 0.3, 0, 100),
-        riesgo: "Medio",
-        motivo: "Ambos lados tienen base ofensiva suficiente; mejor cuando ninguno depende de un solo gol.",
-      });
-    }
+  //return picks
+   return picks
+  .filter((p, i, arr) => arr.findIndex((x) => x.mercado === p.mercado) === i)
+  .sort((a, b) => b.probabilidad - a.probabilidad)
+  .slice(0, 6);
 
-    const strongCornerSignal = expectedTotalCorners >= 9.4;
-    const mediumCornerSignal = expectedTotalCorners >= 8.1;
 
-    if (cornersAdjusted >= 60 && (strongCornerSignal || mediumCornerSignal)) {
-      picks.push({
-        id: "corners85",
-        mercado: strongCornerSignal ? "Más de 8.5 corners" : "Más de 7.5 corners",
-        probabilidad: clamp(Math.max(cornersAdjusted, expectedTotalCorners * 8.4), 0, 100),
-        riesgo: strongCornerSignal ? "Medio" : "Bajo",
-        motivo: strongCornerSignal
-          ? "Señal fuerte de volumen por bandas y presión sostenida."
-          : "La línea media de corners se ve más cómoda que la línea alta.",
-      });
-    }
+}, [
+  localStats,
+  visitStats,
+  expectedTotalGoals,
+  expectedTotalCorners,
+  expectedTotalCards,
+  simulation.localWin,
+  simulation.draw,
+  simulation.awayWin,
+  volatilityLabel,
+  trapAlert.label,
+  refInfo.promedioAmarillas,
 
-    if (expectedTotalCards >= 3.6) {
-      picks.push({
-        id: "cards45",
-        mercado: expectedTotalCards >= 4.8 ? "Más de 4.5 tarjetas" : "Más de 3.5 tarjetas",
-        probabilidad: clamp(Math.max(cardsAdjusted, expectedTotalCards * 12.5), 0, 100),
-        riesgo: expectedTotalCards >= 4.8 ? "Medio" : "Bajo",
-        motivo:
-          expectedTotalCards >= 4.8
-            ? "Buena línea cuando equipos y árbitro empujan el partido hacia fricción real."
-            : "La línea base es más cómoda que una línea alta de tarjetas.",
-      });
-    }
 
-    const noLoseLocalProb = clamp((localStats.noLosePct + (100 - visitStats.winPct)) / 2, 0, 100);
-    if (simulation.localWin + simulation.draw >= 68 && noLoseLocalProb >= 68) {
-      picks.push({
-        id: "1x",
-        mercado: "Local o empate (1X)",
-        probabilidad: clamp((simulation.localWin + simulation.draw + noLoseLocalProb) / 2 - freshnessPenalty * 0.2, 0, 100),
-        riesgo: "Bajo",
-        motivo: "Mercado más sano que ganador directo cuando el local es superior pero no avasalla.",
-      });
-    }
+  
 
-    const noLoseVisitProb = clamp((visitStats.noLosePct + (100 - localStats.winPct)) / 2, 0, 100);
-    if (simulation.awayWin + simulation.draw >= 68 && noLoseVisitProb >= 68) {
-      picks.push({
-        id: "x2",
-        mercado: "Visitante o empate (X2)",
-        probabilidad: clamp((simulation.awayWin + simulation.draw + noLoseVisitProb) / 2 - freshnessPenalty * 0.2, 0, 100),
-        riesgo: "Bajo",
-        motivo: "Mercado más sano que ganador directo cuando el visitante compite bien pero el partido sigue cerrado.",
-      });
-    }
-
-    return picks.sort((a, b) => b.probabilidad - a.probabilidad);
-  }, [
-    localStats,
-    visitStats,
-    refInfo.promedioAmarillas,
-    simulation,
-    expectedTotalGoals,
-    expectedTotalCorners,
-    expectedTotalCards,
-    expectedGoalsLocal,
-    expectedGoalsVisit,
-    matchInfo.tipo,
-    matchInfo.etapa,
-  ]);
+]);
 
 
   const discardedMarkets = useMemo(() => {
@@ -1410,32 +1684,6 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
     };
   }, [expectedTotalGoals, expectedTotalCards, expectedTotalCorners, trapAlert.label]);
 
-
-  const dominanceInfo = useMemo(() => {
-    const probs = [
-      { key: "local", value: simulation.localWin },
-      { key: "empate", value: simulation.draw },
-      { key: "visitante", value: simulation.awayWin },
-    ].sort((a, b) => b.value - a.value);
-
-    const top = probs[0];
-    const second = probs[1];
-    const gap = top.value - second.value;
-
-    let level = "Mixto";
-    if ((top.key === "local" || top.key === "visitante") && top.value >= 60 && gap >= 14) {
-      level = "Dominado";
-    } else if (top.value <= 42 || simulation.draw >= 28 || gap < 8) {
-      level = "Cerrado";
-    }
-
-    return {
-      level,
-      gap,
-      topKey: top.key,
-      topValue: top.value,
-    };
-  }, [simulation]);
 
   const h2hSummary = useMemo(() => {
     const total = Number(h2hData.totalMatches || 0);
@@ -1761,10 +2009,20 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
         casa: impliedProb(odds.under35),
       },
       {
-        mercado: "Menos de 4.5 goles",
-        sistema: clamp(((localStats.under35Pct + visitStats.under35Pct) / 2) + 12, 0, 100),
-        casa: impliedProb(odds.under45),
-      },
+  mercado: "Menos de 4.5 goles",
+  sistema: marketAdjustedProbability(
+    "goals",
+    avg([localStats.under45Pct, visitStats.under45Pct]),
+    {
+      volatilityLabel,
+      trapLabel: trapAlert.label,
+      expectedTotalGoals,
+      expectedTotalCorners,
+      expectedTotalCards,
+    }
+  ),
+  casa: impliedProb(odds.under45),
+},
       {
         mercado: "BTTS Sí",
         sistema: monteCarloResult?.btts ?? (localStats.bttsPct + visitStats.bttsPct) / 2,
@@ -1780,20 +2038,36 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
         sistema: (localStats.cornersOver85Pct + visitStats.cornersOver85Pct) / 2,
         casa: impliedProb(odds.cornersOver85),
       },
-      {
-        mercado: "Menos de 10.5 corners",
-        sistema: clamp(
-          100 - ((localStats.cornersOver95Pct + visitStats.cornersOver95Pct) / 2),
-          0,
-          100
-        ),
-        casa: impliedProb(odds.cornersUnder105),
-      },
-      {
-        mercado: "Más de 3.5 tarjetas",
-        sistema: (localStats.cardsOver35Pct + visitStats.cardsOver35Pct) / 2,
-        casa: impliedProb(odds.cardsOver35),
-      },
+{
+  mercado: "Menos de 10.5 corners",
+  sistema: marketAdjustedProbability(
+    "corners",
+    avg([localStats.cornersUnder105Pct, visitStats.cornersUnder105Pct]),
+    {
+      volatilityLabel,
+      trapLabel: trapAlert.label,
+      expectedTotalGoals,
+      expectedTotalCorners,
+      expectedTotalCards,
+    }
+  ),
+  casa: impliedProb(odds.cornersUnder105),
+},
+   {
+  mercado: "Más de 3.5 tarjetas",
+  sistema: marketAdjustedProbability(
+    "cards",
+    avg([localStats.cardsOver35Pct, visitStats.cardsOver35Pct]),
+    {
+      volatilityLabel,
+      trapLabel: trapAlert.label,
+      expectedTotalGoals,
+      expectedTotalCorners,
+      expectedTotalCards,
+    }
+  ),
+  casa: impliedProb(odds.cardsOver35),
+},
       {
         mercado: "Más de 4.5 tarjetas",
         sistema: (localStats.cardsOver45Pct + visitStats.cardsOver45Pct) / 2,
@@ -1836,6 +2110,9 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
       }
     }
 
+
+
+    
     if (iaData.corners !== "") {
       total++;
       const diff = Math.abs(Number(iaData.corners) - expectedTotalCorners);
@@ -1878,6 +2155,14 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
     };
   }, [iaData, expectedTotalCards, expectedTotalCorners, monteCarloResult, localStats.bttsPct, visitStats.bttsPct, simulation.localWin, simulation.awayWin]);
 
+  function shiftTeamRows(side: TeamCondition) {
+    if (side === "local") {
+      setLocalRows((prev) => shiftRowsForNewEntry(prev));
+      return;
+    }
+    setVisitRows((prev) => shiftRowsForNewEntry(prev));
+  }
+
   function handleRowChange(
     side: TeamCondition,
     index: number,
@@ -1905,6 +2190,8 @@ else if (field === "shotsOnTargetAgainst") row.shotsOnTargetAgainst = value === 
 else if (field === "rival") row.rival = value;
 else if (field === "fecha") row.fecha = value;
 else if (field === "estado") row.estado = value as ResultState;
+else if (field === "shots") row.shots = value === "" ? "" : Number(value);
+else if (field === "shotsAgainst") row.shotsAgainst = value === "" ? "" : Number(value);
 
 if ((field === "gf" || field === "gc") && row.gf !== "" && row.gc !== "") {
   row.estado = resultFromGoals(Number(row.gf), Number(row.gc));
@@ -2424,6 +2711,13 @@ setOdds({
                 ))}
             </select>
             <button
+              type="button"
+              onClick={() => shiftTeamRows(side)}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Desplazar + borrar último
+            </button>
+            <button
               onClick={() => (side === "local" ? setLocalRows(createEmptyRows()) : setVisitRows(createEmptyRows()))}
               className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
@@ -2455,6 +2749,10 @@ setOdds({
           Equipo actual: <span className="font-semibold">{teamName || "Sin nombre"}</span>
         </div>
 
+        <div className="mb-3 rounded-xl border border-dashed border-slate-300 bg-white/80 p-3 text-sm text-slate-700">
+          <span className="font-semibold">Tip:</span> usa <span className="font-semibold">Desplazar + borrar último</span> cuando quieras abrir espacio arriba para un partido nuevo; la fila 10 se elimina automáticamente.
+        </div>
+
         <div className="overflow-x-auto">
           <table className="min-w-[1570px] w-full border-collapse text-sm">
             <thead>
@@ -2467,15 +2765,15 @@ setOdds({
                   "Total",
                   "BTTS",
                   "xG",
-                  "xG rival",
-                  "Tiros a puerta",
-                  "Tiros a puerta rival",
-                  "Corners propio",
-                  "Corners rival",
-                  "TA. propio",
-                  "TA. rival",
-                  "TR propio",
-                  "TR rival",
+                  "xG Rival",
+                  "T. a Puerta",
+                  "T. a Puerta Rival",
+                  "Corners Propio",
+                  "Corners Rival",
+                  "TA. Propio",
+                  "TA. Rival",
+                  "TR. Propio",
+                  "TR. Rival",
                   "Estado",
                 ].map((h) => (
                   <th key={h} className="border border-slate-200 px-2 py-2 text-left font-semibold">
@@ -3434,14 +3732,58 @@ setOdds({
             </div>
           </div>
  
+
+ 
         </section>
+
+<section className="grid gap-4 md:grid-cols-3">
+  <StatCard
+    title="Probabilidad local"
+    value={`${resultPrediction.local.toFixed(1)}%`}
+    subtitle="Simulación"
+  />
+  <StatCard
+    title="Probabilidad empate"
+    value={`${resultPrediction.draw.toFixed(1)}%`}
+    subtitle="Simulación"
+  />
+  <StatCard
+    title="Probabilidad visitante"
+    value={`${resultPrediction.away.toFixed(1)}%`}
+    subtitle="Simulación"
+  />
+</section>
+
+<section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+  <h3 className="text-lg font-bold text-slate-800">Predicción de resultado</h3>
+  <p className="mt-2 text-sm text-slate-600">
+    {resultPrediction.principal}
+  </p>
+  <p className="mt-1 text-sm font-semibold text-slate-800">
+    Recomendación: {resultPrediction.recomendacion}
+  </p>
+  <p className="mt-1 text-sm text-slate-600">
+    Local o empate: {resultPrediction.localOrDraw.toFixed(1)}%
+  </p>
+  <p className="mt-1 text-sm text-slate-600">
+    Visitante o empate: {resultPrediction.awayOrDraw.toFixed(1)}%
+  </p>
+  <p className="mt-1 text-sm text-slate-600">
+    Riesgo: {resultPrediction.riesgo}
+  </p>
+</section>
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard title="Goles esperados local" value={expectedGoalsLocal.toFixed(2)} subtitle="Simulación base" />
           <StatCard title="Goles esperados visitante" value={expectedGoalsVisit.toFixed(2)} subtitle="Simulación base" />
           <StatCard title="Corners esperados" value={expectedTotalCorners.toFixed(2)} subtitle="Media ponderada" />
           <StatCard title="Tarjetas esperadas" value={expectedTotalCards.toFixed(2)} subtitle="Equipos + árbitro" />
+        
+        
+        
         </section>
+
+
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
@@ -3905,6 +4247,7 @@ setOdds({
     </div>
   </div>
 </section>
+
 
 <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
   <h2 className="mb-4 text-xl font-bold text-slate-800">Lectura combinada del partido</h2>
