@@ -165,6 +165,7 @@ type ScoreProb = {
   prob: number;
 };
 
+
 const STAGES: MatchStage[] = ["Liga", "16vos", "8vos", "4tos", "Semifinal", "Final"];
 const TYPES: MatchType[] = ["Liga", "Ida", "Vuelta", "Clásico", "Copa"];
 
@@ -687,38 +688,70 @@ function marketAdjustedProbability(
 ) {
   let value = raw;
 
- if (market === "goals") {
-  value = dampProbability(value, { floor: 48, ceiling: 90, shrink: 0.90, shift: -1.5 });
-  if ((context?.volatilityLabel ?? "") === "Alta") value -= 2;
-  if ((context?.trapLabel ?? "") === "Partido trampa") value -= 2;
-}
-
-  if (market === "corners") {
-  value = dampProbability(value, { floor: 44, ceiling: 85, shrink: 0.82, shift: -4 });
-  if ((context?.expectedTotalCorners ?? 0) < 8.0) value -= 2.5;
-  if ((context?.volatilityLabel ?? "") === "Alta") value -= 1.5;
-  if ((context?.trapLabel ?? "") === "Partido trampa") value -= 1.5;
-}
-
- if (market === "cards") {
-  value = dampProbability(value, { floor: 43, ceiling: 84, shrink: 0.80, shift: -4 });
-
-  if ((context?.expectedTotalCards ?? 0) < 4.0) value -= 2.5;
-
-  // NUEVO 👇
-  if ((context?.expectedTotalGoals ?? 0) > 2.6) {
-    value -= 3; // partidos abiertos suelen tener menos tarjetas
+  if (market === "goals") {
+    value = dampProbability(value, { floor: 48, ceiling: 90, shrink: 0.9, shift: -1.5 });
+    if ((context?.volatilityLabel ?? "") === "Alta") value -= 2;
+    if ((context?.trapLabel ?? "") === "Partido trampa") value -= 2;
   }
 
-  if ((context?.volatilityLabel ?? "") === "Alta") value -= 1.5;
+  if (market === "corners") {
+    value = dampProbability(value, { floor: 44, ceiling: 85, shrink: 0.82, shift: -4 });
+    if ((context?.expectedTotalCorners ?? 0) < 7.8) value -= 2.5;
+    if ((context?.expectedTotalCorners ?? 0) >= 8.8) value += 1.5;
+    if ((context?.volatilityLabel ?? "") === "Alta") value -= 1.5;
+    if ((context?.trapLabel ?? "") === "Partido trampa") value -= 1.5;
+  }
+
+  if (market === "cards") {
+    value = dampProbability(value, { floor: 43, ceiling: 84, shrink: 0.8, shift: -4 });
+    if ((context?.expectedTotalCards ?? 0) < 3.5) value -= 2.5;
+    if ((context?.expectedTotalGoals ?? 0) > 2.6) value -= 3;
+    if ((context?.volatilityLabel ?? "") === "Alta") value -= 1.5;
+  }
+
+  if (market === "result") {
+    value = dampProbability(value, { floor: 45, ceiling: 84, shrink: 0.88, shift: -2 });
+    if ((context?.trapLabel ?? "") === "Partido trampa") value -= 2;
+    if ((context?.volatilityLabel ?? "") === "Alta") value -= 1.5;
+  }
+
+  return clamp(value, 35, 90);
 }
 
-if (market === "result") {
-  value = dampProbability(value, { floor: 45, ceiling: 84, shrink: 0.88, shift: -2 });
-  if ((context?.trapLabel ?? "") === "Partido trampa") value -= 2;
-  if ((context?.volatilityLabel ?? "") === "Alta") value -= 1.5;
+function dedupePicksByMarket(items: PickItem[]) {
+  const bestByMarket = new Map<string, PickItem>();
+
+  items.forEach((item) => {
+    const current = bestByMarket.get(item.mercado);
+    if (!current || item.probabilidad > current.probabilidad) {
+      bestByMarket.set(item.mercado, item);
+    }
+  });
+
+  return Array.from(bestByMarket.values());
 }
-  return clamp(value, 35, 90);
+
+function getPickFamily(mercado: string): "goles" | "corners" | "tarjetas" | "resultado" | "otro" {
+  const value = mercado.toLowerCase();
+  if (value.includes("corner")) return "corners";
+  if (value.includes("tarjeta")) return "tarjetas";
+  if (value.includes("gol") || value.includes("btts")) return "goles";
+  if (
+    value.includes("empate") ||
+    value.includes("local") ||
+    value.includes("visitante") ||
+    value.includes("1x2")
+  ) {
+    return "resultado";
+  }
+  return "otro";
+}
+
+function getMarketTone(mercado: string): "over" | "under" | "neutral" {
+  const value = mercado.toLowerCase();
+  if (value.includes("más de") || value.includes("btts")) return "over";
+  if (value.includes("menos de") || value.includes("no")) return "under";
+  return "neutral";
 }
 
 export default function AnalizadorApuestasPage() {
@@ -795,6 +828,7 @@ const [odds, setOdds] = useState({
 });
 
   const [parlay, setParlay] = useState<PickItem[]>([]);
+  const [parlayNotice, setParlayNotice] = useState("");
   const [monteCarloRuns, setMonteCarloRuns] = useState(5000);
   const [monteCarloResult, setMonteCarloResult] = useState<{
     localWin: number;
@@ -919,6 +953,8 @@ draft.odds ?? {
 
     localStorage.setItem(MATCH_DRAFT_KEY, JSON.stringify(draft));
   }, [matchInfo, refInfo, localRows, visitRows, odds, parlay, monteCarloResult]);
+
+const [minProbabilidad, setMinProbabilidad] = useState(50);
 
   const localStats = useMemo(() => analyzeRows(localRows), [localRows]);
   const visitStats = useMemo(() => analyzeRows(visitRows), [visitRows]);
@@ -1421,6 +1457,24 @@ const resultPrediction = useMemo(() => {
  const bestPicks = useMemo<PickItem[]>(() => {
   const picks: PickItem[] = [];
 
+// 🔥 DETECTOR DE DOMINANCIA
+const posicionDiff =
+  matchInfo.posicionLocal !== "" && matchInfo.posicionVisitante !== ""
+    ? Number(matchInfo.posicionVisitante) - Number(matchInfo.posicionLocal)
+    : 0;
+
+const dominanciaLocal =
+  posicionDiff >= 8 &&
+  expectedGoalsLocal > expectedGoalsVisit &&
+  simulation.localWin >= 55;
+
+const dominanciaVisit =
+  posicionDiff <= -8 &&
+  expectedGoalsVisit > expectedGoalsLocal &&
+  simulation.awayWin >= 55;
+
+const isDominante = dominanciaLocal || dominanciaVisit;
+
   const safeNum = (v: unknown) =>
     typeof v === "number" && Number.isFinite(v) ? v : 0;
 
@@ -1433,10 +1487,16 @@ const resultPrediction = useMemo(() => {
   const freshnessPenalty =
     ((100 - safeNum(localStats.freshnessScore)) + (100 - safeNum(visitStats.freshnessScore))) / 25;
 
-  const totalPenalty = volatilityPenalty + trapPenalty + freshnessPenalty;
-
+  const totalPenalty = isDominante
+  ? (volatilityPenalty + trapPenalty + freshnessPenalty) * 0.4
+  : (volatilityPenalty + trapPenalty + freshnessPenalty);
   const avgProb = (a: number, b: number) =>
     clamp((safeNum(a) + safeNum(b)) / 2 - totalPenalty, 0, 100);
+
+  const avgBTTS = (safeNum(localStats.bttsPct) + safeNum(visitStats.bttsPct)) / 2;
+  const resultGap = Math.abs(simulation.localWin - simulation.awayWin);
+  const dominantSideProb = Math.max(simulation.localWin, simulation.awayWin);
+  const safeCornersHighPct = avgProb(localStats.cornersOver95Pct, visitStats.cornersOver95Pct);
 
   const over05Raw = avgProb(localStats.over05Pct, visitStats.over05Pct);
   const over15Raw = avgProb(localStats.over15Pct, visitStats.over15Pct);
@@ -1447,6 +1507,7 @@ const resultPrediction = useMemo(() => {
   const cornersOver55Raw = avgProb(localStats.cornersOver55Pct, visitStats.cornersOver55Pct);
   const cornersOver65Raw = avgProb(localStats.cornersOver65Pct, visitStats.cornersOver65Pct);
   const cornersOver75Raw = avgProb(localStats.cornersOver75Pct, visitStats.cornersOver75Pct);
+  const cornersOver85Raw = avgProb(localStats.cornersOver85Pct, visitStats.cornersOver85Pct);
   const cornersUnder105Raw = avgProb(localStats.cornersUnder105Pct, visitStats.cornersUnder105Pct);
   const cornersUnder115Raw = avgProb(localStats.cornersUnder115Pct, visitStats.cornersUnder115Pct);
 
@@ -1490,13 +1551,13 @@ const resultPrediction = useMemo(() => {
       expectedTotalCards,
     });
 
-   const minByMarket =
-  marketType === "goals" ? 50 :
-  marketType === "corners" ? 50 :
-  marketType === "cards" ? 50 :
-  48;
+    const minByMarket =
+      marketType === "goals" ? 50 :
+      marketType === "corners" ? 54 :
+      marketType === "cards" ? 56 :
+      isDominante ? 52 : 56;
 
-if (!Number.isFinite(probabilidad) || probabilidad < minByMarket) return;
+    if (!Number.isFinite(probabilidad) || probabilidad < minByMarket) return;
 
     picks.push({
       id: `${mercado}-${probabilidad.toFixed(1)}`,
@@ -1509,137 +1570,235 @@ if (!Number.isFinite(probabilidad) || probabilidad < minByMarket) return;
     });
   };
 
-  // GOLES
-  if (expectedTotalGoals <= 2.0 && under55Raw >= 58) {
+  // GOLES: aquí está la fortaleza principal del sistema
+  if (expectedTotalGoals <= 2.0 && under55Raw >= 60) {
     addPick("Menos de 5.5 goles", under55Raw, "goals", "Partido de producción limitada.");
   }
-  if (expectedTotalGoals <= 2.5 && under45Raw >= 56) {
+  if (expectedTotalGoals <= 2.35 && under45Raw >= 60) {
     addPick("Menos de 4.5 goles", under45Raw, "goals", "Lectura conservadora de goles.");
   }
-  if (expectedTotalGoals >= 1.35 && over05Raw >= 57) {
-  addPick("Más de 0.5 goles", over05Raw, "goals", "Base mínima de gol.");
-}
-if (expectedTotalGoals >= 1.95 && over15Raw >= 54) {
-  addPick("Más de 1.5 goles", over15Raw, "goals", "Señal razonable de over.");
-}
-if (expectedTotalGoals >= 2.55 && over25Raw >= 53) {
-  addPick("Más de 2.5 goles", over25Raw, "goals", "Solo cuando la lectura sí sube.");
-}
+  if (expectedTotalGoals >= 1.25 && over05Raw >= 58) {
+    addPick("Más de 0.5 goles", over05Raw, "goals", "Base mínima de gol.");
+  }
+  if (
+    expectedTotalGoals >= (isDominante ? 1.65 : 1.85) &&
+    over15Raw >= (isDominante ? 52 : 58)
+  ) {
+    addPick("Más de 1.5 goles", over15Raw, "goals", isDominante ? "Dominancia suficiente para empujar una línea corta de goles." : "Señal razonable de over.");
+  }
+  if (
+    expectedTotalGoals >= (isDominante ? 2.35 : 2.85) &&
+    avgBTTS >= (isDominante ? 48 : 52) &&
+    over25Raw >= (isDominante ? 52 : 58) &&
+    (isDominante || volatilityLabel !== "Alta")
+  ) {
+    addPick("Más de 2.5 goles", over25Raw, "goals", isDominante ? "El favorito puede empujar el partido hacia tres goles o más." : "Solo cuando la lectura ofensiva realmente sube.");
+  }
+  
 
-  // CORNERS
-  if (expectedTotalCorners <= 8.2 && cornersUnder115Raw >= 58) {
-    addPick("Menos de 11.5 corners", cornersUnder115Raw, "corners", "Partido sin volumen alto de corners.");
+  // CORNERS: más selectivo para evitar partidos muertos de ritmo
+  const cornersLowLean = expectedTotalCorners <= 7.2 && cornersUnder115Raw >= cornersOver55Raw + 6;
+  const cornersHighLean = expectedTotalCorners >= 8.6 && cornersOver55Raw >= cornersUnder115Raw + 4;
+
+  if (cornersLowLean && cornersUnder115Raw >= 70) {
+    addPick("Menos de 11.5 corners", cornersUnder115Raw, "corners", "Volumen esperado de corners contenido y línea amplia de protección.");
   }
-  if (expectedTotalCorners <= 8.9 && cornersUnder105Raw >= 56) {
-    addPick("Menos de 10.5 corners", cornersUnder105Raw, "corners", "Lectura moderada de corners.");
+  if (expectedTotalCorners <= 6.8 && cornersUnder105Raw >= 68) {
+    addPick("Menos de 10.5 corners", cornersUnder105Raw, "corners", "Lectura baja de corners incluso con línea más ajustada.");
   }
-  if (expectedTotalCorners >= 6.0 && expectedTotalCorners <= 8.8 && cornersOver55Raw >= 60) {
-    addPick("Más de 5.5 corners", cornersOver55Raw, "corners", "Actividad base de corners.");
+  if (cornersHighLean && expectedTotalCorners >= 8.6 && cornersOver55Raw >= 70) {
+    addPick("Más de 5.5 corners", cornersOver55Raw, "corners", "Actividad base de corners bastante consistente.");
   }
-  if (expectedTotalCorners >= 6.8 && expectedTotalCorners <= 9.2 && cornersOver65Raw >= 58) {
-    addPick("Más de 6.5 corners", cornersOver65Raw, "corners", "Lectura aceptable de corners.");
+  if (expectedTotalCorners >= 9.0 && cornersOver65Raw >= 68 && safeCornersHighPct >= 48) {
+    addPick("Más de 6.5 corners", cornersOver65Raw, "corners", "Buena señal de corners sin exigir demasiado la línea.");
   }
-  if (expectedTotalCorners >= 8.8 && cornersOver75Raw >= 57 && volatilityLabel !== "Alta") {
-    addPick("Más de 7.5 corners", cornersOver75Raw, "corners", "Over algo más exigente.");
+  if (expectedTotalCorners >= 9.8 && cornersOver75Raw >= 64 && safeCornersHighPct >= 52 && volatilityLabel === "Baja") {
+    addPick("Más de 7.5 corners", cornersOver75Raw, "corners", "El partido proyecta volumen suficientemente alto para una línea media.");
+  }
+  if (expectedTotalCorners >= 10.5 && cornersOver85Raw >= 61 && safeCornersHighPct >= 58 && volatilityLabel === "Baja") {
+    addPick("Más de 8.5 corners", cornersOver85Raw, "corners", "Solo aparece cuando la lectura de corners es realmente alta.");
   }
 
-  // TARJETAS
-  if (expectedTotalCards <= 4.0 && cardsUnder55Raw >= 58) {
+  // TARJETAS: endurecidas, solo cuando la señal es clara
+  if (expectedTotalCards <= 3.6 && refCards <= 4.2 && cardsUnder55Raw >= 64) {
     addPick("Menos de 5.5 tarjetas", cardsUnder55Raw, "cards", "Partido de tarjetas moderadas.");
   }
-  if (expectedTotalCards <= 3.5 && cardsUnder45Raw >= 56) {
-    addPick("Menos de 4.5 tarjetas", cardsUnder45Raw, "cards", "Escenario más limpio.");
+  if (expectedTotalCards <= 3.1 && refCards <= 3.8 && cardsUnder45Raw >= 62) {
+    addPick("Menos de 4.5 tarjetas", cardsUnder45Raw, "cards", "Escenario bastante limpio.");
   }
-  if (expectedTotalCards >= 2.9 && expectedTotalCards <= 5.0 && cardsOver25Raw >= 60) {
-    addPick("Más de 2.5 tarjetas", cardsOver25Raw, "cards", "Actividad mínima disciplinaria.");
+  if (expectedTotalCards >= 3.3 && refCards >= 4.2 && cardsOver25Raw >= 64) {
+    addPick("Más de 2.5 tarjetas", cardsOver25Raw, "cards", "Actividad disciplinaria con apoyo del árbitro.");
   }
-  if (expectedTotalCards >= 3.8 && expectedTotalCards <= 5.6 && cardsOver35Raw >= 58) {
-    addPick("Más de 3.5 tarjetas", cardsOver35Raw, "cards", "Buen ritmo de faltas.");
-  }
-
-  // RESULTADO
-  const localDoubleChanceRaw = clamp(simulation.localWin + simulation.draw - trapPenalty * 0.6, 0, 100);
-  const visitDoubleChanceRaw = clamp(simulation.awayWin + simulation.draw - trapPenalty * 0.6, 0, 100);
-
-  if (simulation.localWin >= simulation.awayWin && localDoubleChanceRaw >= 58) {
-    addPick("Local o empate", localDoubleChanceRaw, "result", "Cobertura útil cuando el local luce más sólido que para ir directo.");
-  } else if (visitDoubleChanceRaw >= 58) {
-    addPick("Visitante o empate", visitDoubleChanceRaw, "result", "Cobertura útil cuando el visitante luce más sólido que para ir directo.");
+  if (expectedTotalCards >= 4.2 && refCards >= 4.6 && cardsOver35Raw >= 62 && volatilityLabel !== "Alta") {
+    addPick("Más de 3.5 tarjetas", cardsOver35Raw, "cards", "Buen ritmo de faltas con árbitro propenso a mostrar tarjetas.");
   }
 
-const localOrDrawProb = clamp(simulation.localWin + simulation.draw, 0, 100);
-const awayOrDrawProb = clamp(simulation.awayWin + simulation.draw, 0, 100);
+ // 🔥 RESULTADO (MEJORADO CON DOMINANCIA)
+const localDoubleChanceRaw = clamp(simulation.localWin + simulation.draw, 0, 100);
+const visitDoubleChanceRaw = clamp(simulation.awayWin + simulation.draw, 0, 100);
 
-if (simulation.draw < 34) {
-  if (simulation.localWin >= simulation.awayWin && localOrDrawProb >= 58) {
+// 👉 si es partido dominante → permitir ganador directo
+if (isDominante) {
+  if (dominanciaLocal && simulation.localWin >= 52) {
+    addPick(
+      "Local gana",
+      simulation.localWin,
+      "result",
+      "Dominancia clara del local."
+    );
+  }
+
+  if (dominanciaLocal && localDoubleChanceRaw >= 68) {
     addPick(
       "Local o empate",
-      localOrDrawProb,
+      localDoubleChanceRaw,
       "result",
-      "Cobertura útil cuando el local luce más sólido que para ir directo."
+      "Cobertura fuerte para un local claramente superior."
     );
-  } else if (awayOrDrawProb >= 58) {
+  }
+
+  if (dominanciaVisit && simulation.awayWin >= 52) {
+    addPick(
+      "Visitante gana",
+      simulation.awayWin,
+      "result",
+      "Dominancia clara del visitante."
+    );
+  }
+
+  if (dominanciaVisit && visitDoubleChanceRaw >= 68) {
     addPick(
       "Visitante o empate",
-      awayOrDrawProb,
+      visitDoubleChanceRaw,
       "result",
-      "Cobertura útil cuando el visitante luce más sólido que para ir directo."
+      "Cobertura fuerte para un visitante claramente superior."
+    );
+  }
+} else {
+  // comportamiento normal (conservador)
+  if (simulation.localWin >= simulation.awayWin && localDoubleChanceRaw >= 56) {
+    addPick(
+      "Local o empate",
+      localDoubleChanceRaw,
+      "result",
+      "Cobertura útil."
+    );
+  } else if (visitDoubleChanceRaw >= 56) {
+    addPick(
+      "Visitante o empate",
+      visitDoubleChanceRaw,
+      "result",
+      "Cobertura útil."
     );
   }
 }
 
-  // RESPALDOS
- if (!picks.some((p) => p.mercado.includes("goles"))) {
-  if (expectedTotalGoals >= 2.0 && over15Raw >= 52) {
-    addPick("Más de 1.5 goles", over15Raw, "goals", "Respaldo automático.");
-  } else if (over05Raw >= under55Raw) {
-    addPick("Más de 0.5 goles", over05Raw, "goals", "Respaldo automático.");
+  // 🔥 RESPALDOS: priorizar goles (mejorado con dominancia)
+if (!picks.some((p) => p.mercado.includes("goles"))) {
+  if (
+    expectedTotalGoals >= (isDominante ? 1.65 : 1.8) &&
+    (isDominante ? over15Raw >= 50 : over15Raw >= 56)
+  ) {
+    addPick(
+      "Más de 1.5 goles",
+      over15Raw,
+      "goals",
+      "Respaldo automático."
+    );
+  } else if (over05Raw >= 56) {
+    addPick(
+      "Más de 0.5 goles",
+      over05Raw,
+      "goals",
+      "Respaldo automático."
+    );
   } else {
-    addPick("Menos de 5.5 goles", under55Raw, "goals", "Respaldo automático.");
+    addPick(
+      "Menos de 5.5 goles",
+      under55Raw,
+      "goals",
+      "Respaldo automático."
+    );
   }
 }
 
   if (!picks.some((p) => p.mercado.includes("corners"))) {
-    if (cornersUnder115Raw >= cornersOver55Raw) {
-      addPick("Menos de 11.5 corners", cornersUnder115Raw, "corners", "Respaldo automático.");
-    } else {
+    if (expectedTotalCorners >= 9.0 && cornersOver65Raw >= 66) {
+      addPick("Más de 6.5 corners", cornersOver65Raw, "corners", "Respaldo automático.");
+    } else if (expectedTotalCorners >= 8.4 && cornersOver55Raw >= 68) {
       addPick("Más de 5.5 corners", cornersOver55Raw, "corners", "Respaldo automático.");
+    } else if (expectedTotalCorners <= 7.0 && cornersUnder115Raw >= 68) {
+      addPick("Menos de 11.5 corners", cornersUnder115Raw, "corners", "Respaldo automático.");
     }
   }
 
   if (!picks.some((p) => p.mercado.includes("tarjetas"))) {
-    if (cardsUnder55Raw >= cardsOver25Raw) {
+    if (expectedTotalCards <= 3.4 && cardsUnder55Raw >= 64) {
       addPick("Menos de 5.5 tarjetas", cardsUnder55Raw, "cards", "Respaldo automático.");
-    } else {
+    } else if (expectedTotalCards >= 3.5 && refCards >= 4.2 && cardsOver25Raw >= 64) {
       addPick("Más de 2.5 tarjetas", cardsOver25Raw, "cards", "Respaldo automático.");
     }
   }
 
-  //return picks
-   return picks
-  .filter((p, i, arr) => arr.findIndex((x) => x.mercado === p.mercado) === i)
-  .sort((a, b) => b.probabilidad - a.probabilidad)
-  .slice(0, 6);
-
-
+  return dedupePicksByMarket(
+    picks.filter((p) => p.probabilidad >= minProbabilidad)
+  ).sort((a, b) => b.probabilidad - a.probabilidad);
 }, [
   localStats,
   visitStats,
   expectedTotalGoals,
   expectedTotalCorners,
   expectedTotalCards,
-  simulation.localWin,
-  simulation.draw,
-  simulation.awayWin,
   volatilityLabel,
   trapAlert.label,
   refInfo.promedioAmarillas,
-
-
-  
-
+  simulation.localWin,
+  simulation.awayWin,
+  simulation.draw,
+  minProbabilidad,
 ]);
 
+
+  const smartParlaySuggestions = useMemo(() => {
+    const selected: PickItem[] = [];
+    const usedFamilies = new Set<string>();
+
+    const ordered = [...bestPicks].sort((a, b) => {
+      const score = (pick: PickItem) => {
+        const family = getPickFamily(pick.mercado);
+        const familyBoost =
+          family === "goles" ? 8 :
+          family === "corners" ? 3 :
+          family === "tarjetas" ? -4 :
+          -6;
+        return pick.probabilidad + familyBoost;
+      };
+      return score(b) - score(a);
+    });
+
+    for (const pick of ordered) {
+      const family = getPickFamily(pick.mercado);
+      if (usedFamilies.has(family)) continue;
+      if (family === "resultado" && (trapAlert.label !== "Estable" || volatilityLabel === "Alta" || simulation.draw >= 27)) {
+        continue;
+      }
+      if (family === "tarjetas" && pick.probabilidad < 64) continue;
+      if (family === "corners" && pick.probabilidad < 68) continue;
+      if (family === "goles" && pick.probabilidad < Math.max(minProbabilidad, 58)) continue;
+      if (pick.probabilidad < Math.max(minProbabilidad, 60)) continue;
+      selected.push(pick);
+      usedFamilies.add(family);
+      if (selected.length >= 3) break;
+    }
+
+    const caution: string[] = [];
+    if (trapAlert.label === "Partido trampa") caution.push("Evita ganador directo o doble oportunidad fuerte.");
+    if (volatilityLabel === "Alta") caution.push("No mezcles demasiados mercados del mismo partido.");
+    if (!selected.some((p) => getPickFamily(p.mercado) === "goles")) caution.push("Si no hay goles fuertes, mejor no forzar combinada.");
+    if (selected.length < 2) caution.push("No hay combo limpio; mejor jugar simple o esperar otro partido.");
+
+    return { selected, caution };
+  }, [bestPicks, trapAlert.label, volatilityLabel, simulation.draw, minProbabilidad]);
 
   const discardedMarkets = useMemo(() => {
     const items: string[] = [];
@@ -1671,7 +1830,7 @@ if (expectedTotalGoals < 2.2 && ((localStats.bttsPct + visitStats.bttsPct) / 2) 
     const openClosed =
       expectedTotalGoals >= 2.9 ? "Abierto" : expectedTotalGoals <= 2.1 ? "Cerrado" : "Intermedio";
     const cardsStyle =
-      expectedTotalCards >= 5.5 ? "Tarjetas altas" : expectedTotalCards <= 4.0 ? "Tarjetas bajas" : "Tarjetas medias";
+      expectedTotalCards >= 5.5 ? "Tarjetas altas" : expectedTotalCards <= 3.5 ? "Tarjetas bajas" : "Tarjetas medias";
     const cornersStyle =
       expectedTotalCorners >= 9.3 ? "Corners altos" : expectedTotalCorners <= 7.5 ? "Corners bajos" : "Corners medios";
 
@@ -2621,19 +2780,57 @@ setOdds({
   }
 
   function addPickToParlay(pick: PickItem) {
-    if (parlay.some((p) => p.id === pick.id)) return;
+    if (parlay.some((p) => p.id === pick.id)) {
+      setParlayNotice("Ese pick ya está dentro del parlay.");
+      return;
+    }
+
+    const nextFamily = getPickFamily(pick.mercado);
+    const nextTone = getMarketTone(pick.mercado);
+
+    if (parlay.length >= 4) {
+      setParlayNotice("Máximo 4 picks por parlay inteligente para no forzar la combinada.");
+      return;
+    }
+
+    const sameFamily = parlay.find((p) => getPickFamily(p.mercado) === nextFamily);
+    if (sameFamily) {
+      setParlayNotice(`Ya tienes un pick de ${nextFamily}. Mejor deja solo uno por familia.`);
+      return;
+    }
+
+    const oppositeTone = parlay.find((p) => {
+      const family = getPickFamily(p.mercado);
+      const tone = getMarketTone(p.mercado);
+      return family === nextFamily && tone !== "neutral" && nextTone !== "neutral" && tone !== nextTone;
+    });
+    if (oppositeTone) {
+      setParlayNotice("Estás mezclando señales opuestas del mismo mercado. Mejor evita esa combinación.");
+      return;
+    }
+
+    if (
+      nextFamily === "resultado" &&
+      (trapAlert.label === "Partido trampa" || volatilityLabel === "Alta" || simulation.draw >= 28)
+    ) {
+      setParlayNotice("No conviene agregar mercado de resultado en este partido por riesgo de trampa/empate.");
+      return;
+    }
+
     setParlay((prev) => [...prev, pick]);
+    setParlayNotice(`Añadido: ${pick.mercado}`);
   }
 
   function removePickFromParlay(id: string) {
     setParlay((prev) => prev.filter((p) => p.id !== id));
+    setParlayNotice("Pick removido del parlay.");
   }
 
   function correlationLabel() {
-    const ids = parlay.map((p) => p.id);
-    const goalGroup = ids.filter((id) => ["over15", "over25", "under35", "btts"].includes(id)).length;
-    if (goalGroup >= 3) return "Alta";
-    if (goalGroup === 2) return "Media";
+    const families = parlay.map((p) => getPickFamily(p.mercado));
+    const uniqueFamilies = new Set(families).size;
+    if (parlay.length >= 3 && uniqueFamilies <= 2) return "Alta";
+    if (parlay.length >= 3 && uniqueFamilies === 3) return "Media";
     return "Baja";
   }
 
@@ -3984,6 +4181,42 @@ setOdds({
           </div>
         </section>
 
+<div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div>
+      <p className="font-bold text-slate-800">Filtro de picks</p>
+      <p className="text-sm text-slate-600">
+        Muestra todos los mercados desde la probabilidad mínima que tú decidas.
+      </p>
+    </div>
+
+    <div className="flex flex-wrap items-center gap-3">
+      <label className="text-sm font-medium text-slate-700">
+        Mínimo:
+      </label>
+
+      <input
+        type="range"
+        min={50}
+        max={80}
+        step={1}
+        value={minProbabilidad}
+        onChange={(e) => setMinProbabilidad(Number(e.target.value))}
+        className="w-40"
+      />
+
+      <span className="min-w-[60px] rounded-lg bg-emerald-600 px-3 py-1 text-center text-sm font-bold text-white">
+        {minProbabilidad}%
+      </span>
+
+      <div className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+        Sin límite de cantidad
+      </div>
+    </div>
+  </div>
+</div>
+
+
         <section className="grid gap-6 xl:grid-cols-3">
           <div className="xl:col-span-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-4 text-xl font-bold text-slate-800">18. Mejores probabilidades y picks</h2>
@@ -4021,7 +4254,9 @@ setOdds({
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-slate-500">Todavía no hay mercados suficientemente fuertes.</p>
+              <p className="text-sm text-slate-500">
+  No hay picks que alcancen el mínimo configurado de {minProbabilidad}%.
+</p>
             )}
           </div>
 
@@ -4037,7 +4272,51 @@ setOdds({
           </div>
         </section>
 
-                         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="grid gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-2 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+            <h2 className="mb-4 text-xl font-bold text-indigo-950">20. Parlay inteligente sugerido</h2>
+            <p className="text-sm text-indigo-900">
+              Esta combinación intenta dejar un solo pick por familia y evitar resultado directo cuando el partido viene sucio.
+            </p>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              {smartParlaySuggestions.selected.length ? (
+                smartParlaySuggestions.selected.map((pick) => (
+                  <div key={`smart-${pick.id}`} className="rounded-2xl border border-indigo-300 bg-white p-4">
+                    <p className="font-bold text-indigo-900">{pick.mercado}</p>
+                    <p className="mt-1 text-sm text-indigo-800">{formatPct(pick.probabilidad)} · Riesgo {pick.riesgo}</p>
+                    <p className="mt-2 text-sm text-indigo-700">{pick.motivo}</p>
+                    <button
+                      onClick={() => addPickToParlay(pick)}
+                      className="mt-3 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                    >
+                      + Añadir
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-indigo-300 bg-white p-4 text-sm text-indigo-800 md:col-span-3">
+                  No hay combo limpio recomendado con el filtro actual. Mejor jugar simple o esperar otro partido.
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-indigo-200 bg-white p-4 text-sm text-indigo-900">
+              <p className="font-semibold">Reglas del modo inteligente</p>
+              <div className="mt-2 space-y-1">
+                <p>• Máximo 4 picks.</p>
+                <p>• Solo 1 pick por familia: goles, corners, tarjetas o resultado.</p>
+                <p>• Si el partido es trampa o muy volátil, evita resultado.</p>
+              </div>
+              {smartParlaySuggestions.caution.length ? (
+                <div className="mt-3 space-y-1 text-amber-800">
+                  {smartParlaySuggestions.caution.map((note, i) => <p key={i}>• {note}</p>)}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-4 text-xl font-bold text-slate-800">Parlay Builder</h2>
             <div className="space-y-3">
               {parlay.length ? (
@@ -4057,6 +4336,12 @@ setOdds({
                 <p className="text-sm text-slate-500">No has agregado picks todavía.</p>
               )}
 
+              {parlayNotice ? (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                  {parlayNotice}
+                </div>
+              ) : null}
+
               <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
                 <p>Correlación: <b>{correlationLabel()}</b></p>
                 <p>Riesgo total: <b>{parlayRisk}</b></p>
@@ -4064,6 +4349,7 @@ setOdds({
               </div>
             </div>
           </div>        
+        </section>
 
         <section className="rounded-2xl border-2 border-violet-500 bg-violet-100 p-4 shadow-sm">
   <h2 className="text-xl font-bold text-violet-950">Rivales en común</h2>
