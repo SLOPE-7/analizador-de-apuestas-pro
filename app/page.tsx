@@ -670,62 +670,6 @@ function tagClass(tag: string) {
 }
 
 function StatCard({ title, value, subtitle }: { title: string; value: string; subtitle?: string }) {
-  const shiftRows = () => {
-    const filledRows = rows.filter(
-      (row) =>
-        row.rival.trim() ||
-        row.fecha.trim() ||
-        row.gf !== "" ||
-        row.gc !== "" ||
-        row.ownCorners !== "" ||
-        row.oppCorners !== "" ||
-        row.ownYellow !== "" ||
-        row.oppYellow !== "" ||
-        row.xg !== "" ||
-        row.xgAgainst !== "" ||
-        row.shots !== "" ||
-        row.shotsAgainst !== "" ||
-        row.shotsOnTarget !== "" ||
-        row.shotsOnTargetAgainst !== ""
-    );
-
-    if (!filledRows.length) return;
-    const ordered = [...filledRows]
-      .sort((a, b) => {
-        const da = a.fecha ? new Date(`${a.fecha}T12:00:00`).getTime() : 0;
-        const db = b.fecha ? new Date(`${b.fecha}T12:00:00`).getTime() : 0;
-        return db - da;
-      })
-      .slice(0, 9);
-
-    const nextRows = [createEmptyRow(), ...ordered].slice(0, 10);
-
-    nextRows.forEach((row, index) => {
-      ([
-        "rival",
-        "fecha",
-        "gf",
-        "gc",
-        "ownCorners",
-        "oppCorners",
-        "ownYellow",
-        "oppYellow",
-        "ownRed",
-        "oppRed",
-        "xg",
-        "xgAgainst",
-        "shotsOnTarget",
-        "shotsOnTargetAgainst",
-        "shots",
-        "shotsAgainst",
-        "estado",
-      ] as (keyof TeamRow)[]).forEach((field) => {
-        const value = row[field];
-        onRowChange(side, index, field, value === "" ? "" : String(value));
-      });
-    });
-  };
-
   return (
     <div className="rounded-2xl border border-slate-700/60 bg-slate-800/95 p-4 shadow-sm shadow-slate-950/20">
       <div className="text-xs font-semibold uppercase tracking-wide text-white">{title}</div>
@@ -736,62 +680,6 @@ function StatCard({ title, value, subtitle }: { title: string; value: string; su
 }
 
 function Section({ title, children, subtitle }: { title: string; children: React.ReactNode; subtitle?: string }) {
-  const shiftRows = () => {
-    const filledRows = rows.filter(
-      (row) =>
-        row.rival.trim() ||
-        row.fecha.trim() ||
-        row.gf !== "" ||
-        row.gc !== "" ||
-        row.ownCorners !== "" ||
-        row.oppCorners !== "" ||
-        row.ownYellow !== "" ||
-        row.oppYellow !== "" ||
-        row.xg !== "" ||
-        row.xgAgainst !== "" ||
-        row.shots !== "" ||
-        row.shotsAgainst !== "" ||
-        row.shotsOnTarget !== "" ||
-        row.shotsOnTargetAgainst !== ""
-    );
-
-    if (!filledRows.length) return;
-    const ordered = [...filledRows]
-      .sort((a, b) => {
-        const da = a.fecha ? new Date(`${a.fecha}T12:00:00`).getTime() : 0;
-        const db = b.fecha ? new Date(`${b.fecha}T12:00:00`).getTime() : 0;
-        return db - da;
-      })
-      .slice(0, 9);
-
-    const nextRows = [createEmptyRow(), ...ordered].slice(0, 10);
-
-    nextRows.forEach((row, index) => {
-      ([
-        "rival",
-        "fecha",
-        "gf",
-        "gc",
-        "ownCorners",
-        "oppCorners",
-        "ownYellow",
-        "oppYellow",
-        "ownRed",
-        "oppRed",
-        "xg",
-        "xgAgainst",
-        "shotsOnTarget",
-        "shotsOnTargetAgainst",
-        "shots",
-        "shotsAgainst",
-        "estado",
-      ] as (keyof TeamRow)[]).forEach((field) => {
-        const value = row[field];
-        onRowChange(side, index, field, value === "" ? "" : String(value));
-      });
-    });
-  };
-
   return (
     <section className="rounded-3xl border border-slate-700/60 bg-slate-900/95 p-5 shadow-sm shadow-slate-950/20">
       <div className="mb-4">
@@ -804,62 +692,6 @@ function Section({ title, children, subtitle }: { title: string; children: React
 }
 
 function Input({ value, onChange, placeholder, type = "text", inputMode, list }: { value: string | number; onChange: (value: string) => void; placeholder?: string; type?: string; inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"]; list?: string }) {
-  const shiftRows = () => {
-    const filledRows = rows.filter(
-      (row) =>
-        row.rival.trim() ||
-        row.fecha.trim() ||
-        row.gf !== "" ||
-        row.gc !== "" ||
-        row.ownCorners !== "" ||
-        row.oppCorners !== "" ||
-        row.ownYellow !== "" ||
-        row.oppYellow !== "" ||
-        row.xg !== "" ||
-        row.xgAgainst !== "" ||
-        row.shots !== "" ||
-        row.shotsAgainst !== "" ||
-        row.shotsOnTarget !== "" ||
-        row.shotsOnTargetAgainst !== ""
-    );
-
-    if (!filledRows.length) return;
-    const ordered = [...filledRows]
-      .sort((a, b) => {
-        const da = a.fecha ? new Date(`${a.fecha}T12:00:00`).getTime() : 0;
-        const db = b.fecha ? new Date(`${b.fecha}T12:00:00`).getTime() : 0;
-        return db - da;
-      })
-      .slice(0, 9);
-
-    const nextRows = [createEmptyRow(), ...ordered].slice(0, 10);
-
-    nextRows.forEach((row, index) => {
-      ([
-        "rival",
-        "fecha",
-        "gf",
-        "gc",
-        "ownCorners",
-        "oppCorners",
-        "ownYellow",
-        "oppYellow",
-        "ownRed",
-        "oppRed",
-        "xg",
-        "xgAgainst",
-        "shotsOnTarget",
-        "shotsOnTargetAgainst",
-        "shots",
-        "shotsAgainst",
-        "estado",
-      ] as (keyof TeamRow)[]).forEach((field) => {
-        const value = row[field];
-        onRowChange(side, index, field, value === "" ? "" : String(value));
-      });
-    });
-  };
-
   return (
     <input
       type={type}
@@ -874,62 +706,6 @@ function Input({ value, onChange, placeholder, type = "text", inputMode, list }:
 }
 
 function Select({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[] }) {
-  const shiftRows = () => {
-    const filledRows = rows.filter(
-      (row) =>
-        row.rival.trim() ||
-        row.fecha.trim() ||
-        row.gf !== "" ||
-        row.gc !== "" ||
-        row.ownCorners !== "" ||
-        row.oppCorners !== "" ||
-        row.ownYellow !== "" ||
-        row.oppYellow !== "" ||
-        row.xg !== "" ||
-        row.xgAgainst !== "" ||
-        row.shots !== "" ||
-        row.shotsAgainst !== "" ||
-        row.shotsOnTarget !== "" ||
-        row.shotsOnTargetAgainst !== ""
-    );
-
-    if (!filledRows.length) return;
-    const ordered = [...filledRows]
-      .sort((a, b) => {
-        const da = a.fecha ? new Date(`${a.fecha}T12:00:00`).getTime() : 0;
-        const db = b.fecha ? new Date(`${b.fecha}T12:00:00`).getTime() : 0;
-        return db - da;
-      })
-      .slice(0, 9);
-
-    const nextRows = [createEmptyRow(), ...ordered].slice(0, 10);
-
-    nextRows.forEach((row, index) => {
-      ([
-        "rival",
-        "fecha",
-        "gf",
-        "gc",
-        "ownCorners",
-        "oppCorners",
-        "ownYellow",
-        "oppYellow",
-        "ownRed",
-        "oppRed",
-        "xg",
-        "xgAgainst",
-        "shotsOnTarget",
-        "shotsOnTargetAgainst",
-        "shots",
-        "shotsAgainst",
-        "estado",
-      ] as (keyof TeamRow)[]).forEach((field) => {
-        const value = row[field];
-        onRowChange(side, index, field, value === "" ? "" : String(value));
-      });
-    });
-  };
-
   return (
     <select
       value={value}
@@ -946,62 +722,6 @@ function Select({ value, onChange, options }: { value: string; onChange: (value:
 }
 
 function TextArea({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder?: string }) {
-  const shiftRows = () => {
-    const filledRows = rows.filter(
-      (row) =>
-        row.rival.trim() ||
-        row.fecha.trim() ||
-        row.gf !== "" ||
-        row.gc !== "" ||
-        row.ownCorners !== "" ||
-        row.oppCorners !== "" ||
-        row.ownYellow !== "" ||
-        row.oppYellow !== "" ||
-        row.xg !== "" ||
-        row.xgAgainst !== "" ||
-        row.shots !== "" ||
-        row.shotsAgainst !== "" ||
-        row.shotsOnTarget !== "" ||
-        row.shotsOnTargetAgainst !== ""
-    );
-
-    if (!filledRows.length) return;
-    const ordered = [...filledRows]
-      .sort((a, b) => {
-        const da = a.fecha ? new Date(`${a.fecha}T12:00:00`).getTime() : 0;
-        const db = b.fecha ? new Date(`${b.fecha}T12:00:00`).getTime() : 0;
-        return db - da;
-      })
-      .slice(0, 9);
-
-    const nextRows = [createEmptyRow(), ...ordered].slice(0, 10);
-
-    nextRows.forEach((row, index) => {
-      ([
-        "rival",
-        "fecha",
-        "gf",
-        "gc",
-        "ownCorners",
-        "oppCorners",
-        "ownYellow",
-        "oppYellow",
-        "ownRed",
-        "oppRed",
-        "xg",
-        "xgAgainst",
-        "shotsOnTarget",
-        "shotsOnTargetAgainst",
-        "shots",
-        "shotsAgainst",
-        "estado",
-      ] as (keyof TeamRow)[]).forEach((field) => {
-        const value = row[field];
-        onRowChange(side, index, field, value === "" ? "" : String(value));
-      });
-    });
-  };
-
   return (
     <textarea
       value={value}
@@ -2174,6 +1894,7 @@ function TeamBlock({
   tags,
   meta,
   onMetaChange,
+  suggestions,
 }: {
   title: string;
   side: TeamCondition;
@@ -2198,6 +1919,8 @@ function TeamBlock({
         row.oppCorners !== "" ||
         row.ownYellow !== "" ||
         row.oppYellow !== "" ||
+        row.ownRed !== "" ||
+        row.oppRed !== "" ||
         row.xg !== "" ||
         row.xgAgainst !== "" ||
         row.shots !== "" ||
@@ -2207,6 +1930,7 @@ function TeamBlock({
     );
 
     if (!filledRows.length) return;
+
     const ordered = [...filledRows]
       .sort((a, b) => {
         const da = a.fecha ? new Date(`${a.fecha}T12:00:00`).getTime() : 0;
@@ -2218,7 +1942,7 @@ function TeamBlock({
     const nextRows = [createEmptyRow(), ...ordered].slice(0, 10);
 
     nextRows.forEach((row, index) => {
-      ([
+      const fields: (keyof TeamRow)[] = [
         "rival",
         "fecha",
         "gf",
@@ -2236,7 +1960,9 @@ function TeamBlock({
         "shots",
         "shotsAgainst",
         "estado",
-      ] as (keyof TeamRow)[]).forEach((field) => {
+      ];
+
+      fields.forEach((field) => {
         const value = row[field];
         onRowChange(side, index, field, value === "" ? "" : String(value));
       });
@@ -2246,123 +1972,157 @@ function TeamBlock({
   return (
     <Section title={title} subtitle="Últimos partidos. Lo ideal es llenar al menos 6 con fechas recientes.">
       <div className={`rounded-2xl border p-3 ${side === "local" ? "border-blue-500/30 bg-blue-500/10" : "border-rose-500/30 bg-rose-500/10"}`}>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="text-sm text-white">{teamName || (side === "local" ? "Local" : "Visitante")}</div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={shiftRows}
-            className="rounded-xl border border-sky-400 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-100"
-            title="Mueve los partidos recientes y deja una fila nueva arriba. El más antiguo sale si ya tenías 10."
-          >
-            Desplazar filas
-          </button>
-          <button onClick={onSave} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Guardar perfil</button>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="text-sm text-white">{teamName || (side === "local" ? "Local" : "Visitante")}</div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={shiftRows}
+              className="rounded-xl border border-sky-400 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-100"
+              title="Mueve los partidos recientes y deja una fila nueva arriba. El más antiguo sale si ya tenías 10."
+            >
+              Desplazar filas
+            </button>
+            <button onClick={onSave} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+              Guardar perfil
+            </button>
+          </div>
         </div>
-      </div>
-      <div className="mb-4 grid gap-3 md:grid-cols-3">
-        <StatCard title="Partidos" value={String(stats.count)} subtitle={`Frescura: ${stats.freshnessLabel}`} />
-        <StatCard title="GF / GC" value={`${stats.gfAvg.toFixed(2)} / ${stats.gcAvg.toFixed(2)}`} subtitle="Promedio" />
-        <StatCard title="Corners / Tarjetas" value={`${stats.totalCornersWeighted.toFixed(2)} / ${stats.totalCardsWeighted.toFixed(2)}`} subtitle="Ponderado" />
-      </div>
-      <div className="mb-2 grid gap-3 md:grid-cols-3">
-        <Select value={meta.style} onChange={(v) => onMetaChange({ style: v as TeamStyle })} options={TEAM_STYLES} />
-        <Input value={meta.idealMarkets} onChange={(v) => onMetaChange({ idealMarkets: v })} placeholder="Mercados ideales: goles, corners..." />
-        <Input value={meta.notes} onChange={(v) => onMetaChange({ notes: v })} placeholder="Notas del equipo" />
-      </div>
-      <div className="mb-4 grid gap-2 md:grid-cols-3">
-        <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
-          <span className="font-semibold text-white">Estilo:</span> marca cómo juega el equipo. Si no estás seguro, deja <span className="font-semibold">Mixto</span>.
+
+        <div className="mb-4 grid gap-3 md:grid-cols-3">
+          <StatCard title="Partidos" value={String(stats.count)} subtitle={`Frescura: ${stats.freshnessLabel}`} />
+          <StatCard title="GF / GC" value={`${stats.gfAvg.toFixed(2)} / ${stats.gcAvg.toFixed(2)}`} subtitle="Promedio" />
+          <StatCard title="Corners / Tarjetas" value={`${stats.totalCornersWeighted.toFixed(2)} / ${stats.totalCardsWeighted.toFixed(2)}`} subtitle="Ponderado" />
         </div>
-        <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
-          <span className="font-semibold text-white">Mercados ideales:</span> escribe lo que te suele servir, por ejemplo <span className="font-semibold">goles, corners</span>.
+
+        <div className="mb-2 grid gap-3 md:grid-cols-3">
+          <Select value={meta.style} onChange={(v) => onMetaChange({ style: v as TeamStyle })} options={TEAM_STYLES} />
+          <Input value={meta.idealMarkets} onChange={(v) => onMetaChange({ idealMarkets: v })} placeholder="Mercados ideales: goles, corners..." />
+          <Input value={meta.notes} onChange={(v) => onMetaChange({ notes: v })} placeholder="Notas del equipo" />
         </div>
-        <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
-          <span className="font-semibold text-white">Notas:</span> guarda detalles tuyos como <span className="font-semibold">empieza lento</span> o <span className="font-semibold">concede mucho</span>.
+
+        <div className="mb-4 grid gap-2 md:grid-cols-3">
+          <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
+            <span className="font-semibold text-white">Estilo:</span> marca cómo juega el equipo. Si no estás seguro, deja <span className="font-semibold">Mixto</span>.
+          </div>
+          <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
+            <span className="font-semibold text-white">Mercados ideales:</span> escribe lo que te suele servir, por ejemplo <span className="font-semibold">goles, corners</span>.
+          </div>
+          <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-xs text-slate-200">
+            <span className="font-semibold text-white">Notas:</span> guarda detalles tuyos como <span className="font-semibold">empieza lento</span> o <span className="font-semibold">concede mucho</span>.
+          </div>
         </div>
-      </div>
-      <div className="mb-4 flex flex-wrap gap-2">
-        {tags.length ? tags.map((tag) => (
-          <span key={tag} className={`rounded-full border px-3 py-1 text-xs font-semibold ${tagClass(tag)}`}>{tag}</span>
-        )) : <span className="text-sm text-slate-200">Sin etiquetas automáticas todavía.</span>}
-      </div>
-      <div className="overflow-x-auto rounded-2xl border border-slate-700">
-        <table className="min-w-[1100px] w-full text-sm">
-          <thead className="bg-slate-900/80 text-slate-200">
-            <tr>
-              {[
-                "Rival",
-                "Fecha",
-                "GF",
-                "GC",
-                "Corners+",
-                "Corners-",
-                "TA+",
-                "TA-",
-                "TR+",
-                "TR-",
-                "xG",
-                "xGA",
-                "A puerta+",
-                "A puerta-",
-                "Shots+",
-                "Shots-",
-                "Estado",
-              ].map((head) => (
-                <th key={head} className="px-2 py-2 text-left font-semibold">{head}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={`${side}-${index}`} className="border-t border-slate-700 even:bg-slate-900/40">
-                <td className="px-2 py-2"><input list="rival-suggestions" className="w-28 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white" value={row.rival} onChange={(e) => onRowChange(side, index, "rival", e.target.value)} /></td>
-                <td className="px-2 py-2"><input type="date" className="rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white" value={row.fecha} onChange={(e) => onRowChange(side, index, "fecha", e.target.value)} /></td>
-                {([
-                  "gf",
-                  "gc",
-                  "ownCorners",
-                  "oppCorners",
-                  "ownYellow",
-                  "oppYellow",
-                  "ownRed",
-                  "oppRed",
-                  "xg",
-                  "xgAgainst",
-                  "shotsOnTarget",
-                  "shotsOnTargetAgainst",
-                  "shots",
-                  "shotsAgainst",
-                ] as (keyof TeamRow)[]).map((field) => {
-                  const isDecimalField = field === "xg" || field === "xgAgainst";
-                  return (
-                    <td key={field} className="px-2 py-2">
-                      <input
-                        type={isDecimalField ? "text" : "number"}
-                        inputMode={isDecimalField ? "decimal" : "numeric"}
-                        className="w-20 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white"
-                        value={String(row[field] ?? "")}
-                        onChange={(e) => onRowChange(side, index, field, e.target.value)}
-                      />
-                    </td>
-                  );
-                })}
-                <td className="px-2 py-2">
-                  <select className="rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white" value={row.estado} onChange={(e) => onRowChange(side, index, "estado", e.target.value)}>
-                    <option value=""></option>
-                    <option value="G">G</option>
-                    <option value="E">E</option>
-                    <option value="P">P</option>
-                  </select>
-                </td>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          {tags.length ? (
+            tags.map((tag) => (
+              <span key={tag} className={`rounded-full border px-3 py-1 text-xs font-semibold ${tagClass(tag)}`}>
+                {tag}
+              </span>
+            ))
+          ) : (
+            <span className="text-sm text-slate-200">Sin etiquetas automáticas todavía.</span>
+          )}
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl border border-slate-700">
+          <table className="min-w-[1100px] w-full text-sm">
+            <thead className="bg-slate-900/80 text-slate-200">
+              <tr>
+                {[
+                  "Rival",
+                  "Fecha",
+                  "GF",
+                  "GC",
+                  "Corners+",
+                  "Corners-",
+                  "TA+",
+                  "TA-",
+                  "TR+",
+                  "TR-",
+                  "xG",
+                  "xGA",
+                  "A puerta+",
+                  "A puerta-",
+                  "Shots+",
+                  "Shots-",
+                  "Estado",
+                ].map((head) => (
+                  <th key={head} className="px-2 py-2 text-left font-semibold">
+                    {head}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr key={`${side}-${index}`} className="border-t border-slate-700 even:bg-slate-900/40">
+                  <td className="px-2 py-2">
+                    <input
+                      list="rival-suggestions"
+                      className="w-28 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white"
+                      value={row.rival}
+                      onChange={(e) => onRowChange(side, index, "rival", e.target.value)}
+                    />
+                  </td>
+                  <td className="px-2 py-2">
+                    <input
+                      type="date"
+                      className="rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white"
+                      value={row.fecha}
+                      onChange={(e) => onRowChange(side, index, "fecha", e.target.value)}
+                    />
+                  </td>
+                  {([
+                    "gf",
+                    "gc",
+                    "ownCorners",
+                    "oppCorners",
+                    "ownYellow",
+                    "oppYellow",
+                    "ownRed",
+                    "oppRed",
+                    "xg",
+                    "xgAgainst",
+                    "shotsOnTarget",
+                    "shotsOnTargetAgainst",
+                    "shots",
+                    "shotsAgainst",
+                  ] as (keyof TeamRow)[]).map((field) => {
+                    const isDecimalField = field === "xg" || field === "xgAgainst";
+                    return (
+                      <td key={field} className="px-2 py-2">
+                        <input
+                          type={isDecimalField ? "text" : "number"}
+                          inputMode={isDecimalField ? "decimal" : "numeric"}
+                          className="w-20 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white"
+                          value={String(row[field] ?? "")}
+                          onChange={(e) => onRowChange(side, index, field, e.target.value)}
+                        />
+                      </td>
+                    );
+                  })}
+                  <td className="px-2 py-2">
+                    <select
+                      className="rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white"
+                      value={row.estado}
+                      onChange={(e) => onRowChange(side, index, "estado", e.target.value)}
+                    >
+                      <option value=""></option>
+                      <option value="G">G</option>
+                      <option value="E">E</option>
+                      <option value="P">P</option>
+                    </select>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </Section>
   );
 }
+
 
 function buildLabel(family: MarketFamily, side: "local" | "visitante" | "total", line?: string, direction?: MarketLine["direction"]) {
   const teamLabel = side === "local" ? "Local" : side === "visitante" ? "Visitante" : "Total";
