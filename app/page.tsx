@@ -400,6 +400,22 @@ function formatPct(n: number) {
   return `${n.toFixed(1)}%`;
 }
 
+function decoratePickLabel(label: string, family: MarketFamily, side: "local" | "visitante" | "total" | undefined, local: string, visitante: string) {
+  const localName = local.trim() || "Local";
+  const visitName = visitante.trim() || "Visitante";
+
+  if (family === "result" || family === "doubleChance" || family === "teamGoals") {
+    if (side === "local") return `${label} · ${localName}`;
+    if (side === "visitante") return `${label} · ${visitName}`;
+  }
+
+  if (family === "goals" || family === "btts" || family === "corners" || family === "cards" || family === "shots" || family === "shotsOnTarget" || family === "halftimeGoals") {
+    return `${label} · ${localName} vs ${visitName}`;
+  }
+
+  return label;
+}
+
 function parseDateDaysAgo(value: string) {
   if (!value.trim()) return null;
   const date = new Date(`${value}T12:00:00`);
@@ -679,6 +695,7 @@ function StatCard({ title, value, subtitle }: { title: string; value: string; su
   );
 }
 
+
 function Section({ title, children, subtitle }: { title: string; children: React.ReactNode; subtitle?: string }) {
   return (
     <section className="rounded-3xl border border-slate-700/60 bg-slate-900/95 p-5 shadow-sm shadow-slate-950/20">
@@ -691,7 +708,22 @@ function Section({ title, children, subtitle }: { title: string; children: React
   );
 }
 
-function Input({ value, onChange, placeholder, type = "text", inputMode, list }: { value: string | number; onChange: (value: string) => void; placeholder?: string; type?: string; inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"]; list?: string }) {
+
+function Input({
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+  inputMode,
+  list,
+}: {
+  value: string | number;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  type?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  list?: string;
+}) {
   return (
     <input
       type={type}
@@ -704,6 +736,7 @@ function Input({ value, onChange, placeholder, type = "text", inputMode, list }:
     />
   );
 }
+
 
 function Select({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[] }) {
   return (
@@ -721,6 +754,7 @@ function Select({ value, onChange, options }: { value: string; onChange: (value:
   );
 }
 
+
 function TextArea({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder?: string }) {
   return (
     <textarea
@@ -732,6 +766,7 @@ function TextArea({ value, onChange, placeholder }: { value: string; onChange: (
     />
   );
 }
+
 
 export default function Page() {
   const [matchInfo, setMatchInfo] = useState<MatchInfo>(emptyMatchInfo());
@@ -991,6 +1026,22 @@ const resetAll = () => {
   ]);
 
 
+  const automaticEliminationText = useMemo(() => {
+    if (!tieContext.esEliminatoria) return "";
+    if (tieContext.globalLocal === "" || tieContext.globalVisitante === "") return "";
+
+    const localGlobal = Number(tieContext.globalLocal);
+    const visitGlobal = Number(tieContext.globalVisitante);
+
+    if (localGlobal < visitGlobal) {
+      return "Local obligado a ganar / Visitante puede controlar";
+    }
+    if (visitGlobal < localGlobal) {
+      return "Visitante obligado a ganar / Local puede controlar";
+    }
+    return "Global empatado / Ambos necesitan competir";
+  }, [tieContext.esEliminatoria, tieContext.globalLocal, tieContext.globalVisitante]);
+
   const needReading = useMemo(() => {
     const notes: string[] = [];
     if (!tieContext.esEliminatoria) {
@@ -1039,7 +1090,7 @@ const resetAll = () => {
       if (probability < minProb || edge < minEdge) return;
       candidates.push({
         id: line.id,
-        label: line.label,
+        label: decoratePickLabel(line.label, line.family, line.side, matchInfo.local, matchInfo.visitante),
         family: line.family,
         probability,
         edge,
@@ -1077,6 +1128,36 @@ const resetAll = () => {
       expectedTotalShots >= 22 &&
       expectedTotalShotsOnTarget >= 7;
 
+    const localDeadAttackProfile =
+      localStats.shotsWeighted <= 6 ||
+      localStats.shotsOnTargetWeighted <= 1.8;
+
+    const visitDeadAttackProfile =
+      visitStats.shotsWeighted <= 6 ||
+      visitStats.shotsOnTargetWeighted <= 1.8;
+
+    const oneSideDeadProfile =
+      localDeadAttackProfile || visitDeadAttackProfile;
+
+    const bothTeamsActiveProfile =
+      localStats.shotsWeighted >= 7 &&
+      visitStats.shotsWeighted >= 7 &&
+      localStats.shotsOnTargetWeighted >= 2.2 &&
+      visitStats.shotsOnTargetWeighted >= 2.2;
+
+    const dynamicOpenProfile =
+      bothTeamsActiveProfile &&
+      (
+        (expectedTotalShotsOnTarget >= 6.4 && expectedTotalShots >= 14) ||
+        (shotBoostInfo.total >= 0.35 && expectedTotalShotsOnTarget >= 6) ||
+        (simulation.draw >= 35 && expectedTotalShotsOnTarget >= 5 && expectedTotalShots >= 12)
+      );
+
+    const hardUnderBlockProfile =
+      (expectedTotalShotsOnTarget >= 7 && expectedTotalShots >= 14) ||
+      (dynamicOpenProfile && shotBoostInfo.adjustedGoals >= 2.35);
+
+
     for (const line of marketLines) {
       if (!line.enabled) continue;
       let probability = 0;
@@ -1109,22 +1190,52 @@ const resetAll = () => {
             ? probabilityFromLambdaOver(shotBoostInfo.adjustedGoals, numericLine)
             : probabilityFromLambdaUnder(shotBoostInfo.adjustedGoals, numericLine);
 
-        if (openGameProfile && line.direction === "over" && numericLine === 0.5) {
+        if (line.direction === "under" && hardUnderBlockProfile && numericLine <= 1.5) {
+          probability -= 42;
+          reason = `Under bloqueado: el volumen esperado de disparos y remates a puerta no encaja con un partido de menos de 1.5 goles.`;
+        } else if (line.direction === "under" && dynamicOpenProfile && numericLine <= 2.5) {
+          probability -= 22;
+          reason = `Under castigado: el partido proyecta demasiada actividad ofensiva para una línea tan corta.`;
+        } else if (line.direction === "under" && dynamicOpenProfile && numericLine <= 4.5) {
+          probability -= 8;
+          reason = `Under moderado: hay señales ofensivas que reducen valor en líneas bajas.`;
+        } else if (openGameProfile && line.direction === "over" && numericLine === 0.5) {
           probability -= 9;
           reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados con boost de ritmo ofensivo, pero +0.5 se relega a pick base.`;
-        } else if (usefulGoalsProfile && line.direction === "over" && numericLine === 1.5) {
-          probability += 18;
+        } else if ((usefulGoalsProfile || dynamicOpenProfile) && line.direction === "over" && numericLine === 1.5) {
+          probability += 22;
           reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados y el partido perfila over útil.`;
-        } else if (usefulGoalsProfile && line.direction === "over" && numericLine === 2.5) {
+        } else if ((usefulGoalsProfile || dynamicOpenProfile) && line.direction === "over" && numericLine === 2.5) {
           probability += 18;
           reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados con señales de partido abierto.`;
-        } else if (strongOpenGoalsProfile && line.direction === "over" && numericLine === 3.5) {
+        } else if ((strongOpenGoalsProfile || dynamicOpenProfile) && line.direction === "over" && numericLine === 3.5) {
           probability += 10;
           reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados con perfil fuerte de over.`;
         } else {
           reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados${shotBoostInfo.active ? " con boost de ritmo ofensivo" : ""}.`;
         }
+        if (oneSideDeadProfile && line.direction === "over" && numericLine === 1.5) {
+  probability -= 14;
+  reason = "Over castigado: uno de los equipos proyecta muy poco ataque.";
+}
+
+if (oneSideDeadProfile && line.direction === "over" && numericLine === 2.5) {
+  probability -= 20;
+  reason = "Over castigado fuerte: un equipo casi no genera volumen ofensivo.";
+}
+
+if (oneSideDeadProfile && line.direction === "under" && numericLine === 2.5) {
+  probability += 14;
+  reason = "Under reforzado: uno de los equipos proyecta producción ofensiva muy baja.";
+}
+
+if (oneSideDeadProfile && line.direction === "under" && numericLine === 3.5) {
+  probability += 10;
+  reason = "Under reforzado: el partido no perfila intercambio ofensivo real.";
+}
       }
+
+
 
       if (line.family === "halftimeGoals" && line.line !== "" && line.direction) {
         const numericLine = toNumber(line.line);
@@ -1135,10 +1246,36 @@ const resetAll = () => {
         reason = `La primera mitad proyecta ${clamp(expectedHalftimeGoals + shotBoostInfo.total * 0.42, 0.05, 3.6).toFixed(2)} goles${shotBoostInfo.active ? " con ajuste de ritmo" : ""}.`;
       }
 
-      if (line.family === "btts") {
-        probability = line.direction === "yes" ? clamp(simulation.btts + shotBoostInfo.total * 12 + shotBoostInfo.bttsBoost + (strongOpenGoalsProfile ? 10 : 0) + (usefulGoalsProfile ? 6 : 0), 0, 100) : clamp((100 - simulation.btts) - shotBoostInfo.total * 12 - shotBoostInfo.bttsBoost - (strongOpenGoalsProfile ? 10 : 0) - (usefulGoalsProfile ? 6 : 0), 0, 100);
-        reason = `BTTS calculado con la simulación base${shotBoostInfo.active ? " y boost de ritmo ofensivo" : ""}.`;
-      }
+if (line.family === "btts") {
+  probability = line.direction === "yes"
+    ? clamp(
+        simulation.btts +
+          shotBoostInfo.total * 12 +
+          shotBoostInfo.bttsBoost +
+          (strongOpenGoalsProfile ? 10 : 0) +
+          (usefulGoalsProfile ? 6 : 0) +
+          (dynamicOpenProfile ? 8 : 0) +
+          (oneSideDeadProfile ? -20 : 0) +
+          (bothTeamsActiveProfile ? 8 : 0),
+        0,
+        100
+      )
+    : clamp(
+        (100 - simulation.btts) -
+          shotBoostInfo.total * 12 -
+          shotBoostInfo.bttsBoost -
+          (strongOpenGoalsProfile ? 10 : 0) -
+          (usefulGoalsProfile ? 6 : 0) -
+          (dynamicOpenProfile ? 8 : 0) +
+          (oneSideDeadProfile ? 20 : 0),
+        0,
+        100
+      );
+
+  reason = oneSideDeadProfile
+    ? "BTTS ajustado: un equipo proyecta muy poca producción ofensiva."
+    : `BTTS calculado con la simulación base${shotBoostInfo.active ? " y boost de ritmo ofensivo" : ""}.`;
+}
 
       if (line.family === "corners" && line.line !== "" && (line.direction === "over" || line.direction === "under")) {
         const numericLine = toNumber(line.line);
@@ -1190,6 +1327,8 @@ const resetAll = () => {
       if (qualityScore < 60) probability -= 6;
       if (volatilityLabel === "Alta" && ["result", "doubleChance", "shots", "shotsOnTarget"].includes(line.family)) probability -= 4;
       if (shotBoostInfo.active && ["result", "doubleChance"].includes(line.family)) probability -= 5;
+      if (dynamicOpenProfile && line.family === "result") probability -= 14;
+      if (dynamicOpenProfile && line.family === "doubleChance") probability -= 4;
       if (line.family === "result" && line.side === "local" && localShotDominance) probability += 16;
       if (line.family === "result" && line.side === "visitante" && visitShotDominance) probability += 16;
       if (line.family === "doubleChance" && line.side === "local" && localShotDominance) probability += 9;
@@ -1213,16 +1352,25 @@ const resetAll = () => {
       let score = pick.edge * 1.15 + pick.probability * 0.26;
 
       if (pick.label.toLowerCase().includes("más de 0.5 goles") && usefulGoalsProfile) score -= 38;
-      if (pick.label.toLowerCase().includes("más de 1.5 goles") && usefulGoalsProfile) score += 30;
-      if (pick.label.toLowerCase().includes("más de 2.5 goles") && usefulGoalsProfile) score += 30;
-      if (pick.label.toLowerCase().includes("más de 3.5 goles") && strongOpenGoalsProfile) score += 16;
-      if (pick.label.toLowerCase().includes("btts sí") && usefulGoalsProfile) score += 24;
+      if (pick.label.toLowerCase().includes("más de 1.5 goles") && (usefulGoalsProfile || dynamicOpenProfile)) score += 34;
+      if (pick.label.toLowerCase().includes("más de 2.5 goles") && (usefulGoalsProfile || dynamicOpenProfile)) score += 30;
+      if (pick.label.toLowerCase().includes("más de 3.5 goles") && (strongOpenGoalsProfile || dynamicOpenProfile)) score += 16;
+      if (pick.label.toLowerCase().includes("menos de 1.5 goles") && hardUnderBlockProfile) score -= 90;
+      if (pick.label.toLowerCase().includes("menos de 2.5 goles") && dynamicOpenProfile) score -= 45;
+      if (pick.label.toLowerCase().includes("btts sí") && (usefulGoalsProfile || dynamicOpenProfile)) score += 28;
       if (pick.family === "teamGoals" && (localShotDominance || visitShotDominance)) score += 28;
-      if (pick.family === "result" && (localShotDominance || visitShotDominance)) score += 18;
+      if (pick.family === "result" && dynamicOpenProfile) score -= 28;
+      if (pick.family === "result" && (localShotDominance || visitShotDominance) && !dynamicOpenProfile) score += 18;
       if (pick.family === "doubleChance" && (localShotDominance || visitShotDominance)) score += 10;
       if (pick.family === "corners" && usefulGoalsProfile) score -= 8;
       if (pick.family === "cards" && openGameProfile && expectedTotalCards < 4.8) score -= 60;
       if (pick.family === "cards" && lowCardProfile) score -= 65;
+      if (pick.label.toLowerCase().includes("btts sí") && oneSideDeadProfile) score -= 35;
+if (pick.label.toLowerCase().includes("btts no") && oneSideDeadProfile) score += 24;
+if (pick.label.toLowerCase().includes("más de 1.5 goles") && oneSideDeadProfile) score -= 18;
+if (pick.label.toLowerCase().includes("más de 2.5 goles") && oneSideDeadProfile) score -= 30;
+if (pick.label.toLowerCase().includes("menos de 2.5 goles") && oneSideDeadProfile) score += 20;
+if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfile) score += 12;
 
       return score;
     };
@@ -1235,6 +1383,7 @@ const resetAll = () => {
   const topPick = suggestedPicks[0] ?? null;
   const altPick = suggestedPicks[1] ?? null;
   const thirdPick = suggestedPicks[2] ?? null;
+  const matchDisplayName = `${matchInfo.local.trim() || "Local"} vs ${matchInfo.visitante.trim() || "Visitante"}`;
 
   function updateMatchInfo<K extends keyof MatchInfo>(key: K, value: MatchInfo[K]) {
     setMatchInfo((prev) => ({ ...prev, [key]: value }));
@@ -1609,6 +1758,7 @@ const resetAll = () => {
           <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
             <div className="font-semibold">{needReading.label}</div>
             <ul className="mt-2 list-disc pl-5">
+              {automaticEliminationText ? <li className="font-semibold">{automaticEliminationText}</li> : null}
               {needReading.notes.map((note) => (
                 <li key={note}>{note}</li>
               ))}
@@ -1766,7 +1916,7 @@ const resetAll = () => {
           </div>
         </Section>
 
-        <Section title="8. Lectura final y picks" subtitle="Top pick, pick alternativo o no bet según la línea real y tu filtro de edge. Recuerda: solo puede recomendar líneas que hayas cargado en la sección 7.">
+        <Section title="8. Lectura final y picks" subtitle={`Top pick, pick alternativo o no bet para ${matchDisplayName} según la línea real y tu filtro de edge. Recuerda: solo puede recomendar líneas que hayas cargado en la sección 7.`}>
           <div className="rounded-2xl border border-teal-500/30 bg-teal-500/10 p-3">
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <StatCard title="Local gana" value={formatPct(simulation.localWin)} subtitle="Simulación" />
@@ -1795,6 +1945,13 @@ const resetAll = () => {
             <div className="mt-4 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-900">
               <div className="font-bold">Prioridad ofensiva activada</div>
               <div className="mt-1 text-sm">En este tipo de partido, el ranking empuja arriba goles, BTTS, goles por equipo y ganador con dominancia. Tarjetas pierde prioridad.</div>
+            </div>
+          ) : null}
+
+          {((expectedTotalShotsOnTarget >= 6.4 && expectedTotalShots >= 14) || (shotBoostInfo.total >= 0.35 && expectedTotalShotsOnTarget >= 6) || (simulation.draw >= 35 && expectedTotalShotsOnTarget >= 5 && expectedTotalShots >= 12)) ? (
+            <div className="mt-4 rounded-2xl border border-orange-300 bg-orange-50 p-4 text-orange-900">
+              <div className="font-bold">Bloqueo de under corto activado</div>
+              <div className="mt-1 text-sm">La app detecta suficiente volumen ofensivo como para castigar under 1.5 y under 2.5.</div>
             </div>
           ) : null}
 
