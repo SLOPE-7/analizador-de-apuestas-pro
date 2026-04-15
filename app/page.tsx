@@ -90,6 +90,15 @@ type RefereeInfo = {
   promedioRojas: string;
 };
 
+type PickDecision = "selected" | "discarded" | null;
+
+type MatchSupportInfo = {
+  possessionLocal: string;
+  possessionVisit: string;
+  bigChancesLocal: string;
+  bigChancesVisit: string;
+};
+
 type TeamProfile = {
   teamName: string;
   condition: TeamCondition;
@@ -398,6 +407,21 @@ function safeParse<T>(raw: string | null, fallback: T): T {
 
 function formatPct(n: number) {
   return `${n.toFixed(1)}%`;
+}
+
+function classifyPickTier(probability: number, edge: number) {
+  if (probability >= 85 && edge >= 8) return { label: "Seguro", badge: "border-emerald-300 bg-emerald-50 text-emerald-800" };
+  if (probability >= 72 && edge >= 4) return { label: "Medio", badge: "border-sky-300 bg-sky-50 text-sky-800" };
+  return { label: "Agresivo", badge: "border-amber-300 bg-amber-50 text-amber-800" };
+}
+
+function createEmptyMatchSupportInfo(): MatchSupportInfo {
+  return {
+    possessionLocal: "",
+    possessionVisit: "",
+    bigChancesLocal: "",
+    bigChancesVisit: "",
+  };
 }
 
 function decoratePickLabel(label: string, family: MarketFamily, side: "local" | "visitante" | "total" | undefined, local: string, visitante: string) {
@@ -786,6 +810,8 @@ export default function Page() {
   const [marketPresetName, setMarketPresetName] = useState("");
   const [minEdge, setMinEdge] = useState(3);
   const [minProb, setMinProb] = useState(56);
+  const [pickDecisions, setPickDecisions] = useState<Record<string, PickDecision>>({});
+  const [matchSupportInfo, setMatchSupportInfo] = useState<MatchSupportInfo>(createEmptyMatchSupportInfo());
 
 const resetAll = () => {
   if (!window.confirm("¿Seguro que quieres limpiar todo el partido actual?")) return;
@@ -800,8 +826,9 @@ const resetAll = () => {
   setVisitMeta(emptyTeamMeta());
 
   setMarketLines([]);
+  setPickDecisions({});
+  setMatchSupportInfo(createEmptyMatchSupportInfo());
 
-  // Opcional: reset filtros
   setMinProb(56);
   setMinEdge(3);
 };
@@ -821,6 +848,8 @@ const resetAll = () => {
       marketLines: MarketLine[];
       minEdge: number;
       minProb: number;
+      pickDecisions: Record<string, PickDecision>;
+      matchSupportInfo: MatchSupportInfo;
     } | null>(localStorage.getItem(DRAFT_STORAGE_KEY), null);
 
     if (draft) {
@@ -834,6 +863,8 @@ const resetAll = () => {
       setMarketLines(draft.marketLines ?? []);
       setMinEdge(draft.minEdge ?? 3);
       setMinProb(draft.minProb ?? 56);
+      setPickDecisions(draft.pickDecisions ?? {});
+      setMatchSupportInfo(draft.matchSupportInfo ?? createEmptyMatchSupportInfo());
     } else {
       setMarketLines(buildDefaultMarketLines());
     }
@@ -853,9 +884,11 @@ const resetAll = () => {
         marketLines,
         minEdge,
         minProb,
+        pickDecisions,
+        matchSupportInfo,
       })
     );
-  }, [matchInfo, tieContext, refInfo, localRows, visitRows, localMeta, visitMeta, marketLines, minEdge, minProb]);
+  }, [matchInfo, tieContext, refInfo, localRows, visitRows, localMeta, visitMeta, marketLines, minEdge, minProb, pickDecisions, matchSupportInfo]);
 
   const localStats = useMemo(() => analyzeRows(localRows), [localRows]);
   const visitStats = useMemo(() => analyzeRows(visitRows), [visitRows]);
@@ -1377,13 +1410,58 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
 
     return Array.from(bestByFamily.values())
       .sort((a, b) => utilityScore(b) - utilityScore(a))
-      .slice(0, 3);
+      .slice(0, 8);
   }, [marketLines, minProb, minEdge, simulation, expectedTotalGoals, expectedHalftimeGoals, expectedTotalCorners, expectedTotalCards, expectedTotalShots, expectedTotalShotsOnTarget, expectedLocalTeamGoals, expectedVisitTeamGoals, qualityScore, volatilityLabel, tieContext, shotBoostInfo]);
 
-  const topPick = suggestedPicks[0] ?? null;
-  const altPick = suggestedPicks[1] ?? null;
-  const thirdPick = suggestedPicks[2] ?? null;
+  const visiblePicks = useMemo(
+    () => suggestedPicks.filter((pick) => pickDecisions[pick.id] !== "discarded"),
+    [suggestedPicks, pickDecisions]
+  );
+
+  const topPick = visiblePicks[0] ?? null;
+  const altPick = visiblePicks[1] ?? null;
+  const thirdPick = visiblePicks[2] ?? null;
   const matchDisplayName = `${matchInfo.local.trim() || "Local"} vs ${matchInfo.visitante.trim() || "Visitante"}`;
+
+  const selectedPicks = useMemo(
+    () => suggestedPicks.filter((pick) => pickDecisions[pick.id] === "selected"),
+    [suggestedPicks, pickDecisions]
+  );
+
+  const simulatedTicket = useMemo(() => {
+    if (!selectedPicks.length) return null;
+    const combinedProbability = selectedPicks.reduce((acc, pick) => acc * (pick.probability / 100), 1) * 100;
+    const averageEdge = selectedPicks.reduce((acc, pick) => acc + pick.edge, 0) / selectedPicks.length;
+    const profile =
+      selectedPicks.length === 1
+        ? "Conservador"
+        : selectedPicks.length === 2
+        ? "Medio"
+        : "Agresivo";
+
+    return {
+      combinedProbability,
+      averageEdge,
+      profile,
+      expectedHitsPer10: (combinedProbability / 100) * 10,
+    };
+  }, [selectedPicks]);
+
+  const supportInterpretation = useMemo(() => {
+    const notes: string[] = [];
+    const possessionLocal = toNumber(matchSupportInfo.possessionLocal);
+    const possessionVisit = toNumber(matchSupportInfo.possessionVisit);
+    const bigLocal = toNumber(matchSupportInfo.bigChancesLocal);
+    const bigVisit = toNumber(matchSupportInfo.bigChancesVisit);
+
+    if (possessionLocal >= 60 && bigLocal > bigVisit + 1) notes.push("Dominio real del local.");
+    if (possessionVisit >= 60 && bigVisit > bigLocal + 1) notes.push("Dominio real del visitante.");
+    if (bigLocal >= 2 && bigVisit >= 2) notes.push("Ambos equipos generaron ocasiones claras.");
+    if (bigLocal <= 1 && bigVisit <= 1 && (possessionLocal || possessionVisit)) notes.push("Partido corto en ocasiones claras.");
+    if (possessionLocal >= 58 && bigLocal <= 1) notes.push("Posesión local alta, pero con poco daño real.");
+    if (possessionVisit >= 58 && bigVisit <= 1) notes.push("Posesión visitante alta, pero con poco daño real.");
+    return notes;
+  }, [matchSupportInfo]);
 
   function updateMatchInfo<K extends keyof MatchInfo>(key: K, value: MatchInfo[K]) {
     setMatchInfo((prev) => ({ ...prev, [key]: value }));
@@ -1395,6 +1473,17 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
 
   function updateRefInfo<K extends keyof RefereeInfo>(key: K, value: RefereeInfo[K]) {
     setRefInfo((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function updateMatchSupportInfo<K extends keyof MatchSupportInfo>(key: K, value: MatchSupportInfo[K]) {
+    setMatchSupportInfo((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setPickDecision(id: string, decision: PickDecision) {
+    setPickDecisions((prev) => ({
+      ...prev,
+      [id]: prev[id] === decision ? null : decision,
+    }));
   }
 
   function handleRowChange(side: TeamCondition, index: number, field: keyof TeamRow, raw: string) {
@@ -1670,12 +1759,14 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
     <div className="min-h-screen bg-slate-950 p-4 text-white md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="rounded-3xl border border-sky-500/30 bg-slate-900/90 p-6 text-white shadow-lg shadow-slate-950/30">
-          <h1 className="text-3xl font-bold">Analizador de apuestas v4</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-200">
+          <h1 className="text-3xl font-bold">⚽✍🏻Analizador de apuestas KAL07🥅📝</h1>
+       
+        </div>
+
+           <p className="mt-2 max-w-3xl text-sm text-slate-200">
             Esta versión trabaja con líneas reales de la casa. Si la app veía +0.5 goles pero tu casa solo ofrece +1.5,
             aquí recalcula la probabilidad sobre la línea real disponible y, si se rompe el valor, te empuja a otro pick o a no apostar.
           </p>
-        </div>
 
       
 
@@ -1700,12 +1791,14 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
 </button>
 </div>
 
+            <button onClick={exportFullData} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">Exportar partido completo</button>
+            <button onClick={() => importFullRef.current?.click()} className="rounded-xl border border-sky-400 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-100">Importar partido completo</button>
 
         <Section title="1. Datos del partido" subtitle="Incluye países, fase, tipo de partido y contexto básico.">
           <div className="rounded-2xl border border-sky-500/30 bg-sky-500/10 p-3">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <Input value={matchInfo.local} onChange={(v) => updateMatchInfo("local", v)} placeholder="Equipo local" list="team-suggestions" />
-            <Input value={matchInfo.visitante} onChange={(v) => updateMatchInfo("visitante", v)} placeholder="Equipo visitante" list="team-suggestions" />
+            <input value={matchInfo.local} onChange={(e) => updateMatchInfo("local", e.target.value)} placeholder="Equipo local" list="team-suggestions" className="w-full rounded-xl border border-slate-400 bg-white px-3 py-2 text-base font-semibold text-slate-900 placeholder:text-slate-500 outline-none ring-0 transition focus:border-sky-500" />
+            <input value={matchInfo.visitante} onChange={(e) => updateMatchInfo("visitante", e.target.value)} placeholder="Equipo visitante" list="team-suggestions" className="w-full rounded-xl border border-slate-400 bg-white px-3 py-2 text-base font-semibold text-slate-900 placeholder:text-slate-500 outline-none ring-0 transition focus:border-sky-500" />
             <Input value={matchInfo.paisLocal} onChange={(v) => updateMatchInfo("paisLocal", v)} placeholder="País local" />
             <Input value={matchInfo.paisVisitante} onChange={(v) => updateMatchInfo("paisVisitante", v)} placeholder="País visitante" />
             <Input value={matchInfo.liga} onChange={(v) => updateMatchInfo("liga", v)} placeholder="Liga" />
@@ -1717,6 +1810,22 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
             <Select value={matchInfo.etapa} onChange={(v) => updateMatchInfo("etapa", v as MatchStage)} options={STAGES} />
             <Select value={matchInfo.tipo} onChange={(v) => updateMatchInfo("tipo", v as MatchType)} options={TYPES} />
           </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <Input value={matchSupportInfo.possessionLocal} onChange={(v) => updateMatchSupportInfo("possessionLocal", v)} placeholder="Posesión local %" type="text" inputMode="decimal" />
+            <Input value={matchSupportInfo.possessionVisit} onChange={(v) => updateMatchSupportInfo("possessionVisit", v)} placeholder="Posesión visitante %" type="text" inputMode="decimal" />
+            <Input value={matchSupportInfo.bigChancesLocal} onChange={(v) => updateMatchSupportInfo("bigChancesLocal", v)} placeholder="Grandes ocasiones local" type="text" inputMode="numeric" />
+            <Input value={matchSupportInfo.bigChancesVisit} onChange={(v) => updateMatchSupportInfo("bigChancesVisit", v)} placeholder="Grandes ocasiones visitante" type="text" inputMode="numeric" />
+          </div>
+          {supportInterpretation.length ? (
+            <div className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 p-3 text-amber-900">
+              <div className="font-bold text-sm">Lectura rápida de dominio</div>
+              <ul className="mt-2 list-disc pl-5 text-sm">
+                {supportInterpretation.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <div className="mt-3">
             <TextArea value={matchInfo.notas} onChange={(v) => updateMatchInfo("notas", v)} placeholder="Notas del partido, bajas, rotaciones, clima, etc." />
           </div>
@@ -1787,6 +1896,10 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
           </div>
         </Section>
 
+             <button onClick={exportRefereeData} className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950">Exportar árbitro</button>
+            <button onClick={() => importRefereeRef.current?.click()} className="rounded-xl border border-amber-300 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-100">Importar árbitro</button>
+
+
         <div className="grid gap-6 xl:grid-cols-2">
           <TeamBlock
             title="4. Datos del local"
@@ -1816,24 +1929,14 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
           />
         </div>
 
-  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <StatCard title="Calidad del dato" value={`${qualityScore.toFixed(0)}/100`} subtitle={qualityScore >= 75 ? "Buena base" : qualityScore >= 60 ? "Jugable" : "Floja"} />
-          <StatCard title="Volatilidad" value={volatilityLabel} subtitle={`Score ${volatilityScore.toFixed(1)}`} />
-          <StatCard title="Goles esperados" value={expectedTotalGoals.toFixed(2)} subtitle={`${expectedGoalsLocal.toFixed(2)} - ${expectedGoalsVisit.toFixed(2)}`} />
-          <StatCard title="No bet zone" value={noBetReasons.length >= 2 ? "Activa" : "No"} subtitle={noBetReasons[0] ?? "Sin bloqueo fuerte"} />
-        </div>
-
    <Section title="0. Exportar e importar" subtitle="Respalda o carga partido completo, perfiles de equipos y árbitro en JSON.">
           <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3">
           <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
-            <button onClick={exportFullData} className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">Exportar partido completo</button>
-            <button onClick={() => importFullRef.current?.click()} className="rounded-xl border border-sky-400 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-100">Importar partido completo</button>
             <button onClick={() => exportTeamData("local")} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white">Exportar local</button>
             <button onClick={() => importLocalRef.current?.click()} className="rounded-xl border border-blue-400 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-100">Importar local</button>
             <button onClick={() => exportTeamData("visitante")} className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white">Exportar visitante</button>
             <button onClick={() => importVisitRef.current?.click()} className="rounded-xl border border-rose-400 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100">Importar visitante</button>
-            <button onClick={exportRefereeData} className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950">Exportar árbitro</button>
-            <button onClick={() => importRefereeRef.current?.click()} className="rounded-xl border border-amber-300 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-100">Importar árbitro</button>
+            
           </div>
           <input ref={importFullRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) importJsonFile(file, "full"); e.currentTarget.value = ""; }} />
           <input ref={importLocalRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) importJsonFile(file, "local"); e.currentTarget.value = ""; }} />
@@ -1841,6 +1944,15 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
           <input ref={importRefereeRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) importJsonFile(file, "referee"); e.currentTarget.value = ""; }} />
           </div>
         </Section>
+
+
+  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard title="Calidad del dato" value={`${qualityScore.toFixed(0)}/100`} subtitle={qualityScore >= 75 ? "Buena base" : qualityScore >= 60 ? "Jugable" : "Floja"} />
+          <StatCard title="Volatilidad" value={volatilityLabel} subtitle={`Score ${volatilityScore.toFixed(1)}`} />
+          <StatCard title="Goles esperados" value={expectedTotalGoals.toFixed(2)} subtitle={`${expectedGoalsLocal.toFixed(2)} - ${expectedGoalsVisit.toFixed(2)}`} />
+          <StatCard title="No bet zone" value={noBetReasons.length >= 2 ? "Activa" : "No"} subtitle={noBetReasons[0] ?? "Sin bloqueo fuerte"} />
+        </div>
+
 
 
         {savedTeams.length ? (
@@ -1918,121 +2030,167 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
 
         <Section title="8. Lectura final y picks" subtitle={`Top pick, pick alternativo o no bet para ${matchDisplayName} según la línea real y tu filtro de edge. Recuerda: solo puede recomendar líneas que hayas cargado en la sección 7.`}>
           <div className="rounded-2xl border border-teal-500/30 bg-teal-500/10 p-3">
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard title="Local gana" value={formatPct(simulation.localWin)} subtitle="Simulación" />
-            <StatCard title="Empate" value={formatPct(simulation.draw)} subtitle="Simulación" />
-            <StatCard title="Visitante gana" value={formatPct(simulation.awayWin)} subtitle="Simulación" />
-            <StatCard title="BTTS Sí" value={formatPct(simulation.btts)} subtitle="Simulación" />
-            <StatCard title="Corners esperados" value={expectedTotalCorners.toFixed(2)} subtitle="Línea real recalculable" />
-            <StatCard title="Tarjetas esperadas" value={expectedTotalCards.toFixed(2)} subtitle="Con árbitro" />
-            <StatCard title="Disparos esperados" value={expectedTotalShots.toFixed(2)} subtitle="Totales" />
-            <StatCard title="A puerta esperados" value={expectedTotalShotsOnTarget.toFixed(2)} subtitle="Totales" />
-            <StatCard title="Boost ofensivo" value={`${shotBoostInfo.total >= 0 ? "+" : ""}${shotBoostInfo.total.toFixed(2)}`} subtitle={shotBoostInfo.active ? "Partido roto detectado" : "Sin boost fuerte"} />
-          </div>
-
-          {shotBoostInfo.active ? (
-            <div className="mt-5 rounded-2xl border border-fuchsia-300 bg-fuchsia-50 p-4 text-fuchsia-900">
-              <div className="font-bold">Detector de partido roto / abierto activado</div>
-              <ul className="mt-2 list-disc pl-5 text-sm">
-                {shotBoostInfo.reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {shotBoostInfo.adjustedGoals >= 2.85 && expectedTotalShots >= 22 && expectedTotalShotsOnTarget >= 7 ? (
-            <div className="mt-4 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-900">
-              <div className="font-bold">Prioridad ofensiva activada</div>
-              <div className="mt-1 text-sm">En este tipo de partido, el ranking empuja arriba goles, BTTS, goles por equipo y ganador con dominancia. Tarjetas pierde prioridad.</div>
-            </div>
-          ) : null}
-
-          {((expectedTotalShotsOnTarget >= 6.4 && expectedTotalShots >= 14) || (shotBoostInfo.total >= 0.35 && expectedTotalShotsOnTarget >= 6) || (simulation.draw >= 35 && expectedTotalShotsOnTarget >= 5 && expectedTotalShots >= 12)) ? (
-            <div className="mt-4 rounded-2xl border border-orange-300 bg-orange-50 p-4 text-orange-900">
-              <div className="font-bold">Bloqueo de under corto activado</div>
-              <div className="mt-1 text-sm">La app detecta suficiente volumen ofensivo como para castigar under 1.5 y under 2.5.</div>
-            </div>
-          ) : null}
-
-          {noBetReasons.length >= 2 ? (
-            <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
-              <div className="font-bold">No bet sugerido</div>
-              <ul className="mt-2 list-disc pl-5 text-sm">
-                {noBetReasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <div className="mt-5 grid gap-4 xl:grid-cols-3">
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-              <div className="text-sm font-semibold uppercase tracking-wide text-emerald-700">Top pick</div>
-              {topPick ? (
-                <>
-                  <div className="mt-2 text-2xl font-bold text-emerald-900">{topPick.label}</div>
-                  <div className="mt-2 text-sm text-emerald-800">Probabilidad: {formatPct(topPick.probability)} · Casa: {formatPct(topPick.implied)} · Edge: {topPick.edge.toFixed(1)}</div>
-                  <div className="mt-2 text-sm text-emerald-900">{topPick.reason}</div>
-                </>
-              ) : (
-                <div className="mt-2 text-sm text-emerald-900">Todavía no hay una línea real con probabilidad y edge suficientes.</div>
-              )}
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <StatCard title="Local gana" value={formatPct(simulation.localWin)} subtitle="Simulación" />
+              <StatCard title="Empate" value={formatPct(simulation.draw)} subtitle="Simulación" />
+              <StatCard title="Visitante gana" value={formatPct(simulation.awayWin)} subtitle="Simulación" />
+              <StatCard title="BTTS Sí" value={formatPct(simulation.btts)} subtitle="Simulación" />
+              <StatCard title="Corners esperados" value={expectedTotalCorners.toFixed(2)} subtitle="Línea real recalculable" />
+              <StatCard title="Tarjetas esperadas" value={expectedTotalCards.toFixed(2)} subtitle="Con árbitro" />
+              <StatCard title="Disparos esperados" value={expectedTotalShots.toFixed(2)} subtitle="Totales" />
+              <StatCard title="A puerta esperados" value={expectedTotalShotsOnTarget.toFixed(2)} subtitle="Totales" />
+              <StatCard title="Boost ofensivo" value={`${shotBoostInfo.total >= 0 ? "+" : ""}${shotBoostInfo.total.toFixed(2)}`} subtitle={shotBoostInfo.active ? "Partido roto detectado" : "Sin boost fuerte"} />
             </div>
 
-            <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
-              <div className="text-sm font-semibold uppercase tracking-wide text-blue-700">Pick alternativo</div>
-              {altPick ? (
-                <>
-                  <div className="mt-2 text-2xl font-bold text-blue-900">{altPick.label}</div>
-                  <div className="mt-2 text-sm text-blue-800">Probabilidad: {formatPct(altPick.probability)} · Casa: {formatPct(altPick.implied)} · Edge: {altPick.edge.toFixed(1)}</div>
-                  <div className="mt-2 text-sm text-blue-900">{altPick.reason}</div>
-                </>
-              ) : (
-                <div className="mt-2 text-sm text-blue-900">No hay segundo pick limpio por ahora.</div>
-              )}
+            {shotBoostInfo.active ? (
+              <div className="mt-5 rounded-2xl border border-fuchsia-300 bg-fuchsia-50 p-4 text-fuchsia-900">
+                <div className="font-bold">Detector de partido roto / abierto activado</div>
+                <ul className="mt-2 list-disc pl-5 text-sm">
+                  {shotBoostInfo.reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {shotBoostInfo.adjustedGoals >= 2.85 && expectedTotalShots >= 22 && expectedTotalShotsOnTarget >= 7 ? (
+              <div className="mt-4 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 text-emerald-900">
+                <div className="font-bold">Prioridad ofensiva activada</div>
+                <div className="mt-1 text-sm">En este tipo de partido, el ranking empuja arriba goles, BTTS, goles por equipo y ganador con dominancia. Tarjetas pierde prioridad.</div>
+              </div>
+            ) : null}
+
+            {((expectedTotalShotsOnTarget >= 6.4 && expectedTotalShots >= 14) || (shotBoostInfo.total >= 0.35 && expectedTotalShotsOnTarget >= 6) || (simulation.draw >= 35 && expectedTotalShotsOnTarget >= 5 && expectedTotalShots >= 12)) ? (
+              <div className="mt-4 rounded-2xl border border-orange-300 bg-orange-50 p-4 text-orange-900">
+                <div className="font-bold">Bloqueo de under corto activado</div>
+                <div className="mt-1 text-sm">La app detecta suficiente volumen ofensivo como para castigar under 1.5 y under 2.5.</div>
+              </div>
+            ) : null}
+
+            {noBetReasons.length >= 2 ? (
+              <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
+                <div className="font-bold">No bet sugerido</div>
+                <ul className="mt-2 list-disc pl-5 text-sm">
+                  {noBetReasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="mt-5 grid gap-4 xl:grid-cols-3">
+              {[topPick, altPick, thirdPick].map((pick, index) => {
+                const palette =
+                  index === 0
+                    ? { box: "border-emerald-200 bg-emerald-50", title: "text-emerald-700", body: "text-emerald-900", label: "Top pick" }
+                    : index === 1
+                    ? { box: "border-blue-200 bg-blue-50", title: "text-blue-700", body: "text-blue-900", label: "Pick alternativo" }
+                    : { box: "border-violet-200 bg-violet-50", title: "text-violet-700", body: "text-violet-900", label: "Tercer pick" };
+
+                return (
+                  <div key={index} className={`rounded-2xl border p-4 ${palette.box}`}>
+                    <div className={`text-sm font-semibold uppercase tracking-wide ${palette.title}`}>{palette.label}</div>
+                    {pick ? (
+                      <>
+                        <div className="mt-2">
+                          <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${classifyPickTier(pick.probability, pick.edge).badge}`}>
+                            {classifyPickTier(pick.probability, pick.edge).label}
+                          </span>
+                        </div>
+                        <div className={`mt-2 text-2xl font-bold ${palette.body}`}>{pick.label}</div>
+                        <div className={`mt-2 text-sm ${palette.body}`}>Probabilidad: {formatPct(pick.probability)} · Casa: {formatPct(pick.implied)} · Edge: {pick.edge.toFixed(1)}</div>
+                        <div className={`mt-2 text-sm ${palette.body}`}>{pick.reason}</div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            onClick={() => setPickDecision(pick.id, "selected")}
+                            className={`rounded-xl px-3 py-2 text-sm font-semibold ${pickDecisions[pick.id] === "selected" ? "bg-emerald-600 text-white" : "border border-emerald-300 bg-white text-emerald-700"}`}
+                          >
+                            {pickDecisions[pick.id] === "selected" ? "Tomado" : "Tomar"}
+                          </button>
+                          <button
+                            onClick={() => setPickDecision(pick.id, "discarded")}
+                            className={`rounded-xl px-3 py-2 text-sm font-semibold ${pickDecisions[pick.id] === "discarded" ? "bg-rose-600 text-white" : "border border-rose-300 bg-white text-rose-700"}`}
+                          >
+                            {pickDecisions[pick.id] === "discarded" ? "Descartado" : "Descartar"}
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className={`mt-2 text-sm ${palette.body}`}>No hay pick limpio para esta posición.</div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
-            <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-              <div className="text-sm font-semibold uppercase tracking-wide text-violet-700">Tercer pick</div>
-              {thirdPick ? (
-                <>
-                  <div className="mt-2 text-2xl font-bold text-violet-900">{thirdPick.label}</div>
-                  <div className="mt-2 text-sm text-violet-800">Probabilidad: {formatPct(thirdPick.probability)} · Casa: {formatPct(thirdPick.implied)} · Edge: {thirdPick.edge.toFixed(1)}</div>
-                  <div className="mt-2 text-sm text-violet-900">{thirdPick.reason}</div>
-                </>
-              ) : (
-                <div className="mt-2 text-sm text-violet-900">No hay tercer pick limpio por ahora.</div>
-              )}
-            </div>
-          </div>
+            <div className="mt-5 grid gap-4 xl:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Resumen de tus picks elegidos</div>
+                {selectedPicks.length ? (
+                  <>
+                    <div className="mt-3 space-y-2">
+                      {selectedPicks.map((pick) => (
+                        <div key={`sel-${pick.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <div className="font-semibold text-slate-900">{pick.label}</div>
+                          <div className="mt-1 text-sm text-slate-700">Prob. {formatPct(pick.probability)} · Edge {pick.edge.toFixed(1)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {simulatedTicket ? (
+                      <div className="mt-3 rounded-xl border border-cyan-200 bg-cyan-50 p-3 text-cyan-900">
+                        <div className="font-semibold">Ticket {simulatedTicket.profile}</div>
+                        <div className="mt-1 text-sm">Probabilidad combinada aprox.: {formatPct(simulatedTicket.combinedProbability)}</div>
+                        <div className="mt-1 text-sm">Golpearía {simulatedTicket.expectedHitsPer10.toFixed(1)} de cada 10 tickets parecidos.</div>
+                        <div className="mt-1 text-sm">Edge medio: {simulatedTicket.averageEdge.toFixed(1)}</div>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="mt-3 text-sm text-slate-700">Usa Tomar para armar un ticket dentro de la app. Si descartas uno, el siguiente sube automáticamente.</div>
+                )}
+              </div>
 
-          <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-700 bg-white">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-200 text-left text-slate-900">
-                <tr>
-                  <th className="px-3 py-2">Mercado</th>
-                  <th className="px-3 py-2">Prob.</th>
-                  <th className="px-3 py-2">Casa</th>
-                  <th className="px-3 py-2">Edge</th>
-                  <th className="px-3 py-2">Riesgo</th>
-                  <th className="px-3 py-2">Motivo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {suggestedPicks.map((pick) => (
-                  <tr key={pick.id} className="border-t border-slate-200 text-slate-800">
-                    <td className="px-3 py-2 font-medium text-slate-900">{pick.label}</td>
-                    <td className="px-3 py-2">{formatPct(pick.probability)}</td>
-                    <td className="px-3 py-2">{formatPct(pick.implied)}</td>
-                    <td className="px-3 py-2">{pick.edge.toFixed(1)}</td>
-                    <td className="px-3 py-2">{pick.risk}</td>
-                    <td className="px-3 py-2 text-slate-700">{pick.reason}</td>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Simulación rápida</div>
+                <div className="mt-3 space-y-2">
+                  {visiblePicks.length ? visiblePicks.slice(0, 5).map((pick) => (
+                    <div key={`sim-${pick.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="font-semibold text-slate-900">{pick.label}</div>
+                      <div className="mt-1 text-sm text-slate-700">
+                        Sale aproximadamente <span className="font-semibold">{(pick.probability / 10).toFixed(1)} de cada 10</span> simulaciones simples.
+                      </div>
+                    </div>
+                  )) : <div className="text-sm text-slate-700">No quedan picks visibles porque fueron descartados o no cumplen filtro.</div>}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-700 bg-white">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-200 text-left text-slate-900">
+                  <tr>
+                    <th className="px-3 py-2">Mercado</th>
+                    <th className="px-3 py-2">Prob.</th>
+                    <th className="px-3 py-2">Casa</th>
+                    <th className="px-3 py-2">Edge</th>
+                    <th className="px-3 py-2">Riesgo</th>
+                    <th className="px-3 py-2">Motivo</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {visiblePicks.map((pick) => (
+                    <tr key={pick.id} className="border-t border-slate-200 text-slate-800">
+                      <td className="px-3 py-2 font-medium text-slate-900">{pick.label}</td>
+                      <td className="px-3 py-2">{formatPct(pick.probability)}</td>
+                      <td className="px-3 py-2">{formatPct(pick.implied)}</td>
+                      <td className="px-3 py-2">{pick.edge.toFixed(1)}</td>
+                      <td className="px-3 py-2">{pick.risk}</td>
+                      <td className="px-3 py-2 text-slate-700">{pick.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </Section>
       </div>
@@ -2130,7 +2288,7 @@ function TeamBlock({
     <Section title={title} subtitle="Últimos partidos. Lo ideal es llenar al menos 6 con fechas recientes.">
       <div className={`rounded-2xl border p-3 ${side === "local" ? "border-blue-500/30 bg-blue-500/10" : "border-rose-500/30 bg-rose-500/10"}`}>
         <div className="mb-4 flex items-center justify-between gap-3">
-          <div className="text-sm text-white">{teamName || (side === "local" ? "Local" : "Visitante")}</div>
+          <div className="text-lg font-semibold text-white">{teamName || (side === "local" ? "Local" : "Visitante")}</div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={shiftRows}
@@ -2216,7 +2374,7 @@ function TeamBlock({
                   <td className="px-2 py-2">
                     <input
                       list="rival-suggestions"
-                      className="w-28 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white"
+                      className="w-36 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-sm text-white"
                       value={row.rival}
                       onChange={(e) => onRowChange(side, index, "rival", e.target.value)}
                     />
@@ -2224,7 +2382,7 @@ function TeamBlock({
                   <td className="px-2 py-2">
                     <input
                       type="date"
-                      className="rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white"
+                      className="w-28 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-sm text-white"
                       value={row.fecha}
                       onChange={(e) => onRowChange(side, index, "fecha", e.target.value)}
                     />
@@ -2251,7 +2409,7 @@ function TeamBlock({
                         <input
                           type={isDecimalField ? "text" : "number"}
                           inputMode={isDecimalField ? "decimal" : "numeric"}
-                          className="w-20 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white"
+                          className="w-16 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-sm text-white"
                           value={String(row[field] ?? "")}
                           onChange={(e) => onRowChange(side, index, field, e.target.value)}
                         />
@@ -2260,7 +2418,7 @@ function TeamBlock({
                   })}
                   <td className="px-2 py-2">
                     <select
-                      className="rounded border border-slate-500 bg-slate-800 px-2 py-1 text-white"
+                      className="w-16 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-sm text-white"
                       value={row.estado}
                       onChange={(e) => onRowChange(side, index, "estado", e.target.value)}
                     >
@@ -2279,6 +2437,7 @@ function TeamBlock({
     </Section>
   );
 }
+
 
 
 function buildLabel(family: MarketFamily, side: "local" | "visitante" | "total", line?: string, direction?: MarketLine["direction"]) {
