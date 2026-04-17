@@ -1413,6 +1413,136 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
       .slice(0, 8);
   }, [marketLines, minProb, minEdge, simulation, expectedTotalGoals, expectedHalftimeGoals, expectedTotalCorners, expectedTotalCards, expectedTotalShots, expectedTotalShotsOnTarget, expectedLocalTeamGoals, expectedVisitTeamGoals, qualityScore, volatilityLabel, tieContext, shotBoostInfo]);
 
+  const crossSuggestions = useMemo(() => {
+    const items: { title: string; explanation: string; picks: string[]; side: "local" | "visitante" | "neutral"; confidence: number }[] = [];
+    const localName = matchInfo.local.trim() || "Local";
+    const visitName = matchInfo.visitante.trim() || "Visitante";
+    const hasLocalTag = (needle: string) => localTags.some((tag) => tag.toLowerCase().includes(needle));
+    const hasVisitTag = (needle: string) => visitTags.some((tag) => tag.toLowerCase().includes(needle));
+    const addCross = (item: { title: string; explanation: string; picks: string[]; side: "local" | "visitante" | "neutral"; confidence: number }) => {
+      items.push({ ...item, confidence: clamp(item.confidence, 52, 92) });
+    };
+
+    if (!localStats.count || !visitStats.count) return items;
+
+    if ((localStats.winPct >= 55 && visitStats.lossPct >= 40) || (hasLocalTag("gana") && hasVisitTag("pierde"))) {
+      addCross({
+        title: `${localName} fuerte vs ${visitName} frágil`,
+        explanation: `${localName} gana seguido y ${visitName} pierde con frecuencia. El cruce favorece mercados del local.`,
+        picks: [`${localName} gana`, `${localName} o empate`],
+        side: "local",
+        confidence: 56 + (localStats.winPct - visitStats.lossPct) * 0.18 + (localStats.gfAvg - visitStats.gfAvg) * 6 + (simulation.localWin - simulation.awayWin) * 0.22,
+      });
+    }
+
+    if ((visitStats.winPct >= 55 && localStats.lossPct >= 40) || (hasVisitTag("gana") && hasLocalTag("pierde"))) {
+      addCross({
+        title: `${visitName} fuerte vs ${localName} frágil`,
+        explanation: `${visitName} trae mejor patrón de resultados y ${localName} se cae más de lo deseado. El cruce favorece mercados del visitante.`,
+        picks: [`${visitName} gana`, `${visitName} o empate`],
+        side: "visitante",
+        confidence: 56 + (visitStats.winPct - localStats.lossPct) * 0.18 + (visitStats.gfAvg - localStats.gfAvg) * 6 + (simulation.awayWin - simulation.localWin) * 0.22,
+      });
+    }
+
+    if ((hasLocalTag("goleador") && hasVisitTag("recibe")) || (localStats.gfAvg >= 1.6 && visitStats.gcAvg >= 1.3)) {
+      addCross({
+        title: `${localName} ataca bien vs ${visitName} concede`,
+        explanation: `${localName} proyecta gol y ${visitName} suele recibir. El cruce favorece goles del local y líneas de over.`,
+        picks: [`${localName} más de 0.5 goles`, "Más de 1.5 goles"],
+        side: "local",
+        confidence: 58 + (localStats.gfAvg * 8) + (visitStats.gcAvg * 5) + (expectedGoalsLocal * 8) - (visitStats.shotsOnTargetAgainstAvg < 2 ? 4 : 0),
+      });
+    }
+
+    if ((hasVisitTag("goleador") && hasLocalTag("recibe")) || (visitStats.gfAvg >= 1.6 && localStats.gcAvg >= 1.3)) {
+      addCross({
+        title: `${visitName} ataca bien vs ${localName} concede`,
+        explanation: `${visitName} proyecta gol y ${localName} suele dejar espacios. El cruce favorece goles del visitante y líneas de over.`,
+        picks: [`${visitName} más de 0.5 goles`, "Más de 1.5 goles"],
+        side: "visitante",
+        confidence: 58 + (visitStats.gfAvg * 8) + (localStats.gcAvg * 5) + (expectedGoalsVisit * 8) - (localStats.shotsOnTargetAgainstAvg < 2 ? 4 : 0),
+      });
+    }
+
+    if (
+      ((hasLocalTag("goleador") || localStats.gfAvg >= 1.5) && (hasVisitTag("goleador") || visitStats.gfAvg >= 1.3)) ||
+      ((hasLocalTag("recibe") || localStats.gcAvg >= 1.2) && (hasVisitTag("recibe") || visitStats.gcAvg >= 1.2))
+    ) {
+      addCross({
+        title: `Cruce ofensivo ${localName} vs ${visitName}`,
+        explanation: `Ambos perfiles tienen señales de gol o de concesión. El cruce favorece partido de intercambio.`,
+        picks: ["BTTS Sí", "Más de 2.5 goles"],
+        side: "neutral",
+        confidence: 55 + expectedTotalGoals * 8 + simulation.btts * 0.12 + simulation.over25 * 0.1,
+      });
+    }
+
+    if (
+      (localStats.drawPct >= 28 && visitStats.drawPct >= 28) ||
+      (hasLocalTag("empata") && hasVisitTag("empata"))
+    ) {
+      addCross({
+        title: `Cruce de empate`,
+        explanation: `Los dos equipos tienen tendencia a cerrar o repartir puntos. El empate gana peso relativo.`,
+        picks: [`${localName} o empate`, `${visitName} o empate`],
+        side: "neutral",
+        confidence: 54 + (localStats.drawPct + visitStats.drawPct) * 0.28 + simulation.draw * 0.18,
+      });
+    }
+
+    if (
+      (hasLocalTag("alto en corners") && visitStats.oppCornersAvg >= 4.8) ||
+      (localStats.ownCornersAvg >= 5 && visitStats.oppCornersAvg >= 4.6)
+    ) {
+      addCross({
+        title: `${localName} empuja corners`,
+        explanation: `${localName} suele producir corners y ${visitName} concede suficientes. El cruce favorece líneas de corners.`,
+        picks: ["Más de 8.5 corners", `Corners ${localName}`],
+        side: "local",
+        confidence: 56 + localStats.ownCornersAvg * 4 + visitStats.oppCornersAvg * 3.2 + expectedTotalCorners * 1.1,
+      });
+    }
+
+    if (
+      (hasVisitTag("alto en corners") && localStats.oppCornersAvg >= 4.8) ||
+      (visitStats.ownCornersAvg >= 5 && localStats.oppCornersAvg >= 4.6)
+    ) {
+      addCross({
+        title: `${visitName} empuja corners`,
+        explanation: `${visitName} suele producir corners y ${localName} concede suficientes. El cruce favorece líneas de corners.`,
+        picks: ["Más de 8.5 corners", `Corners ${visitName}`],
+        side: "visitante",
+        confidence: 56 + visitStats.ownCornersAvg * 4 + localStats.oppCornersAvg * 3.2 + expectedTotalCorners * 1.1,
+      });
+    }
+
+    if (
+      ((hasLocalTag("conservador") || localStats.totalGoalsWeighted <= 2.2) &&
+        (hasVisitTag("conservador") || visitStats.totalGoalsWeighted <= 2.2)) ||
+      (localStats.shotsWeighted <= 9 && visitStats.shotsWeighted <= 9)
+    ) {
+      addCross({
+        title: `Cruce corto / cerrado`,
+        explanation: `Ningún perfil empuja un ritmo ofensivo claro. El cruce favorece líneas cortas.`,
+        picks: ["Menos de 3.5 goles", "BTTS No"],
+        side: "neutral",
+        confidence: 55 + (4.2 - expectedTotalGoals) * 9 + (18 - expectedTotalShots) * 1.1,
+      });
+    }
+
+    const unique = new Set<string>();
+    return items
+      .filter((item) => {
+        const key = `${item.title}__${item.picks.join("|")}`;
+        if (unique.has(key)) return false;
+        unique.add(key);
+        return true;
+      })
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 6);
+  }, [matchInfo.local, matchInfo.visitante, localStats, visitStats, localTags, visitTags, simulation, expectedGoalsLocal, expectedGoalsVisit, expectedTotalGoals, expectedTotalCorners, expectedTotalShots]);
+
   const visiblePicks = useMemo(
     () => suggestedPicks.filter((pick) => pickDecisions[pick.id] !== "discarded"),
     [suggestedPicks, pickDecisions]
@@ -1810,12 +1940,7 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
             <Select value={matchInfo.etapa} onChange={(v) => updateMatchInfo("etapa", v as MatchStage)} options={STAGES} />
             <Select value={matchInfo.tipo} onChange={(v) => updateMatchInfo("tipo", v as MatchType)} options={TYPES} />
           </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <Input value={matchSupportInfo.possessionLocal} onChange={(v) => updateMatchSupportInfo("possessionLocal", v)} placeholder="Posesión local %" type="text" inputMode="decimal" />
-            <Input value={matchSupportInfo.possessionVisit} onChange={(v) => updateMatchSupportInfo("possessionVisit", v)} placeholder="Posesión visitante %" type="text" inputMode="decimal" />
-            <Input value={matchSupportInfo.bigChancesLocal} onChange={(v) => updateMatchSupportInfo("bigChancesLocal", v)} placeholder="Grandes ocasiones local" type="text" inputMode="numeric" />
-            <Input value={matchSupportInfo.bigChancesVisit} onChange={(v) => updateMatchSupportInfo("bigChancesVisit", v)} placeholder="Grandes ocasiones visitante" type="text" inputMode="numeric" />
-          </div>
+          
           {supportInterpretation.length ? (
             <div className="mt-3 rounded-2xl border border-amber-300 bg-amber-50 p-3 text-amber-900">
               <div className="font-bold text-sm">Lectura rápida de dominio</div>
@@ -1972,6 +2097,7 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
           </Section>
         ) : null}
 
+    
         <Section title="7. Líneas reales de la casa" subtitle="Aquí cargas las cuotas reales de tu casa de apuestas. La app recalcula sobre esa línea real, no sobre una línea inventada.">
           <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-3">
           <div className="mb-3 rounded-xl border border-cyan-400/30 bg-slate-950/40 px-3 py-2 text-sm text-cyan-100">Usa este bloque para guardar un perfil de cuotas que repites seguido y cargarlo más rápido en otros partidos. Los cambios de formato en línea/cuota no rompen la IA: solo mejoran cómo escribes decimales y luego el sistema los convierte al calcular.</div>
@@ -2066,6 +2192,54 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
                 <div className="mt-1 text-sm">La app detecta suficiente volumen ofensivo como para castigar under 1.5 y under 2.5.</div>
               </div>
             ) : null}
+
+ <Section title="6.5 Cruce IA: Local vs Visitante" subtitle="Este bloque compara perfiles entre local y visitante para sugerir mercados lógicos según el cruce de etiquetas y métricas.">
+          <div className="rounded-2xl border border-fuchsia-500/30 bg-fuchsia-500/10 p-3">
+            <div className="mb-3 rounded-xl border border-fuchsia-400/30 bg-slate-950/40 px-3 py-2 text-sm text-fuchsia-100">
+              {matchDisplayName}. Aquí la app cruza fortalezas del local contra debilidades del visitante, y viceversa, para sugerir mercados por lógica de perfiles.
+            </div>
+
+            {crossSuggestions.length ? (
+              <div className="grid gap-3 xl:grid-cols-2">
+                {crossSuggestions.map((item, index) => (
+                  <div
+                    key={`${item.title}-${index}`}
+                    className={`rounded-2xl border p-4 ${
+                      item.side === "local"
+                        ? "border-sky-300 bg-sky-50"
+                        : item.side === "visitante"
+                        ? "border-rose-300 bg-rose-50"
+                        : "border-violet-300 bg-violet-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">
+                        Cruce {index + 1}
+                      </div>
+                      <div className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-bold text-slate-900">
+                        {formatPct(item.confidence)}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-lg font-bold text-slate-900">{item.title}</div>
+                    <div className="mt-2 text-sm text-slate-700">{item.explanation}</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {item.picks.map((pick) => (
+                        <span key={pick} className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-900">
+                          {pick}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-slate-300 bg-white p-4 text-sm text-slate-700">
+                Aún no hay suficiente cruce limpio entre ambos perfiles. Llena más partidos o afina local/visitante para que la IA compare mejor.
+              </div>
+            )}
+          </div>
+        </Section>
+
 
             {noBetReasons.length >= 2 ? (
               <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
