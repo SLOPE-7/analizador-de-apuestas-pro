@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 
 type MatchStage =
   | "Liga"
@@ -869,33 +868,8 @@ function getTier(realConfidence: number, edge: number): "Top" | "Alternativo" | 
   return "Agresivo";
 }
 
-function getTeamLogoPath(teamName: string) {
-  const slug = slugify(teamName || "team");
-  const aliases: Record<string, string> = {
-    psg: "paris-saint-germain",
-    "paris-sg": "paris-saint-germain",
-    "paris-saint-germain": "paris-saint-germain",
-    "paris-saint-germain-fc": "paris-saint-germain",
-    "olympique-lyonnais": "lyon",
-    "olympique-lyon": "lyon",
-    "man-utd": "manchester-united",
-    "man-city": "manchester-city",
-    "atletico-madrid": "atletico-de-madrid",
-    "atletico-de-madrid": "atletico-de-madrid",
-    inter: "inter-milan",
-    "internazionale": "inter-milan",
-  };
 
-  return `/teams/${aliases[slug] || slug}.png`;
-}
 
-function getOptionalBgPath(name: string) {
-  return `/${slugify(name || "match")}-bg.jpg`;
-}
-
-function getOptionalMatchBgPath(local: string, visitante: string) {
-  return `/${slugify(local || "local")}-vs-${slugify(visitante || "visitante")}.jpg`;
-}
 
 function buildFallbackReason(reason: string) {
   return `${reason} · Pick de respaldo: el partido no dio una señal top, pero sí una lectura utilizable.`;
@@ -2547,75 +2521,6 @@ const resetAll = () => {
         </div>
 
 
-         <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Historial de choque IA</div>
-                  <div className="mt-1 text-sm text-slate-100">Carga el último duelo directo y la app lo compara contra lo que hoy espera tu modelo.</div>
-                </div>
-                <label className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/30 bg-slate-950/30 px-3 py-2 text-sm text-cyan-100">
-                  <input
-                    type="checkbox"
-                    checked={headToHeadInfo.played}
-                    onChange={(e) => setHeadToHeadInfo((prev) => ({ ...prev, played: e.target.checked }))}
-                  />
-                  Hubo duelo reciente
-                </label>
-              </div>
-
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <Input value={headToHeadInfo.fecha} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, fecha: v }))} placeholder="Fecha del último duelo" type="date" />
-                <Input value={headToHeadInfo.anteriorLocal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, anteriorLocal: v }))} placeholder="Local anterior" list="team-names" />
-                <Input value={headToHeadInfo.anteriorVisitante} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, anteriorVisitante: v }))} placeholder="Visitante anterior" list="team-names" />
-                <TextArea value={headToHeadInfo.notas} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, notas: v }))} placeholder="Lectura manual del choque anterior" />
-                <Input value={headToHeadInfo.golesLocal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, golesLocal: v === "" ? "" : Number(v) }))} placeholder="Goles local" type="number" inputMode="numeric" />
-                <Input value={headToHeadInfo.golesVisitante} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, golesVisitante: v === "" ? "" : Number(v) }))} placeholder="Goles visitante" type="number" inputMode="numeric" />
-                <Input value={headToHeadInfo.cornersTotal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, cornersTotal: v === "" ? "" : Number(v) }))} placeholder="Corners totales" type="number" inputMode="numeric" />
-                <Input value={headToHeadInfo.tarjetasTotal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, tarjetasTotal: v === "" ? "" : Number(v) }))} placeholder="Tarjetas totales" type="number" inputMode="numeric" />
-              </div>
-
-              <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                <div className="rounded-2xl border border-slate-700/60 bg-slate-950/35 p-4">
-                  <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Comparador duelo anterior vs partido actual</div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <StatCard title="Ganador anterior" value={headToHeadAnalysis.previousWinner} subtitle={headToHeadInfo.fecha || "Sin fecha"} />
-                    <StatCard title="Lectura próximo duelo" value={headToHeadAnalysis.projectedWinner} subtitle="Proyección IA" />
-                    <StatCard title="Goles anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousGoals) : "-"} subtitle={`Esperados hoy ${expectedTotalGoals.toFixed(2)}`} />
-                    <StatCard title="Corners anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCorners || "-") : "-"} subtitle={`Esperados hoy ${expectedTotalCorners.toFixed(2)}`} />
-                    <StatCard title="Tarjetas anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCards || "-") : "-"} subtitle={`Esperadas hoy ${expectedTotalCards.toFixed(2)}`} />
-                    <StatCard title="Resultado esperado hoy" value={simulation.localWin > simulation.awayWin ? `${matchInfo.local || "Local"} mejor` : simulation.awayWin > simulation.localWin ? `${matchInfo.visitante || "Visitante"} mejor` : "Muy parejo"} subtitle={`Empate ${formatPct(simulation.draw)}`} />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-cyan-300/30 bg-white/5 p-4">
-                  <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Lectura IA del historial</div>
-                  <div className="mt-3 space-y-3 text-sm text-slate-100">
-                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.outcomeText}</div>
-                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.goalsText}</div>
-                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.cornersText}</div>
-                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.cardsText}</div>
-                    {headToHeadInfo.notas.trim() ? (
-                      <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-amber-100">Apunte manual: {headToHeadInfo.notas}</div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-4 xl:grid-cols-3">
-                <div className="rounded-2xl border border-sky-300/30 bg-sky-500/10 p-4">
-                  <div className="text-sm font-semibold uppercase tracking-wide text-sky-100">Cómo ha mejorado {matchInfo.local || "el local"}</div>
-                  <div className="mt-2 text-sm text-slate-100">{headToHeadAnalysis.improvementTextLocal}</div>
-                </div>
-                <div className="rounded-2xl border border-violet-300/30 bg-violet-500/10 p-4">
-                  <div className="text-sm font-semibold uppercase tracking-wide text-violet-100">Cómo ha mejorado {matchInfo.visitante || "el visitante"}</div>
-                  <div className="mt-2 text-sm text-slate-100">{headToHeadAnalysis.improvementTextVisit}</div>
-                </div>
-                <div className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-4">
-                  <div className="text-sm font-semibold uppercase tracking-wide text-emerald-100">Quién llega mejor preparado</div>
-                  <div className="mt-2 text-sm text-slate-100">{headToHeadAnalysis.prepText}</div>
-                </div>
-              </div>
-            </div>
 
         
         <Section title="5.5 Ranking de etiquetas y favoritos" subtitle="Aquí se ordenan los equipos por fortaleza detectada en cada etiqueta o categoría para que puedas ir directo al mercado que más conviene.">
@@ -2747,57 +2652,24 @@ const resetAll = () => {
         </Section>
 
         <Section title="8. Lectura final y picks" subtitle={`Top pick, pick alternativo o no bet para ${matchDisplayName} según la línea real y tu filtro de edge. Recuerda: solo puede recomendar líneas que hayas cargado en la sección 7.`}>
-          <div className="relative mb-4 overflow-hidden rounded-3xl border border-slate-700/60 bg-[linear-gradient(135deg,rgba(15,23,42,.98),rgba(30,41,59,.94))] p-4 shadow-lg shadow-slate-950/30">
-            <img
-              src={getOptionalMatchBgPath(matchInfo.local, matchInfo.visitante)}
-              alt=""
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-15"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-            />
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,.12),transparent_42%),radial-gradient(circle_at_bottom,rgba(99,102,241,.14),transparent_38%)]" />
-
-            <div className="relative grid gap-4 md:grid-cols-3">
-              <div className="flex items-center gap-4 rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-800 to-slate-900 p-4 shadow-inner shadow-slate-950/30">
-                <div className="relative h-16 w-16 overflow-hidden rounded-full border border-slate-600 bg-white shadow-inner">
-                  <Image
-                    src={getTeamLogoPath(matchInfo.local)}
-                    alt={matchInfo.local || "Equipo local"}
-                    fill
-                    className="object-contain p-2"
-                    unoptimized
-                  />
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-400">Local</div>
-                  <div className="mt-1 text-lg font-bold text-white">{matchInfo.local || "Equipo local"}</div>
-                  <div className="mt-1 text-xs text-slate-400">{matchInfo.paisLocal || "Sin país cargado"}</div>
-                </div>
+          <div className="mb-4 rounded-3xl border border-slate-700/60 bg-[linear-gradient(135deg,rgba(15,23,42,.98),rgba(30,41,59,.94))] p-4 shadow-lg shadow-slate-950/30">
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-800 to-slate-900 p-4 shadow-inner shadow-slate-950/30">
+                <div className="text-xs uppercase tracking-wide text-slate-400">Local</div>
+                <div className="mt-1 text-lg font-bold text-white">{matchInfo.local || "Equipo local"}</div>
+                <div className="mt-1 text-xs text-slate-400">{matchInfo.paisLocal || "Sin país cargado"}</div>
               </div>
 
-              <div className="rounded-2xl border border-sky-500/30 bg-gradient-to-br from-sky-500/20 to-indigo-500/20 p-4 text-center shadow-inner shadow-slate-950/20 backdrop-blur-sm">
+              <div className="rounded-2xl border border-sky-500/30 bg-gradient-to-br from-sky-500/20 to-indigo-500/20 p-4 text-center shadow-inner shadow-slate-950/20">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-200">Lectura del partido</div>
                 <div className="mt-2 text-[1.65rem] font-extrabold leading-tight text-white">{matchTypeInfo.label}</div>
                 <div className="mx-auto mt-2 max-w-sm text-sm font-medium text-slate-100">{matchTypeInfo.description}</div>
-                <div className="mt-3 inline-flex rounded-full border border-white/15 bg-slate-950/20 px-3 py-1 text-[11px] text-slate-200">
-                  Logos en <span className="mx-1 font-semibold text-white">/public/teams</span> · Fondo opcional en <span className="ml-1 font-semibold text-white">/public/{slugify(matchInfo.local || "local")}-vs-{slugify(matchInfo.visitante || "visitante")}.jpg</span>
-                </div>
               </div>
 
-              <div className="flex items-center justify-end gap-4 rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-800 to-slate-900 p-4 text-right shadow-inner shadow-slate-950/30">
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-400">Visitante</div>
-                  <div className="mt-1 text-lg font-bold text-white">{matchInfo.visitante || "Equipo visitante"}</div>
-                  <div className="mt-1 text-xs text-slate-400">{matchInfo.paisVisitante || "Sin país cargado"}</div>
-                </div>
-                <div className="relative h-16 w-16 overflow-hidden rounded-full border border-slate-600 bg-white shadow-inner">
-                  <Image
-                    src={getTeamLogoPath(matchInfo.visitante)}
-                    alt={matchInfo.visitante || "Equipo visitante"}
-                    fill
-                    className="object-contain p-2"
-                    unoptimized
-                  />
-                </div>
+              <div className="rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-800 to-slate-900 p-4 text-right shadow-inner shadow-slate-950/30">
+                <div className="text-xs uppercase tracking-wide text-slate-400">Visitante</div>
+                <div className="mt-1 text-lg font-bold text-white">{matchInfo.visitante || "Equipo visitante"}</div>
+                <div className="mt-1 text-xs text-slate-400">{matchInfo.paisVisitante || "Sin país cargado"}</div>
               </div>
             </div>
           </div>
@@ -2888,7 +2760,76 @@ const resetAll = () => {
         </Section>
 
 
-   
+            <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Historial de choque IA</div>
+                  <div className="mt-1 text-sm text-slate-100">Carga el último duelo directo y la app lo compara contra lo que hoy espera tu modelo.</div>
+                </div>
+                <label className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/30 bg-slate-950/30 px-3 py-2 text-sm text-cyan-100">
+                  <input
+                    type="checkbox"
+                    checked={headToHeadInfo.played}
+                    onChange={(e) => setHeadToHeadInfo((prev) => ({ ...prev, played: e.target.checked }))}
+                  />
+                  Hubo duelo reciente
+                </label>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <Input value={headToHeadInfo.fecha} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, fecha: v }))} placeholder="Fecha del último duelo" type="date" />
+                <Input value={headToHeadInfo.anteriorLocal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, anteriorLocal: v }))} placeholder="Local anterior" list="team-names" />
+                <Input value={headToHeadInfo.anteriorVisitante} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, anteriorVisitante: v }))} placeholder="Visitante anterior" list="team-names" />
+                <TextArea value={headToHeadInfo.notas} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, notas: v }))} placeholder="Lectura manual del choque anterior" />
+                <Input value={headToHeadInfo.golesLocal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, golesLocal: v === "" ? "" : Number(v) }))} placeholder="Goles local" type="number" inputMode="numeric" />
+                <Input value={headToHeadInfo.golesVisitante} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, golesVisitante: v === "" ? "" : Number(v) }))} placeholder="Goles visitante" type="number" inputMode="numeric" />
+                <Input value={headToHeadInfo.cornersTotal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, cornersTotal: v === "" ? "" : Number(v) }))} placeholder="Corners totales" type="number" inputMode="numeric" />
+                <Input value={headToHeadInfo.tarjetasTotal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, tarjetasTotal: v === "" ? "" : Number(v) }))} placeholder="Tarjetas totales" type="number" inputMode="numeric" />
+              </div>
+
+              <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                <div className="rounded-2xl border border-slate-700/60 bg-slate-950/35 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Comparador duelo anterior vs partido actual</div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <StatCard title="Ganador anterior" value={headToHeadAnalysis.previousWinner} subtitle={headToHeadInfo.fecha || "Sin fecha"} />
+                    <StatCard title="Lectura próximo duelo" value={headToHeadAnalysis.projectedWinner} subtitle="Proyección IA" />
+                    <StatCard title="Goles anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousGoals) : "-"} subtitle={`Esperados hoy ${expectedTotalGoals.toFixed(2)}`} />
+                    <StatCard title="Corners anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCorners || "-") : "-"} subtitle={`Esperados hoy ${expectedTotalCorners.toFixed(2)}`} />
+                    <StatCard title="Tarjetas anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCards || "-") : "-"} subtitle={`Esperadas hoy ${expectedTotalCards.toFixed(2)}`} />
+                    <StatCard title="Resultado esperado hoy" value={simulation.localWin > simulation.awayWin ? `${matchInfo.local || "Local"} mejor` : simulation.awayWin > simulation.localWin ? `${matchInfo.visitante || "Visitante"} mejor` : "Muy parejo"} subtitle={`Empate ${formatPct(simulation.draw)}`} />
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-cyan-300/30 bg-white/5 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Lectura IA del historial</div>
+                  <div className="mt-3 space-y-3 text-sm text-slate-100">
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.outcomeText}</div>
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.goalsText}</div>
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.cornersText}</div>
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.cardsText}</div>
+                    {headToHeadInfo.notas.trim() ? (
+                      <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-amber-100">Apunte manual: {headToHeadInfo.notas}</div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 xl:grid-cols-3">
+                <div className="rounded-2xl border border-sky-300/30 bg-sky-500/10 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-sky-100">Cómo ha mejorado {matchInfo.local || "el local"}</div>
+                  <div className="mt-2 text-sm text-slate-100">{headToHeadAnalysis.improvementTextLocal}</div>
+                </div>
+                <div className="rounded-2xl border border-violet-300/30 bg-violet-500/10 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-violet-100">Cómo ha mejorado {matchInfo.visitante || "el visitante"}</div>
+                  <div className="mt-2 text-sm text-slate-100">{headToHeadAnalysis.improvementTextVisit}</div>
+                </div>
+                <div className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-emerald-100">Quién llega mejor preparado</div>
+                  <div className="mt-2 text-sm text-slate-100">{headToHeadAnalysis.prepText}</div>
+                </div>
+              </div>
+            </div>
+
             {hardNoBet ? (
               <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
                 <div className="font-bold">NO BET sugerido</div>
