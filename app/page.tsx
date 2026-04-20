@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 
 type MatchStage =
   | "Liga"
@@ -64,6 +65,7 @@ type MatchInfo = {
 
 type TieContext = {
   esEliminatoria: boolean;
+  esPartidoIda: boolean;
   partidoIdaJugado: boolean;
   idaLocalTeam: string;
   idaVisitanteTeam: string;
@@ -88,6 +90,7 @@ type RefereeInfo = {
   nombre: string;
   promedioAmarillas: string;
   promedioRojas: string;
+  sinConfirmar: boolean;
 };
 
 type PickDecision = "selected" | "discarded" | null;
@@ -99,6 +102,18 @@ type MatchSupportInfo = {
   bigChancesVisit: string;
 };
 
+type HeadToHeadInfo = {
+  played: boolean;
+  fecha: string;
+  anteriorLocal: string;
+  anteriorVisitante: string;
+  golesLocal: number | "";
+  golesVisitante: number | "";
+  cornersTotal: number | "";
+  tarjetasTotal: number | "";
+  notas: string;
+};
+
 type TeamProfile = {
   teamName: string;
   condition: TeamCondition;
@@ -107,6 +122,7 @@ type TeamProfile = {
   style: TeamStyle;
   idealMarkets: string;
   notes: string;
+  favorite?: boolean;
   rows: TeamRow[];
   savedAt: string;
 };
@@ -116,6 +132,7 @@ type TeamMeta = {
   style: TeamStyle;
   idealMarkets: string;
   notes: string;
+  favorite: boolean;
 };
 
 type SavedReferee = {
@@ -157,6 +174,10 @@ type SuggestedPick = {
   implied: number;
   risk: RiskLevel;
   reason: string;
+  realConfidence: number;
+  tier: "Top" | "Alternativo" | "Agresivo";
+  marketPriority: number;
+  fallback: boolean;
 };
 
 type StatSummary = {
@@ -338,6 +359,7 @@ function emptyMatchInfo(): MatchInfo {
 function emptyTieContext(): TieContext {
   return {
     esEliminatoria: false,
+    esPartidoIda: false,
     partidoIdaJugado: false,
     idaLocalTeam: "",
     idaVisitanteTeam: "",
@@ -364,6 +386,7 @@ function emptyReferee(): RefereeInfo {
     nombre: "",
     promedioAmarillas: "",
     promedioRojas: "",
+    sinConfirmar: false,
   };
 }
 
@@ -372,6 +395,7 @@ function emptyTeamMeta(): TeamMeta {
     style: "Mixto",
     idealMarkets: "",
     notes: "",
+    favorite: false,
   };
 }
 
@@ -422,6 +446,72 @@ function createEmptyMatchSupportInfo(): MatchSupportInfo {
     bigChancesLocal: "",
     bigChancesVisit: "",
   };
+}
+
+function emptyHeadToHeadInfo(): HeadToHeadInfo {
+  return {
+    played: false,
+    fecha: "",
+    anteriorLocal: "",
+    anteriorVisitante: "",
+    golesLocal: "",
+    golesVisitante: "",
+    cornersTotal: "",
+    tarjetasTotal: "",
+    notas: "",
+  };
+}
+
+function resultLabelFromScore(local: number, visit: number, localName: string, visitName: string) {
+  if (local > visit) return `${localName} ganó`;
+  if (visit > local) return `${visitName} ganó`;
+  return "Empataron";
+}
+
+function compareDirection(actual: number, expected: number, label: string) {
+  const diff = actual - expected;
+  if (Math.abs(diff) < 0.35) return `${label} muy alineado con la proyección actual.`;
+  if (diff > 0) return `${label} por encima de lo que hoy espera la IA.`;
+  return `${label} por debajo de lo que hoy espera la IA.`;
+}
+
+function buildTrendSnapshot(rows: TeamRow[]) {
+  const valid = rows.filter((r) => r.rival.trim() || r.gf !== "" || r.gc !== "" || r.xg !== "" || r.shots !== "" || r.ownCorners !== "");
+  const recent = valid.slice(0, 5);
+  const older = valid.slice(5, 10);
+  const pack = (set: TeamRow[]) => ({
+    goalsFor: avg(set.map((r) => toNumber(r.gf))),
+    goalsAgainst: avg(set.map((r) => toNumber(r.gc))),
+    xg: avg(set.map((r) => toNumber(r.xg))),
+    shots: avg(set.map((r) => toNumber(r.shots))),
+    corners: avg(set.map((r) => toNumber(r.ownCorners))),
+    pointsRate: avg(set.map((r) => r.estado === "G" ? 3 : r.estado === "E" ? 1 : 0)),
+  });
+  return { recent: pack(recent), older: pack(older), recentCount: recent.length, olderCount: older.length };
+}
+
+function buildImprovementText(teamName: string, trend: ReturnType<typeof buildTrendSnapshot>) {
+  if (trend.recentCount < 3 || trend.olderCount < 3) return `${teamName} aún no tiene suficiente muestra para medir mejora real.`;
+  const attackDiff = trend.recent.xg - trend.older.xg;
+  const defenseDiff = trend.older.goalsAgainst - trend.recent.goalsAgainst;
+  const pointsDiff = trend.recent.pointsRate - trend.older.pointsRate;
+  const shotsDiff = trend.recent.shots - trend.older.shots;
+
+  const notes: string[] = [];
+  if (attackDiff >= 0.2) notes.push("llega generando más peligro");
+  else if (attackDiff <= -0.2) notes.push("ha bajado su producción ofensiva");
+
+  if (defenseDiff >= 0.2) notes.push("defiende mejor que antes");
+  else if (defenseDiff <= -0.2) notes.push("está concediendo más de lo ideal");
+
+  if (shotsDiff >= 1.5) notes.push("remata con más frecuencia");
+  else if (shotsDiff <= -1.5) notes.push("remata menos que en su tramo anterior");
+
+  if (pointsDiff >= 0.35) notes.push("sus resultados recientes son mejores");
+  else if (pointsDiff <= -0.35) notes.push("sus resultados recientes se enfriaron");
+
+  if (!notes.length) return `${teamName} llega bastante estable, sin cambio fuerte frente a su tramo anterior.`;
+  return `${teamName} ${notes.join(", ")}.`;
 }
 
 function decoratePickLabel(label: string, family: MarketFamily, side: "local" | "visitante" | "total" | undefined, local: string, visitante: string) {
@@ -681,6 +771,137 @@ function getMarketFamilyLabel(family: MarketFamily) {
 }
 
 
+function classifyMatchType(params: {
+  expectedTotalShots: number;
+  expectedTotalShotsOnTarget: number;
+  expectedGoalsLocal: number;
+  expectedGoalsVisit: number;
+  expectedTotalGoals: number;
+}) {
+  const {
+    expectedTotalShots,
+    expectedTotalShotsOnTarget,
+    expectedGoalsLocal,
+    expectedGoalsVisit,
+    expectedTotalGoals,
+  } = params;
+
+  const goalGap = Math.abs(expectedGoalsLocal - expectedGoalsVisit);
+
+  if (expectedTotalShots >= 25 && expectedTotalShotsOnTarget >= 8) {
+    return {
+      label: "Partido abierto",
+      description: "Mucho volumen ofensivo y ritmo alto. Favorece overs y BTTS.",
+    };
+  }
+
+  if (expectedTotalShots <= 14 && expectedTotalShotsOnTarget <= 4 && expectedTotalGoals <= 2.2) {
+    return {
+      label: "Partido cerrado",
+      description: "Poco ritmo, poca llegada y más valor en unders o no bet.",
+    };
+  }
+
+  if (goalGap >= 0.8) {
+    return {
+      label: "Partido desigual",
+      description: "Hay ventaja clara de un lado. Favorece ganador o goles por equipo.",
+    };
+  }
+
+  return {
+    label: "Partido equilibrado",
+    description: "Choque más parejo. Conviene evitar 1x2 agresivo.",
+  };
+}
+
+function getMarketPriority(
+  family: MarketFamily,
+  localTags: string[],
+  visitTags: string[],
+  matchTypeLabel: string
+) {
+  const tags = [...localTags, ...visitTags].join(" ").toLowerCase();
+  let score = 0;
+
+  if (family === "goals" || family === "teamGoals" || family === "btts" || family === "halftimeGoals") {
+    if (tags.includes("goleador")) score += 18;
+    if (tags.includes("recibe goles")) score += 14;
+    if (matchTypeLabel === "Partido abierto") score += 14;
+    if (matchTypeLabel === "Partido cerrado") score -= 12;
+  }
+
+  if (family === "corners") {
+    if (tags.includes("alto en corners")) score += 20;
+    if (tags.includes("bajo en corners")) score -= 10;
+  }
+
+  if (family === "cards") {
+    if (tags.includes("alto en tarjetas")) score += 18;
+    if (tags.includes("bajo en tarjetas")) score -= 18;
+  }
+
+  if (family === "result" || family === "doubleChance") {
+    if (tags.includes("gana constante")) score += 12;
+    if (tags.includes("pierde seguido")) score += 8;
+    if (matchTypeLabel === "Partido equilibrado") score -= 12;
+    if (matchTypeLabel === "Partido desigual") score += 10;
+  }
+
+  if (family === "shots" || family === "shotsOnTarget") {
+    if (tags.includes("remata con frecuencia")) score += 16;
+    if (tags.includes("conservador")) score -= 10;
+  }
+
+  return score;
+}
+
+function getRealConfidence(probability: number, qualityScore: number, volatilityLabel: string, edge: number) {
+  const qualityFactor = qualityScore / 100;
+  const volatilityFactor = volatilityLabel === "Alta" ? 0.76 : volatilityLabel === "Media" ? 0.9 : 1;
+  const edgeFactor = edge >= 10 ? 1.08 : edge >= 6 ? 1.03 : 0.96;
+  return clamp(probability * qualityFactor * volatilityFactor * edgeFactor, 0, 100);
+}
+
+function getTier(realConfidence: number, edge: number): "Top" | "Alternativo" | "Agresivo" {
+  if (realConfidence >= 67 && edge >= 6) return "Top";
+  if (realConfidence >= 58 && edge >= 4) return "Alternativo";
+  return "Agresivo";
+}
+
+function getTeamLogoPath(teamName: string) {
+  const slug = slugify(teamName || "team");
+  const aliases: Record<string, string> = {
+    psg: "paris-saint-germain",
+    "paris-sg": "paris-saint-germain",
+    "paris-saint-germain": "paris-saint-germain",
+    "paris-saint-germain-fc": "paris-saint-germain",
+    "olympique-lyonnais": "lyon",
+    "olympique-lyon": "lyon",
+    "man-utd": "manchester-united",
+    "man-city": "manchester-city",
+    "atletico-madrid": "atletico-de-madrid",
+    "atletico-de-madrid": "atletico-de-madrid",
+    inter: "inter-milan",
+    "internazionale": "inter-milan",
+  };
+
+  return `/teams/${aliases[slug] || slug}.png`;
+}
+
+function getOptionalBgPath(name: string) {
+  return `/${slugify(name || "match")}-bg.jpg`;
+}
+
+function getOptionalMatchBgPath(local: string, visitante: string) {
+  return `/${slugify(local || "local")}-vs-${slugify(visitante || "visitante")}.jpg`;
+}
+
+function buildFallbackReason(reason: string) {
+  return `${reason} · Pick de respaldo: el partido no dio una señal top, pero sí una lectura utilizable.`;
+}
+
+
 function buildTeamTags(stats: StatSummary): string[] {
   if (!stats.count) return [];
   const tags: string[] = [];
@@ -698,6 +919,36 @@ function buildTeamTags(stats: StatSummary): string[] {
   if (stats.shotsWeighted <= 8.5 && stats.totalGoalsWeighted <= 2.2) tags.push("Conservador");
   if (stats.noLosePct >= 70) tags.push("No pierde fácil");
   return tags;
+}
+
+
+function getCategoryScore(category: string, stats: StatSummary) {
+  switch (category) {
+    case "Ganador":
+      return stats.winPct + stats.noLosePct * 0.35;
+    case "Empate":
+      return stats.drawPct;
+    case "Pierde":
+      return stats.lossPct;
+    case "Goleador":
+      return stats.gfAvg * 18 + stats.xgWeighted * 16;
+    case "Recibe goles":
+      return stats.gcAvg * 18 + stats.xgAgainstWeighted * 14;
+    case "Corners":
+      return stats.totalCornersWeighted * 8 + stats.ownCornersAvg * 6;
+    case "Tarjetas":
+      return stats.totalCardsWeighted * 10;
+    case "Remates":
+      return stats.shotsWeighted * 7;
+    case "A puerta":
+      return stats.shotsOnTargetWeighted * 15;
+    default:
+      return 0;
+  }
+}
+
+function topThreeTags(tags: string[]) {
+  return tags.slice(0, 3);
 }
 
 function tagClass(tag: string) {
@@ -812,6 +1063,8 @@ export default function Page() {
   const [minProb, setMinProb] = useState(56);
   const [pickDecisions, setPickDecisions] = useState<Record<string, PickDecision>>({});
   const [matchSupportInfo, setMatchSupportInfo] = useState<MatchSupportInfo>(createEmptyMatchSupportInfo());
+  const [headToHeadInfo, setHeadToHeadInfo] = useState<HeadToHeadInfo>(emptyHeadToHeadInfo());
+  const [savedPresets, setSavedPresets] = useState<string[]>([]);
 
 const resetAll = () => {
   if (!window.confirm("¿Seguro que quieres limpiar todo el partido actual?")) return;
@@ -828,6 +1081,7 @@ const resetAll = () => {
   setMarketLines([]);
   setPickDecisions({});
   setMatchSupportInfo(createEmptyMatchSupportInfo());
+  setHeadToHeadInfo(emptyHeadToHeadInfo());
 
   setMinProb(56);
   setMinEdge(3);
@@ -836,6 +1090,7 @@ const resetAll = () => {
   useEffect(() => {
     setSavedTeams(safeParse(localStorage.getItem(TEAM_STORAGE_KEY), []));
     setSavedRefs(safeParse(localStorage.getItem(REF_STORAGE_KEY), []));
+    setSavedPresets(Object.keys(safeParse<Record<string, MarketLine[]>>(localStorage.getItem(MARKET_STORAGE_KEY), {})));
 
     const draft = safeParse<{
       matchInfo: MatchInfo;
@@ -850,21 +1105,23 @@ const resetAll = () => {
       minProb: number;
       pickDecisions: Record<string, PickDecision>;
       matchSupportInfo: MatchSupportInfo;
+      headToHeadInfo: HeadToHeadInfo;
     } | null>(localStorage.getItem(DRAFT_STORAGE_KEY), null);
 
     if (draft) {
       setMatchInfo(draft.matchInfo ?? emptyMatchInfo());
-      setTieContext(draft.tieContext ?? emptyTieContext());
-      setRefInfo(draft.refInfo ?? emptyReferee());
+      setTieContext({ ...emptyTieContext(), ...(draft.tieContext ?? {}) });
+      setRefInfo({ ...emptyReferee(), ...(draft.refInfo ?? {}) });
       setLocalRows(draft.localRows ?? createEmptyRows());
       setVisitRows(draft.visitRows ?? createEmptyRows());
-      setLocalMeta(draft.localMeta ?? emptyTeamMeta());
-      setVisitMeta(draft.visitMeta ?? emptyTeamMeta());
+      setLocalMeta({ ...emptyTeamMeta(), ...(draft.localMeta ?? {}) });
+      setVisitMeta({ ...emptyTeamMeta(), ...(draft.visitMeta ?? {}) });
       setMarketLines(draft.marketLines ?? []);
       setMinEdge(draft.minEdge ?? 3);
       setMinProb(draft.minProb ?? 56);
       setPickDecisions(draft.pickDecisions ?? {});
       setMatchSupportInfo(draft.matchSupportInfo ?? createEmptyMatchSupportInfo());
+      setHeadToHeadInfo(draft.headToHeadInfo ?? emptyHeadToHeadInfo());
     } else {
       setMarketLines(buildDefaultMarketLines());
     }
@@ -886,9 +1143,10 @@ const resetAll = () => {
         minProb,
         pickDecisions,
         matchSupportInfo,
+        headToHeadInfo,
       })
     );
-  }, [matchInfo, tieContext, refInfo, localRows, visitRows, localMeta, visitMeta, marketLines, minEdge, minProb, pickDecisions, matchSupportInfo]);
+  }, [matchInfo, tieContext, refInfo, localRows, visitRows, localMeta, visitMeta, marketLines, minEdge, minProb, pickDecisions, matchSupportInfo, headToHeadInfo]);
 
   const localStats = useMemo(() => analyzeRows(localRows), [localRows]);
   const visitStats = useMemo(() => analyzeRows(visitRows), [visitRows]);
@@ -900,7 +1158,7 @@ const resetAll = () => {
     const freshness = avg([localStats.freshnessScore, visitStats.freshnessScore]);
     const shotCoverage = [localStats.shotsWeighted, visitStats.shotsWeighted, localStats.shotsOnTargetWeighted, visitStats.shotsOnTargetWeighted].filter((v) => v > 0).length;
     const shotsScore = shotCoverage >= 4 ? 100 : shotCoverage >= 2 ? 70 : 40;
-    const refereeScore = refInfo.nombre.trim() && refInfo.promedioAmarillas !== "" ? 100 : 55;
+    const refereeScore = refInfo.sinConfirmar ? 70 : refInfo.nombre.trim() && refInfo.promedioAmarillas !== "" ? 100 : 55;
     return clamp(sampleScore * 0.35 + freshness * 0.3 + shotsScore * 0.2 + refereeScore * 0.15, 0, 100);
   }, [localStats, visitStats, refInfo]);
 
@@ -931,19 +1189,29 @@ const resetAll = () => {
   }, [visitStats, localStats, matchInfo.posicionLocal, matchInfo.posicionVisitante, tieContext.necesidadVisitante, tieContext.necesidadLocal]);
 
   const expectedTotalGoals = expectedGoalsLocal + expectedGoalsVisit;
+  const expectedTotalShots = clamp(localStats.shotsWeighted * 0.55 + visitStats.shotsWeighted * 0.55, 8, 35);
   const expectedTotalCorners = useMemo(() => {
-    const base = localStats.totalCornersWeighted * 0.5 + visitStats.totalCornersWeighted * 0.5;
-    const needBoost = (tieContext.necesidadLocal === "Alta" ? 0.35 : 0) + (tieContext.necesidadVisitante === "Alta" ? 0.35 : 0);
-    return clamp(base + needBoost, 4.5, 15);
-  }, [localStats.totalCornersWeighted, visitStats.totalCornersWeighted, tieContext.necesidadLocal, tieContext.necesidadVisitante]);
+    const production = localStats.ownCornersAvg * 0.34 + visitStats.ownCornersAvg * 0.34;
+    const concession = localStats.oppCornersAvg * 0.16 + visitStats.oppCornersAvg * 0.16;
+    const tempoPenalty = expectedTotalShots < 18 ? 0.45 : 0;
+    const needBoost = (tieContext.necesidadLocal === "Alta" ? 0.18 : 0) + (tieContext.necesidadVisitante === "Alta" ? 0.18 : 0);
+    return clamp(production + concession + needBoost - tempoPenalty, 4.5, 12.5);
+  }, [
+    localStats.ownCornersAvg,
+    visitStats.ownCornersAvg,
+    localStats.oppCornersAvg,
+    visitStats.oppCornersAvg,
+    tieContext.necesidadLocal,
+    tieContext.necesidadVisitante,
+    expectedTotalShots,
+  ]);
 
   const expectedTotalCards = useMemo(() => {
-    const refBoost = refInfo.promedioAmarillas === "" ? 0 : Number(refInfo.promedioAmarillas) * 0.4;
+    const refBoost = refInfo.sinConfirmar || refInfo.promedioAmarillas === "" ? 0 : Number(refInfo.promedioAmarillas) * 0.4;
     const intensityBoost = tieContext.esEliminatoria ? 0.45 : 0;
     return clamp(localStats.totalCardsWeighted * 0.5 + visitStats.totalCardsWeighted * 0.5 + refBoost * 0.35 + intensityBoost, 1.5, 9);
   }, [localStats.totalCardsWeighted, visitStats.totalCardsWeighted, refInfo.promedioAmarillas, tieContext.esEliminatoria]);
 
-  const expectedTotalShots = clamp(localStats.shotsWeighted * 0.55 + visitStats.shotsWeighted * 0.55, 8, 35);
   const expectedTotalShotsOnTarget = clamp(localStats.shotsOnTargetWeighted * 0.55 + visitStats.shotsOnTargetWeighted * 0.55, 2, 14);
   const expectedLocalTeamGoals = clamp(expectedGoalsLocal, 0.1, 4);
   const expectedVisitTeamGoals = clamp(expectedGoalsVisit, 0.1, 4);
@@ -1104,23 +1372,139 @@ const resetAll = () => {
     };
   }, [tieContext, matchInfo.local, matchInfo.visitante]);
 
+  const matchTypeInfo = useMemo(() => {
+    return classifyMatchType({
+      expectedTotalShots,
+      expectedTotalShotsOnTarget,
+      expectedGoalsLocal,
+      expectedGoalsVisit,
+      expectedTotalGoals,
+    });
+  }, [expectedTotalShots, expectedTotalShotsOnTarget, expectedGoalsLocal, expectedGoalsVisit, expectedTotalGoals]);
+
   const noBetReasons = useMemo(() => {
     const reasons: string[] = [];
     if (qualityScore < 62) reasons.push("La calidad de datos es baja.");
     if (volatilityLabel === "Alta" && Math.max(simulation.localWin, simulation.awayWin) < 58) reasons.push("La volatilidad es alta y no hay dominador claro.");
     if (simulation.draw >= 31) reasons.push("El empate está demasiado alto.");
     if (marketLines.filter((m) => m.enabled && m.odd !== "").length === 0) reasons.push("No has cargado líneas reales de la casa.");
+    if (matchTypeInfo.label === "Partido equilibrado" && simulation.draw >= 28) reasons.push("El partido se ve demasiado parejo para entrar fuerte a ganador.");
+    if (matchTypeInfo.label === "Partido cerrado" && expectedTotalGoals <= 2.1 && expectedTotalShotsOnTarget <= 4.5) reasons.push("El ritmo ofensivo es demasiado bajo.");
     return reasons;
-  }, [qualityScore, volatilityLabel, simulation.draw, marketLines]);
+  }, [qualityScore, volatilityLabel, simulation.localWin, simulation.awayWin, simulation.draw, marketLines, matchTypeInfo, expectedTotalGoals, expectedTotalShotsOnTarget]);
+
+  const hardNoBet = noBetReasons.length >= 3;
+
+  const localTrend = useMemo(() => buildTrendSnapshot(localRows), [localRows]);
+  const visitTrend = useMemo(() => buildTrendSnapshot(visitRows), [visitRows]);
+
+  const headToHeadAnalysis = useMemo(() => {
+    if (!headToHeadInfo.played || headToHeadInfo.golesLocal === "" || headToHeadInfo.golesVisitante === "") {
+      return {
+        available: false,
+        previousWinner: "Sin duelo cargado",
+        projectedWinner: simulation.localWin > simulation.awayWin + 6
+          ? `${matchInfo.local || "Local"} perfila mejor hoy`
+          : simulation.awayWin > simulation.localWin + 6
+          ? `${matchInfo.visitante || "Visitante"} perfila mejor hoy`
+          : "Hoy el modelo ve choque parejo",
+        previousGoals: 0,
+        previousCorners: 0,
+        previousCards: 0,
+        goalsText: "Carga un duelo anterior para comparar goles.",
+        cornersText: "Carga un duelo anterior para comparar corners.",
+        cardsText: "Carga un duelo anterior para comparar tarjetas.",
+        outcomeText: "Aquí se comparará el ganador anterior contra la lectura actual.",
+        improvementTextLocal: buildImprovementText(matchInfo.local || "Local", localTrend),
+        improvementTextVisit: buildImprovementText(matchInfo.visitante || "Visitante", visitTrend),
+        prepText: "La preparación se leerá según forma reciente, xG, tiros y resultados de cada tramo.",
+      };
+    }
+
+    const prevLocal = Number(headToHeadInfo.golesLocal);
+    const prevVisit = Number(headToHeadInfo.golesVisitante);
+    const previousGoals = prevLocal + prevVisit;
+    const previousCorners = headToHeadInfo.cornersTotal === "" ? 0 : Number(headToHeadInfo.cornersTotal);
+    const previousCards = headToHeadInfo.tarjetasTotal === "" ? 0 : Number(headToHeadInfo.tarjetasTotal);
+    const previousWinner = resultLabelFromScore(prevLocal, prevVisit, headToHeadInfo.anteriorLocal || "Local", headToHeadInfo.anteriorVisitante || "Visitante");
+
+    const projectedWinner = simulation.localWin > simulation.awayWin + 6
+      ? `${matchInfo.local || "Local"} gana el próximo duelo en la lectura IA`
+      : simulation.awayWin > simulation.localWin + 6
+      ? `${matchInfo.visitante || "Visitante"} gana el próximo duelo en la lectura IA`
+      : "La IA ve un partido mucho más equilibrado ahora";
+
+    const outcomeText = (() => {
+      const sameLocal = headToHeadInfo.anteriorLocal.trim().toLowerCase() === (matchInfo.local || "").trim().toLowerCase();
+      const sameVisit = headToHeadInfo.anteriorVisitante.trim().toLowerCase() === (matchInfo.visitante || "").trim().toLowerCase();
+      if (!sameLocal || !sameVisit) return "El último duelo cargado tiene local/visitante invertido o distinto, úsalo solo como referencia contextual.";
+      if (prevLocal > prevVisit && simulation.localWin >= simulation.awayWin) return `${matchInfo.local || "Local"} ganó el duelo anterior y también llega mejor parado hoy.`;
+      if (prevVisit > prevLocal && simulation.awayWin >= simulation.localWin) return `${matchInfo.visitante || "Visitante"} ganó el duelo anterior y vuelve a sostener ventaja en la proyección.`;
+      if (prevLocal > prevVisit && simulation.awayWin > simulation.localWin + 4) return `${matchInfo.local || "Local"} ganó antes, pero hoy la lectura se mueve hacia ${matchInfo.visitante || "Visitante"}.`;
+      if (prevVisit > prevLocal && simulation.localWin > simulation.awayWin + 4) return `${matchInfo.visitante || "Visitante"} ganó antes, pero hoy la lectura se mueve hacia ${matchInfo.local || "Local"}.`;
+      return "El antecedente y la proyección actual no se alinean del todo; cuidado con sobrevalorar el choque previo.";
+    })();
+
+    const localImprove = buildImprovementText(matchInfo.local || "Local", localTrend);
+    const visitImprove = buildImprovementText(matchInfo.visitante || "Visitante", visitTrend);
+    const prepText = (() => {
+      const localMomentum = localTrend.recent.pointsRate - localTrend.older.pointsRate;
+      const visitMomentum = visitTrend.recent.pointsRate - visitTrend.older.pointsRate;
+      if (localMomentum >= 0.35 && visitMomentum <= -0.2) return `${matchInfo.local || "Local"} parece llegar mejor preparado por forma y resultados recientes.`;
+      if (visitMomentum >= 0.35 && localMomentum <= -0.2) return `${matchInfo.visitante || "Visitante"} parece llegar mejor preparado por forma y resultados recientes.`;
+      if (localTrend.recent.xg > visitTrend.recent.xg + 0.25 && localTrend.recent.shots > visitTrend.recent.shots + 1.5) return `${matchInfo.local || "Local"} llega con mejor preparación ofensiva en su tramo reciente.`;
+      if (visitTrend.recent.xg > localTrend.recent.xg + 0.25 && visitTrend.recent.shots > localTrend.recent.shots + 1.5) return `${matchInfo.visitante || "Visitante"} llega con mejor preparación ofensiva en su tramo reciente.`;
+      return "Ambos llegan con preparación relativamente pareja; pesa más la lectura del partido actual que el recuerdo del choque anterior.";
+    })();
+
+    return {
+      available: true,
+      previousWinner,
+      projectedWinner,
+      previousGoals,
+      previousCorners,
+      previousCards,
+      goalsText: compareDirection(previousGoals, expectedTotalGoals, `El duelo anterior dejó ${previousGoals} goles`),
+      cornersText: previousCorners ? compareDirection(previousCorners, expectedTotalCorners, `El duelo anterior dejó ${previousCorners} corners`) : "No cargaste corners del duelo anterior.",
+      cardsText: previousCards ? compareDirection(previousCards, expectedTotalCards, `El duelo anterior dejó ${previousCards} tarjetas`) : "No cargaste tarjetas del duelo anterior.",
+      outcomeText,
+      improvementTextLocal: localImprove,
+      improvementTextVisit: visitImprove,
+      prepText,
+    };
+  }, [headToHeadInfo, simulation.localWin, simulation.awayWin, matchInfo.local, matchInfo.visitante, localTrend, visitTrend, expectedTotalGoals, expectedTotalCorners, expectedTotalCards]);
 
   const suggestedPicks = useMemo(() => {
+    if (hardNoBet) return [];
+
     const candidates: SuggestedPick[] = [];
 
     function addCandidate(line: MarketLine, probability: number, reason: string) {
       const implied = impliedProb(line.odd);
       const edge = probability - implied;
       if (line.odd === "" || !line.enabled) return;
-      if (probability < minProb || edge < minEdge) return;
+
+      const normalizedLabel = line.label.toLowerCase();
+      if (normalizedLabel.includes("más de 0.5 goles")) return;
+      if (normalizedLabel.includes("menos de 5.5 goles")) return;
+      if (normalizedLabel.includes("menos de 4.5 goles") && matchTypeInfo.label === "Partido abierto") return;
+
+      const primaryMinProb = minProb;
+      const primaryMinEdge = minEdge;
+      const fallbackMinProb = Math.max(53, minProb - 3);
+      const fallbackMinEdge = Math.max(2, minEdge - 1.5);
+      const passesPrimary = probability >= primaryMinProb && edge >= primaryMinEdge;
+      const passesFallback = probability >= fallbackMinProb && edge >= fallbackMinEdge;
+
+      if (!passesFallback) return;
+
+      const marketPriority = getMarketPriority(line.family, localTags, visitTags, matchTypeInfo.label);
+      const realConfidence = getRealConfidence(probability, qualityScore, volatilityLabel, edge);
+      const fallback = !passesPrimary;
+      const tier = fallback ? "Alternativo" : getTier(realConfidence, edge);
+
+      if ((!fallback && realConfidence < 54) || (fallback && realConfidence < 50)) return;
+
       candidates.push({
         id: line.id,
         label: decoratePickLabel(line.label, line.family, line.side, matchInfo.local, matchInfo.visitante),
@@ -1129,7 +1513,11 @@ const resetAll = () => {
         edge,
         implied,
         risk: riskByProbability(probability),
-        reason,
+        reason: fallback ? buildFallbackReason(reason) : reason,
+        realConfidence,
+        tier,
+        marketPriority,
+        fallback,
       });
     }
 
@@ -1169,8 +1557,7 @@ const resetAll = () => {
       visitStats.shotsWeighted <= 6 ||
       visitStats.shotsOnTargetWeighted <= 1.8;
 
-    const oneSideDeadProfile =
-      localDeadAttackProfile || visitDeadAttackProfile;
+    const oneSideDeadProfile = localDeadAttackProfile || visitDeadAttackProfile;
 
     const bothTeamsActiveProfile =
       localStats.shotsWeighted >= 7 &&
@@ -1189,7 +1576,6 @@ const resetAll = () => {
     const hardUnderBlockProfile =
       (expectedTotalShotsOnTarget >= 7 && expectedTotalShots >= 14) ||
       (dynamicOpenProfile && shotBoostInfo.adjustedGoals >= 2.35);
-
 
     for (const line of marketLines) {
       if (!line.enabled) continue;
@@ -1225,90 +1611,81 @@ const resetAll = () => {
 
         if (line.direction === "under" && hardUnderBlockProfile && numericLine <= 1.5) {
           probability -= 42;
-          reason = `Under bloqueado: el volumen esperado de disparos y remates a puerta no encaja con un partido de menos de 1.5 goles.`;
+          reason = "Under bloqueado: el volumen ofensivo no encaja con un partido tan corto.";
         } else if (line.direction === "under" && dynamicOpenProfile && numericLine <= 2.5) {
           probability -= 22;
-          reason = `Under castigado: el partido proyecta demasiada actividad ofensiva para una línea tan corta.`;
-        } else if (line.direction === "under" && dynamicOpenProfile && numericLine <= 4.5) {
-          probability -= 8;
-          reason = `Under moderado: hay señales ofensivas que reducen valor en líneas bajas.`;
-        } else if (openGameProfile && line.direction === "over" && numericLine === 0.5) {
-          probability -= 9;
-          reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados con boost de ritmo ofensivo, pero +0.5 se relega a pick base.`;
+          reason = "Under castigado: el partido proyecta demasiada actividad ofensiva.";
         } else if ((usefulGoalsProfile || dynamicOpenProfile) && line.direction === "over" && numericLine === 1.5) {
           probability += 22;
-          reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados y el partido perfila over útil.`;
+          reason = `Over útil reforzado con ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados.`;
         } else if ((usefulGoalsProfile || dynamicOpenProfile) && line.direction === "over" && numericLine === 2.5) {
           probability += 18;
-          reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados con señales de partido abierto.`;
+          reason = `Over 2.5 reforzado por ritmo ofensivo y ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados.`;
         } else if ((strongOpenGoalsProfile || dynamicOpenProfile) && line.direction === "over" && numericLine === 3.5) {
           probability += 10;
-          reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados con perfil fuerte de over.`;
+          reason = `Perfil fuerte de over con ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados.`;
         } else {
-          reason = `La línea real de goles se recalculó sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} goles esperados${shotBoostInfo.active ? " con boost de ritmo ofensivo" : ""}.`;
+          reason = `Goles recalculados sobre ${shotBoostInfo.adjustedGoals.toFixed(2)} esperados.`;
         }
+
         if (oneSideDeadProfile && line.direction === "over" && numericLine === 1.5) {
-  probability -= 14;
-  reason = "Over castigado: uno de los equipos proyecta muy poco ataque.";
-}
-
-if (oneSideDeadProfile && line.direction === "over" && numericLine === 2.5) {
-  probability -= 20;
-  reason = "Over castigado fuerte: un equipo casi no genera volumen ofensivo.";
-}
-
-if (oneSideDeadProfile && line.direction === "under" && numericLine === 2.5) {
-  probability += 14;
-  reason = "Under reforzado: uno de los equipos proyecta producción ofensiva muy baja.";
-}
-
-if (oneSideDeadProfile && line.direction === "under" && numericLine === 3.5) {
-  probability += 10;
-  reason = "Under reforzado: el partido no perfila intercambio ofensivo real.";
-}
+          probability -= 14;
+          reason = "Over castigado: uno de los equipos proyecta muy poco ataque.";
+        }
+        if (oneSideDeadProfile && line.direction === "over" && numericLine === 2.5) {
+          probability -= 20;
+          reason = "Over castigado fuerte: un equipo casi no genera volumen ofensivo.";
+        }
+        if (oneSideDeadProfile && line.direction === "under" && numericLine === 2.5) {
+          probability += 14;
+          reason = "Under reforzado: uno de los equipos proyecta producción ofensiva muy baja.";
+        }
+        if (oneSideDeadProfile && line.direction === "under" && numericLine === 3.5) {
+          probability += 10;
+          reason = "Under reforzado: el partido no perfila intercambio ofensivo real.";
+        }
       }
-
-
 
       if (line.family === "halftimeGoals" && line.line !== "" && line.direction) {
         const numericLine = toNumber(line.line);
+        const halftimeLambda = clamp(expectedHalftimeGoals + shotBoostInfo.total * 0.42, 0.05, 3.6);
         probability =
           line.direction === "over"
-            ? probabilityFromLambdaOver(clamp(expectedHalftimeGoals + shotBoostInfo.total * 0.42, 0.05, 3.6), numericLine)
-            : probabilityFromLambdaUnder(clamp(expectedHalftimeGoals + shotBoostInfo.total * 0.42, 0.05, 3.6), numericLine);
-        reason = `La primera mitad proyecta ${clamp(expectedHalftimeGoals + shotBoostInfo.total * 0.42, 0.05, 3.6).toFixed(2)} goles${shotBoostInfo.active ? " con ajuste de ritmo" : ""}.`;
+            ? probabilityFromLambdaOver(halftimeLambda, numericLine)
+            : probabilityFromLambdaUnder(halftimeLambda, numericLine);
+        reason = `La primera mitad proyecta ${halftimeLambda.toFixed(2)} goles.`;
       }
 
-if (line.family === "btts") {
-  probability = line.direction === "yes"
-    ? clamp(
-        simulation.btts +
-          shotBoostInfo.total * 12 +
-          shotBoostInfo.bttsBoost +
-          (strongOpenGoalsProfile ? 10 : 0) +
-          (usefulGoalsProfile ? 6 : 0) +
-          (dynamicOpenProfile ? 8 : 0) +
-          (oneSideDeadProfile ? -20 : 0) +
-          (bothTeamsActiveProfile ? 8 : 0),
-        0,
-        100
-      )
-    : clamp(
-        (100 - simulation.btts) -
-          shotBoostInfo.total * 12 -
-          shotBoostInfo.bttsBoost -
-          (strongOpenGoalsProfile ? 10 : 0) -
-          (usefulGoalsProfile ? 6 : 0) -
-          (dynamicOpenProfile ? 8 : 0) +
-          (oneSideDeadProfile ? 20 : 0),
-        0,
-        100
-      );
+      if (line.family === "btts") {
+        probability = line.direction === "yes"
+          ? clamp(
+              simulation.btts +
+                shotBoostInfo.total * 12 +
+                shotBoostInfo.bttsBoost +
+                (strongOpenGoalsProfile ? 10 : 0) +
+                (usefulGoalsProfile ? 6 : 0) +
+                (dynamicOpenProfile ? 8 : 0) +
+                (oneSideDeadProfile ? -20 : 0) +
+                (bothTeamsActiveProfile ? 8 : 0),
+              0,
+              100
+            )
+          : clamp(
+              (100 - simulation.btts) -
+                shotBoostInfo.total * 12 -
+                shotBoostInfo.bttsBoost -
+                (strongOpenGoalsProfile ? 10 : 0) -
+                (usefulGoalsProfile ? 6 : 0) -
+                (dynamicOpenProfile ? 8 : 0) +
+                (oneSideDeadProfile ? 20 : 0),
+              0,
+              100
+            );
 
-  reason = oneSideDeadProfile
-    ? "BTTS ajustado: un equipo proyecta muy poca producción ofensiva."
-    : `BTTS calculado con la simulación base${shotBoostInfo.active ? " y boost de ritmo ofensivo" : ""}.`;
-}
+        reason = oneSideDeadProfile
+          ? "BTTS ajustado: un equipo proyecta muy poca producción ofensiva."
+          : "BTTS calculado con simulación y ritmo ofensivo.";
+      }
 
       if (line.family === "corners" && line.line !== "" && (line.direction === "over" || line.direction === "under")) {
         const numericLine = toNumber(line.line);
@@ -1316,8 +1693,7 @@ if (line.family === "btts") {
         if (expectedTotalShots >= 28 && expectedTotalCorners <= 6.5 && line.direction === "over") probability -= 8;
         if (expectedTotalCorners <= 6.2 && line.direction === "under") probability += 6;
         if (openGameProfile && expectedTotalCorners >= 8.7 && line.direction === "over") probability += 3;
-        if (usefulGoalsProfile && line.direction === "over") probability -= 4;
-        reason = `La casa ofrece ${line.label}; se recalculó con ${expectedTotalCorners.toFixed(2)} corners esperados.`;
+        reason = `Corners recalculados con ${expectedTotalCorners.toFixed(2)} esperados.`;
       }
 
       if (line.family === "cards" && line.line !== "" && (line.direction === "over" || line.direction === "under")) {
@@ -1326,9 +1702,7 @@ if (line.family === "btts") {
         if (lowCardProfile && line.direction === "over") probability -= 34;
         if (lowCardProfile && line.direction === "under") probability += 14;
         if (openGameProfile && expectedTotalCards < 4.8 && line.direction === "over") probability -= 22;
-        if (strongOpenGoalsProfile && line.direction === "over") probability -= 14;
-        if (usefulGoalsProfile && line.direction === "over") probability -= 12;
-        reason = `La línea se recalculó con ${expectedTotalCards.toFixed(2)} tarjetas esperadas y sesgo del árbitro.`;
+        reason = `Tarjetas recalculadas con ${expectedTotalCards.toFixed(2)} esperadas y sesgo arbitral.`;
       }
 
       if (line.family === "shots" && line.line !== "" && (line.direction === "over" || line.direction === "under")) {
@@ -1352,9 +1726,7 @@ if (line.family === "btts") {
             : probabilityFromLambdaUnder(lambda, numericLine);
         if (line.side === "local" && localShotDominance && line.direction === "over") probability += 16;
         if (line.side === "visitante" && visitShotDominance && line.direction === "over") probability += 16;
-        if (strongOpenGoalsProfile && line.direction === "over") probability += 8;
-        if (usefulGoalsProfile && line.direction === "over") probability += 5;
-        reason = `Se recalculó el total de goles del ${line.side === "local" ? "local" : "visitante"} con ${lambda.toFixed(2)} esperados.`;
+        reason = `Total de goles por equipo recalculado con ${lambda.toFixed(2)} esperados.`;
       }
 
       if (qualityScore < 60) probability -= 6;
@@ -1372,46 +1744,52 @@ if (line.family === "btts") {
         if (line.family === "corners" && line.direction === "over") probability += 2;
       }
 
+      const finalIsBettable =
+        qualityScore >= 65 &&
+        !(volatilityLabel === "Alta" && (line.family === "result" || line.family === "doubleChance")) &&
+        !(simulation.draw > 30 && line.family === "result") &&
+        !(oneSideDeadProfile && line.family === "goals" && line.direction === "over");
+
+      if (!finalIsBettable) continue;
+
       addCandidate(line, clamp(probability, 0, 100), reason);
     }
 
-    const bestByFamily = new Map<MarketFamily, SuggestedPick>();
-    for (const pick of candidates.sort((a, b) => b.edge === a.edge ? b.probability - a.probability : b.edge - a.edge)) {
-      const current = bestByFamily.get(pick.family);
-      if (!current || pick.edge > current.edge) bestByFamily.set(pick.family, pick);
+    const uniqueByFamily = new Map<string, SuggestedPick>();
+
+    for (const pick of candidates) {
+      const key = `${pick.family}-${pick.fallback ? "Respaldo" : pick.tier}`;
+      const current = uniqueByFamily.get(key);
+      const score =
+        pick.realConfidence * 1.2 +
+        pick.edge * 1.15 +
+        pick.marketPriority * 0.8 +
+        (pick.tier === "Top" ? 8 : pick.tier === "Alternativo" ? 4 : 0);
+
+      const currentScore = current
+        ? current.realConfidence * 1.2 +
+          current.edge * 1.15 +
+          current.marketPriority * 0.8 +
+          (current.tier === "Top" ? 8 : current.tier === "Alternativo" ? 4 : 0)
+        : -999;
+
+      if (!current || score > currentScore) {
+        uniqueByFamily.set(key, pick);
+      }
     }
 
-    const utilityScore = (pick: SuggestedPick) => {
-      let score = pick.edge * 1.15 + pick.probability * 0.26;
+    const ranked = Array.from(uniqueByFamily.values()).sort((a, b) => {
+      const scoreA = a.realConfidence * 1.25 + a.edge * 1.15 + a.marketPriority * 0.9 - (a.fallback ? 8 : 0);
+      const scoreB = b.realConfidence * 1.25 + b.edge * 1.15 + b.marketPriority * 0.9 - (b.fallback ? 8 : 0);
+      return scoreB - scoreA;
+    });
 
-      if (pick.label.toLowerCase().includes("más de 0.5 goles") && usefulGoalsProfile) score -= 38;
-      if (pick.label.toLowerCase().includes("más de 1.5 goles") && (usefulGoalsProfile || dynamicOpenProfile)) score += 34;
-      if (pick.label.toLowerCase().includes("más de 2.5 goles") && (usefulGoalsProfile || dynamicOpenProfile)) score += 30;
-      if (pick.label.toLowerCase().includes("más de 3.5 goles") && (strongOpenGoalsProfile || dynamicOpenProfile)) score += 16;
-      if (pick.label.toLowerCase().includes("menos de 1.5 goles") && hardUnderBlockProfile) score -= 90;
-      if (pick.label.toLowerCase().includes("menos de 2.5 goles") && dynamicOpenProfile) score -= 45;
-      if (pick.label.toLowerCase().includes("btts sí") && (usefulGoalsProfile || dynamicOpenProfile)) score += 28;
-      if (pick.family === "teamGoals" && (localShotDominance || visitShotDominance)) score += 28;
-      if (pick.family === "result" && dynamicOpenProfile) score -= 28;
-      if (pick.family === "result" && (localShotDominance || visitShotDominance) && !dynamicOpenProfile) score += 18;
-      if (pick.family === "doubleChance" && (localShotDominance || visitShotDominance)) score += 10;
-      if (pick.family === "corners" && usefulGoalsProfile) score -= 8;
-      if (pick.family === "cards" && openGameProfile && expectedTotalCards < 4.8) score -= 60;
-      if (pick.family === "cards" && lowCardProfile) score -= 65;
-      if (pick.label.toLowerCase().includes("btts sí") && oneSideDeadProfile) score -= 35;
-if (pick.label.toLowerCase().includes("btts no") && oneSideDeadProfile) score += 24;
-if (pick.label.toLowerCase().includes("más de 1.5 goles") && oneSideDeadProfile) score -= 18;
-if (pick.label.toLowerCase().includes("más de 2.5 goles") && oneSideDeadProfile) score -= 30;
-if (pick.label.toLowerCase().includes("menos de 2.5 goles") && oneSideDeadProfile) score += 20;
-if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfile) score += 12;
+    const primary = ranked.filter((pick) => !pick.fallback).slice(0, 2);
+    if (primary.length) return primary;
 
-      return score;
-    };
-
-    return Array.from(bestByFamily.values())
-      .sort((a, b) => utilityScore(b) - utilityScore(a))
-      .slice(0, 8);
-  }, [marketLines, minProb, minEdge, simulation, expectedTotalGoals, expectedHalftimeGoals, expectedTotalCorners, expectedTotalCards, expectedTotalShots, expectedTotalShotsOnTarget, expectedLocalTeamGoals, expectedVisitTeamGoals, qualityScore, volatilityLabel, tieContext, shotBoostInfo]);
+    const fallback = ranked.filter((pick) => pick.fallback).slice(0, 1);
+    return fallback;
+  }, [hardNoBet, marketLines, minProb, minEdge, simulation, expectedTotalGoals, expectedHalftimeGoals, expectedTotalCorners, expectedTotalCards, expectedTotalShots, expectedTotalShotsOnTarget, expectedLocalTeamGoals, expectedVisitTeamGoals, qualityScore, volatilityLabel, tieContext, shotBoostInfo, localStats, visitStats, localTags, visitTags, matchTypeInfo, matchInfo.local, matchInfo.visitante]);
 
   const crossSuggestions = useMemo(() => {
     const items: { title: string; explanation: string; picks: string[]; side: "local" | "visitante" | "neutral"; confidence: number }[] = [];
@@ -1550,7 +1928,6 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
 
   const topPick = visiblePicks[0] ?? null;
   const altPick = visiblePicks[1] ?? null;
-  const thirdPick = visiblePicks[2] ?? null;
   const matchDisplayName = `${matchInfo.local.trim() || "Local"} vs ${matchInfo.visitante.trim() || "Visitante"}`;
 
   const selectedPicks = useMemo(
@@ -1672,6 +2049,7 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
       style: meta.style,
       idealMarkets: meta.idealMarkets,
       notes: meta.notes,
+      favorite: meta.favorite,
       rows,
       savedAt: new Date().toISOString(),
     };
@@ -1689,12 +2067,21 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
     if (profile.condition === "local") {
       setMatchInfo((prev) => ({ ...prev, local: profile.teamName, paisLocal: profile.country || prev.paisLocal, liga: prev.liga || profile.league }));
       setLocalRows(profile.rows?.length ? profile.rows : createEmptyRows());
-      setLocalMeta({ style: profile.style || "Mixto", idealMarkets: profile.idealMarkets || "", notes: profile.notes || "" });
+      setLocalMeta({ style: profile.style || "Mixto", idealMarkets: profile.idealMarkets || "", notes: profile.notes || "", favorite: Boolean(profile.favorite) });
     } else {
       setMatchInfo((prev) => ({ ...prev, visitante: profile.teamName, paisVisitante: profile.country || prev.paisVisitante, liga: prev.liga || profile.league }));
       setVisitRows(profile.rows?.length ? profile.rows : createEmptyRows());
-      setVisitMeta({ style: profile.style || "Mixto", idealMarkets: profile.idealMarkets || "", notes: profile.notes || "" });
+      setVisitMeta({ style: profile.style || "Mixto", idealMarkets: profile.idealMarkets || "", notes: profile.notes || "", favorite: Boolean(profile.favorite) });
     }
+  }
+
+  function deleteTeamProfile(profile: TeamProfile) {
+    if (!window.confirm(`¿Eliminar perfil de ${profile.teamName}?`)) return;
+    setSavedTeams((prev) => {
+      const next = prev.filter((p) => !(p.teamName === profile.teamName && p.condition === profile.condition));
+      localStorage.setItem(TEAM_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
   }
 
   function saveReferee() {
@@ -1721,6 +2108,7 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
       nombre: ref.nombre,
       promedioAmarillas: String(ref.promedioAmarillas),
       promedioRojas: String(ref.promedioRojas),
+      sinConfirmar: false,
     });
   }
 
@@ -1774,6 +2162,7 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
     const presets = safeParse<Record<string, MarketLine[]>>(localStorage.getItem(MARKET_STORAGE_KEY), {});
     presets[marketPresetName.trim()] = marketLines;
     localStorage.setItem(MARKET_STORAGE_KEY, JSON.stringify(presets));
+    setSavedPresets(Object.keys(presets));
     alert("Perfil de cuotas guardado.");
   }
 
@@ -1781,6 +2170,15 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
     const presets = safeParse<Record<string, MarketLine[]>>(localStorage.getItem(MARKET_STORAGE_KEY), {});
     if (!presets[name]) return;
     setMarketLines(presets[name]);
+  }
+
+  function deleteMarketPreset(name: string) {
+    if (!window.confirm(`¿Eliminar perfil de cuotas ${name}?`)) return;
+    const presets = safeParse<Record<string, MarketLine[]>>(localStorage.getItem(MARKET_STORAGE_KEY), {});
+    delete presets[name];
+    localStorage.setItem(MARKET_STORAGE_KEY, JSON.stringify(presets));
+    setSavedPresets(Object.keys(presets));
+    setMarketPresetName((prev) => (prev === name ? "" : prev));
   }
 
 
@@ -1835,12 +2233,12 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
         const raw = JSON.parse(String(reader.result || "{}"));
         if (target === "full") {
           setMatchInfo(raw.matchInfo ?? emptyMatchInfo());
-          setTieContext(raw.tieContext ?? emptyTieContext());
-          setRefInfo(raw.refInfo ?? emptyReferee());
+          setTieContext({ ...emptyTieContext(), ...(raw.tieContext ?? {}) });
+          setRefInfo({ ...emptyReferee(), ...(raw.refInfo ?? {}) });
           setLocalRows(raw.localRows ?? createEmptyRows());
           setVisitRows(raw.visitRows ?? createEmptyRows());
-          setLocalMeta(raw.localMeta ?? emptyTeamMeta());
-          setVisitMeta(raw.visitMeta ?? emptyTeamMeta());
+          setLocalMeta({ ...emptyTeamMeta(), ...(raw.localMeta ?? {}) });
+          setVisitMeta({ ...emptyTeamMeta(), ...(raw.visitMeta ?? {}) });
           setMarketLines(
             (raw.marketLines ?? buildDefaultMarketLines()).map((line: MarketLine) => ({
               ...line,
@@ -1878,12 +2276,74 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
     reader.readAsText(file);
   }
 
-  const savedPresets = useMemo(() => Object.keys(safeParse<Record<string, MarketLine[]>>(typeof window === "undefined" ? null : localStorage.getItem(MARKET_STORAGE_KEY), {})), [marketLines]);
-
   const allNameSuggestions = useMemo(
     () => buildNameSuggestions(savedTeams, matchInfo.local, matchInfo.visitante, localRows, visitRows),
     [savedTeams, matchInfo.local, matchInfo.visitante, localRows, visitRows]
   );
+
+  const rankingProfiles = useMemo(() => {
+    const current: TeamProfile[] = [];
+    if (matchInfo.local.trim()) {
+      current.push({
+        teamName: matchInfo.local.trim(),
+        condition: "local",
+        country: matchInfo.paisLocal.trim(),
+        league: matchInfo.liga.trim(),
+        style: localMeta.style,
+        idealMarkets: localMeta.idealMarkets,
+        notes: localMeta.notes,
+        favorite: localMeta.favorite,
+        rows: localRows,
+        savedAt: new Date().toISOString(),
+      });
+    }
+    if (matchInfo.visitante.trim()) {
+      current.push({
+        teamName: matchInfo.visitante.trim(),
+        condition: "visitante",
+        country: matchInfo.paisVisitante.trim(),
+        league: matchInfo.liga.trim(),
+        style: visitMeta.style,
+        idealMarkets: visitMeta.idealMarkets,
+        notes: visitMeta.notes,
+        favorite: visitMeta.favorite,
+        rows: visitRows,
+        savedAt: new Date().toISOString(),
+      });
+    }
+    const map = new Map<string, TeamProfile>();
+    [...current, ...savedTeams].forEach((profile) => {
+      map.set(`${profile.teamName}__${profile.country}__${profile.condition}`, profile);
+    });
+    return Array.from(map.values());
+  }, [savedTeams, matchInfo, localMeta, visitMeta, localRows, visitRows]);
+
+  const teamCategoryBoard = useMemo(() => {
+    const categories = ["Ganador", "Empate", "Pierde", "Goleador", "Recibe goles", "Corners", "Tarjetas", "Remates", "A puerta"];
+    return categories.map((category) => ({
+      category,
+      teams: rankingProfiles
+        .map((profile) => ({ profile, stats: analyzeRows(profile.rows), score: getCategoryScore(category, analyzeRows(profile.rows)) }))
+        .filter((item) => item.stats.count > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 6),
+    }));
+  }, [rankingProfiles]);
+
+  const favoriteProfiles = useMemo(
+    () => rankingProfiles.filter((profile) => Boolean(profile.favorite)),
+    [rankingProfiles]
+  );
+
+  const teamsByCountry = useMemo(() => {
+    const grouped: Record<string, TeamProfile[]> = {};
+    rankingProfiles.forEach((profile) => {
+      const key = profile.country?.trim() || "Sin país";
+      grouped[key] = grouped[key] || [];
+      grouped[key].push(profile);
+    });
+    return Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0], "es"));
+  }, [rankingProfiles]);
 
   return (
     <div className="min-h-screen bg-slate-950 p-4 text-white md:p-6">
@@ -1966,13 +2426,17 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
               Es eliminatoria
             </label>
             <label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white text-slate-900 px-3 py-2 text-sm">
+              <input type="checkbox" checked={tieContext.esPartidoIda} onChange={(e) => updateTieContext("esPartidoIda", e.target.checked)} />
+              Es partido de ida
+            </label>
+            <label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white text-slate-900 px-3 py-2 text-sm">
               <input type="checkbox" checked={tieContext.partidoIdaJugado} onChange={(e) => updateTieContext("partidoIdaJugado", e.target.checked)} />
               Ya se jugó la ida
             </label>
             <Select value={tieContext.necesidadLocal} onChange={(v) => updateTieContext("necesidadLocal", v as NeedLevel)} options={NEED_LEVELS} />
             <Select value={tieContext.necesidadVisitante} onChange={(v) => updateTieContext("necesidadVisitante", v as NeedLevel)} options={NEED_LEVELS} />
-            <Input value={String(tieContext.globalLocal)} onChange={(v) => updateTieContext("globalLocal", v === "" ? "" : Number(v))} placeholder="Global local" type="number" />
-            <Input value={String(tieContext.globalVisitante)} onChange={(v) => updateTieContext("globalVisitante", v === "" ? "" : Number(v))} placeholder="Global visitante" type="number" />
+            <Input value={String(tieContext.globalLocal)} onChange={(v) => updateTieContext("globalLocal", v === "" ? "" : Number(v))} placeholder={tieContext.esPartidoIda ? "Último partido local (goles/global previo)" : "Global local"} type="number" />
+            <Input value={String(tieContext.globalVisitante)} onChange={(v) => updateTieContext("globalVisitante", v === "" ? "" : Number(v))} placeholder={tieContext.esPartidoIda ? "Último partido visitante (goles/global previo)" : "Global visitante"} type="number" />
             <Input value={tieContext.idaLocalTeam} onChange={(v) => updateTieContext("idaLocalTeam", v)} placeholder="Equipo local en la ida" />
             <Input value={tieContext.idaVisitanteTeam} onChange={(v) => updateTieContext("idaVisitanteTeam", v)} placeholder="Equipo visitante en la ida" />
             <Input value={String(tieContext.idaGFLocal)} onChange={(v) => updateTieContext("idaGFLocal", v === "" ? "" : Number(v))} placeholder="Goles local ida" type="number" />
@@ -1987,7 +2451,7 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
             <Input value={String(tieContext.idaShotsOnTargetVisitante)} onChange={(v) => updateTieContext("idaShotsOnTargetVisitante", v === "" ? "" : Number(v))} placeholder="A puerta visitante ida" type="number" />
           </div>
           <div className="mt-3">
-            <TextArea value={tieContext.lecturaManual} onChange={(v) => updateTieContext("lecturaManual", v)} placeholder="Lectura manual de la necesidad del partido o de la ida." />
+            <TextArea value={tieContext.lecturaManual} onChange={(v) => updateTieContext("lecturaManual", v)} placeholder={tieContext.esPartidoIda ? "Lectura manual del partido de ida y último contexto de ambos equipos." : "Lectura manual de la necesidad del partido o de la ida."} />
           </div>
           <div className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
             <div className="font-semibold">{needReading.label}</div>
@@ -2009,6 +2473,10 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
             <Input value={refInfo.promedioRojas} onChange={(v) => updateRefInfo("promedioRojas", v)} placeholder="Promedio rojas" type="text" inputMode="decimal" />
             <button onClick={saveReferee} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Guardar árbitro</button>
           </div>
+          <label className="mt-3 flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900">
+            <input type="checkbox" checked={refInfo.sinConfirmar} onChange={(e) => updateRefInfo("sinConfirmar", e.target.checked)} />
+            Sin confirmar árbitro
+          </label>
           {savedRefs.length ? (
             <div className="mt-4 flex flex-wrap gap-2">
               {savedRefs.slice(0, 8).map((ref) => (
@@ -2079,20 +2547,139 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
         </div>
 
 
+         <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Historial de choque IA</div>
+                  <div className="mt-1 text-sm text-slate-100">Carga el último duelo directo y la app lo compara contra lo que hoy espera tu modelo.</div>
+                </div>
+                <label className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/30 bg-slate-950/30 px-3 py-2 text-sm text-cyan-100">
+                  <input
+                    type="checkbox"
+                    checked={headToHeadInfo.played}
+                    onChange={(e) => setHeadToHeadInfo((prev) => ({ ...prev, played: e.target.checked }))}
+                  />
+                  Hubo duelo reciente
+                </label>
+              </div>
 
-        {savedTeams.length ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <Input value={headToHeadInfo.fecha} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, fecha: v }))} placeholder="Fecha del último duelo" type="date" />
+                <Input value={headToHeadInfo.anteriorLocal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, anteriorLocal: v }))} placeholder="Local anterior" list="team-names" />
+                <Input value={headToHeadInfo.anteriorVisitante} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, anteriorVisitante: v }))} placeholder="Visitante anterior" list="team-names" />
+                <TextArea value={headToHeadInfo.notas} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, notas: v }))} placeholder="Lectura manual del choque anterior" />
+                <Input value={headToHeadInfo.golesLocal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, golesLocal: v === "" ? "" : Number(v) }))} placeholder="Goles local" type="number" inputMode="numeric" />
+                <Input value={headToHeadInfo.golesVisitante} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, golesVisitante: v === "" ? "" : Number(v) }))} placeholder="Goles visitante" type="number" inputMode="numeric" />
+                <Input value={headToHeadInfo.cornersTotal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, cornersTotal: v === "" ? "" : Number(v) }))} placeholder="Corners totales" type="number" inputMode="numeric" />
+                <Input value={headToHeadInfo.tarjetasTotal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, tarjetasTotal: v === "" ? "" : Number(v) }))} placeholder="Tarjetas totales" type="number" inputMode="numeric" />
+              </div>
+
+              <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                <div className="rounded-2xl border border-slate-700/60 bg-slate-950/35 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Comparador duelo anterior vs partido actual</div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <StatCard title="Ganador anterior" value={headToHeadAnalysis.previousWinner} subtitle={headToHeadInfo.fecha || "Sin fecha"} />
+                    <StatCard title="Lectura próximo duelo" value={headToHeadAnalysis.projectedWinner} subtitle="Proyección IA" />
+                    <StatCard title="Goles anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousGoals) : "-"} subtitle={`Esperados hoy ${expectedTotalGoals.toFixed(2)}`} />
+                    <StatCard title="Corners anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCorners || "-") : "-"} subtitle={`Esperados hoy ${expectedTotalCorners.toFixed(2)}`} />
+                    <StatCard title="Tarjetas anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCards || "-") : "-"} subtitle={`Esperadas hoy ${expectedTotalCards.toFixed(2)}`} />
+                    <StatCard title="Resultado esperado hoy" value={simulation.localWin > simulation.awayWin ? `${matchInfo.local || "Local"} mejor` : simulation.awayWin > simulation.localWin ? `${matchInfo.visitante || "Visitante"} mejor` : "Muy parejo"} subtitle={`Empate ${formatPct(simulation.draw)}`} />
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-cyan-300/30 bg-white/5 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Lectura IA del historial</div>
+                  <div className="mt-3 space-y-3 text-sm text-slate-100">
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.outcomeText}</div>
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.goalsText}</div>
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.cornersText}</div>
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.cardsText}</div>
+                    {headToHeadInfo.notas.trim() ? (
+                      <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-amber-100">Apunte manual: {headToHeadInfo.notas}</div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-4 xl:grid-cols-3">
+                <div className="rounded-2xl border border-sky-300/30 bg-sky-500/10 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-sky-100">Cómo ha mejorado {matchInfo.local || "el local"}</div>
+                  <div className="mt-2 text-sm text-slate-100">{headToHeadAnalysis.improvementTextLocal}</div>
+                </div>
+                <div className="rounded-2xl border border-violet-300/30 bg-violet-500/10 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-violet-100">Cómo ha mejorado {matchInfo.visitante || "el visitante"}</div>
+                  <div className="mt-2 text-sm text-slate-100">{headToHeadAnalysis.improvementTextVisit}</div>
+                </div>
+                <div className="rounded-2xl border border-emerald-300/30 bg-emerald-500/10 p-4">
+                  <div className="text-sm font-semibold uppercase tracking-wide text-emerald-100">Quién llega mejor preparado</div>
+                  <div className="mt-2 text-sm text-slate-100">{headToHeadAnalysis.prepText}</div>
+                </div>
+              </div>
+            </div>
+
+        
+        <Section title="5.5 Ranking de etiquetas y favoritos" subtitle="Aquí se ordenan los equipos por fortaleza detectada en cada etiqueta o categoría para que puedas ir directo al mercado que más conviene.">
+          <div className="grid gap-4 xl:grid-cols-3">
+            {teamCategoryBoard.map((bucket) => (
+              <div key={bucket.category} className="rounded-2xl border border-slate-700 bg-slate-800/90 p-4">
+                <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">{bucket.category}</div>
+                <div className="mt-3 space-y-2">
+                  {bucket.teams.length ? bucket.teams.map((item, index) => (
+                    <div key={`${bucket.category}-${item.profile.teamName}-${index}`} className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm">
+                      <span className="font-medium text-white">{index + 1}. {item.profile.teamName}</span>
+                      <span className="text-cyan-200">{item.score.toFixed(1)}</span>
+                    </div>
+                  )) : <div className="text-sm text-slate-300">Sin equipos todavía.</div>}
+                </div>
+              </div>
+            ))}
+
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+              <div className="text-sm font-semibold uppercase tracking-wide text-emerald-200">Equipos favoritos / que te hacen ganar</div>
+              <div className="mt-3 space-y-2">
+                {favoriteProfiles.length ? favoriteProfiles.map((profile) => (
+                  <div key={`fav-${profile.teamName}-${profile.condition}`} className="rounded-xl border border-emerald-300 bg-white px-3 py-2 text-sm text-slate-900">
+                    <div className="font-semibold">{profile.teamName}</div>
+                    <div className="text-xs text-slate-600">{profile.country || "Sin país"} · {profile.league || "Sin liga"}</div>
+                  </div>
+                )) : <div className="text-sm text-emerald-100">Marca equipos como favoritos dentro de local o visitante para verlos aquí.</div>}
+              </div>
+            </div>
+          </div>
+        </Section>
+
+{savedTeams.length ? (
           <Section title="6. Perfiles guardados" subtitle="Liga, país y datos del equipo quedan listos para reutilizar.">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {savedTeams.map((profile) => (
-                <button
-                  key={`${profile.teamName}-${profile.condition}`}
-                  onClick={() => loadTeamProfile(profile)}
-                  className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-sky-400"
-                >
-                  <div className="font-semibold text-slate-900">{profile.teamName}</div>
-                  <div className="mt-1 text-sm text-slate-700">{profile.condition} · {profile.country || "Sin país"} · {profile.league || "Sin liga"}</div>
-                </button>
-              ))}
+            <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {savedTeams.map((profile) => (
+                  <div key={`${profile.teamName}-${profile.condition}`} className="rounded-2xl border border-slate-200 bg-white p-4 text-left">
+                    <button onClick={() => loadTeamProfile(profile)} className="w-full text-left transition hover:opacity-90">
+                      <div className="font-semibold text-slate-900">{profile.teamName}</div>
+                      <div className="mt-1 text-sm text-slate-700">{profile.condition} · {profile.country || "Sin país"} · {profile.league || "Sin liga"}</div>
+                      {profile.favorite ? <div className="mt-2 text-xs font-semibold text-emerald-700">Favorito</div> : null}
+                    </button>
+                    <button onClick={() => deleteTeamProfile(profile)} className="mt-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">Eliminar perfil</button>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-2xl border border-slate-700 bg-slate-800/90 p-4">
+                <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Equipos por país</div>
+                <div className="mt-3 space-y-3">
+                  {teamsByCountry.map(([country, profiles]) => (
+                    <div key={country}>
+                      <div className="font-semibold text-white">{country}</div>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {profiles.map((profile) => (
+                          <span key={`${country}-${profile.teamName}-${profile.condition}`} className="rounded-full border border-slate-600 bg-slate-900 px-3 py-1 text-xs text-slate-200">
+                            {profile.teamName}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </Section>
         ) : null}
@@ -2116,9 +2703,14 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
           <div className="mt-3 flex flex-wrap gap-2">
             <button onClick={saveMarketPreset} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Guardar perfil</button>
             {savedPresets.map((name) => (
-              <button key={name} onClick={() => loadMarketPreset(name)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-900">
-                Cargar perfil: {name}
-              </button>
+              <div key={name} className="flex items-center gap-2">
+                <button onClick={() => loadMarketPreset(name)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-900">
+                  Cargar perfil: {name}
+                </button>
+                <button onClick={() => deleteMarketPreset(name)} className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
+                  Eliminar
+                </button>
+              </div>
             ))}
           </div>
 
@@ -2155,6 +2747,61 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
         </Section>
 
         <Section title="8. Lectura final y picks" subtitle={`Top pick, pick alternativo o no bet para ${matchDisplayName} según la línea real y tu filtro de edge. Recuerda: solo puede recomendar líneas que hayas cargado en la sección 7.`}>
+          <div className="relative mb-4 overflow-hidden rounded-3xl border border-slate-700/60 bg-[linear-gradient(135deg,rgba(15,23,42,.98),rgba(30,41,59,.94))] p-4 shadow-lg shadow-slate-950/30">
+            <img
+              src={getOptionalMatchBgPath(matchInfo.local, matchInfo.visitante)}
+              alt=""
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-15"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,.12),transparent_42%),radial-gradient(circle_at_bottom,rgba(99,102,241,.14),transparent_38%)]" />
+
+            <div className="relative grid gap-4 md:grid-cols-3">
+              <div className="flex items-center gap-4 rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-800 to-slate-900 p-4 shadow-inner shadow-slate-950/30">
+                <div className="relative h-16 w-16 overflow-hidden rounded-full border border-slate-600 bg-white shadow-inner">
+                  <Image
+                    src={getTeamLogoPath(matchInfo.local)}
+                    alt={matchInfo.local || "Equipo local"}
+                    fill
+                    className="object-contain p-2"
+                    unoptimized
+                  />
+                </div>
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-slate-400">Local</div>
+                  <div className="mt-1 text-lg font-bold text-white">{matchInfo.local || "Equipo local"}</div>
+                  <div className="mt-1 text-xs text-slate-400">{matchInfo.paisLocal || "Sin país cargado"}</div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-sky-500/30 bg-gradient-to-br from-sky-500/20 to-indigo-500/20 p-4 text-center shadow-inner shadow-slate-950/20 backdrop-blur-sm">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-200">Lectura del partido</div>
+                <div className="mt-2 text-[1.65rem] font-extrabold leading-tight text-white">{matchTypeInfo.label}</div>
+                <div className="mx-auto mt-2 max-w-sm text-sm font-medium text-slate-100">{matchTypeInfo.description}</div>
+                <div className="mt-3 inline-flex rounded-full border border-white/15 bg-slate-950/20 px-3 py-1 text-[11px] text-slate-200">
+                  Logos en <span className="mx-1 font-semibold text-white">/public/teams</span> · Fondo opcional en <span className="ml-1 font-semibold text-white">/public/{slugify(matchInfo.local || "local")}-vs-{slugify(matchInfo.visitante || "visitante")}.jpg</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-4 rounded-2xl border border-slate-700/60 bg-gradient-to-br from-slate-800 to-slate-900 p-4 text-right shadow-inner shadow-slate-950/30">
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-slate-400">Visitante</div>
+                  <div className="mt-1 text-lg font-bold text-white">{matchInfo.visitante || "Equipo visitante"}</div>
+                  <div className="mt-1 text-xs text-slate-400">{matchInfo.paisVisitante || "Sin país cargado"}</div>
+                </div>
+                <div className="relative h-16 w-16 overflow-hidden rounded-full border border-slate-600 bg-white shadow-inner">
+                  <Image
+                    src={getTeamLogoPath(matchInfo.visitante)}
+                    alt={matchInfo.visitante || "Equipo visitante"}
+                    fill
+                    className="object-contain p-2"
+                    unoptimized
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-teal-500/30 bg-teal-500/10 p-3">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <StatCard title="Local gana" value={formatPct(simulation.localWin)} subtitle="Simulación" />
@@ -2162,7 +2809,7 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
               <StatCard title="Visitante gana" value={formatPct(simulation.awayWin)} subtitle="Simulación" />
               <StatCard title="BTTS Sí" value={formatPct(simulation.btts)} subtitle="Simulación" />
               <StatCard title="Corners esperados" value={expectedTotalCorners.toFixed(2)} subtitle="Línea real recalculable" />
-              <StatCard title="Tarjetas esperadas" value={expectedTotalCards.toFixed(2)} subtitle="Con árbitro" />
+              <StatCard title="Tarjetas esperadas" value={expectedTotalCards.toFixed(2)} subtitle={refInfo.sinConfirmar ? "Sin árbitro confirmado" : "Con árbitro"} />
               <StatCard title="Disparos esperados" value={expectedTotalShots.toFixed(2)} subtitle="Totales" />
               <StatCard title="A puerta esperados" value={expectedTotalShotsOnTarget.toFixed(2)} subtitle="Totales" />
               <StatCard title="Boost ofensivo" value={`${shotBoostInfo.total >= 0 ? "+" : ""}${shotBoostInfo.total.toFixed(2)}`} subtitle={shotBoostInfo.active ? "Partido roto detectado" : "Sin boost fuerte"} />
@@ -2241,9 +2888,11 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
         </Section>
 
 
-            {noBetReasons.length >= 2 ? (
+   
+            {hardNoBet ? (
               <div className="mt-5 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
-                <div className="font-bold">No bet sugerido</div>
+                <div className="font-bold">NO BET sugerido</div>
+                <div className="mt-1 text-sm">El partido no pasa el filtro final. Mejor saltarlo que forzar entrada.</div>
                 <ul className="mt-2 list-disc pl-5 text-sm">
                   {noBetReasons.map((reason) => (
                     <li key={reason}>{reason}</li>
@@ -2253,26 +2902,27 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
             ) : null}
 
             <div className="mt-5 grid gap-4 xl:grid-cols-3">
-              {[topPick, altPick, thirdPick].map((pick, index) => {
+              {[topPick, altPick].map((pick, index) => {
                 const palette =
                   index === 0
                     ? { box: "border-emerald-200 bg-emerald-50", title: "text-emerald-700", body: "text-emerald-900", label: "Top pick" }
-                    : index === 1
-                    ? { box: "border-blue-200 bg-blue-50", title: "text-blue-700", body: "text-blue-900", label: "Pick alternativo" }
-                    : { box: "border-violet-200 bg-violet-50", title: "text-violet-700", body: "text-violet-900", label: "Tercer pick" };
+                    : { box: "border-blue-200 bg-blue-50", title: "text-blue-700", body: "text-blue-900", label: "Pick alternativo" };
 
                 return (
                   <div key={index} className={`rounded-2xl border p-4 ${palette.box}`}>
                     <div className={`text-sm font-semibold uppercase tracking-wide ${palette.title}`}>{palette.label}</div>
                     {pick ? (
                       <>
-                        <div className="mt-2">
+                        <div className="mt-2 flex flex-wrap gap-2">
                           <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${classifyPickTier(pick.probability, pick.edge).badge}`}>
-                            {classifyPickTier(pick.probability, pick.edge).label}
+                            {pick.fallback ? "Respaldo" : pick.tier}
+                          </span>
+                          <span className="inline-flex rounded-full border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                            Confianza real {formatPct(pick.realConfidence)}
                           </span>
                         </div>
                         <div className={`mt-2 text-2xl font-bold ${palette.body}`}>{pick.label}</div>
-                        <div className={`mt-2 text-sm ${palette.body}`}>Probabilidad: {formatPct(pick.probability)} · Casa: {formatPct(pick.implied)} · Edge: {pick.edge.toFixed(1)}</div>
+                        <div className={`mt-2 text-sm ${palette.body}`}>Probabilidad: {formatPct(pick.probability)} · Casa: {formatPct(pick.implied)} · Edge: {pick.edge.toFixed(1)} · Prioridad: {pick.marketPriority.toFixed(0)}</div>
                         <div className={`mt-2 text-sm ${palette.body}`}>{pick.reason}</div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
@@ -2306,7 +2956,7 @@ if (pick.label.toLowerCase().includes("menos de 3.5 goles") && oneSideDeadProfil
                       {selectedPicks.map((pick) => (
                         <div key={`sel-${pick.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                           <div className="font-semibold text-slate-900">{pick.label}</div>
-                          <div className="mt-1 text-sm text-slate-700">Prob. {formatPct(pick.probability)} · Edge {pick.edge.toFixed(1)}</div>
+                          <div className="mt-1 text-sm text-slate-700">Prob. {formatPct(pick.probability)} · Conf. real {formatPct(pick.realConfidence)} · Edge {pick.edge.toFixed(1)}</div>
                         </div>
                       ))}
                     </div>
@@ -2483,10 +3133,14 @@ function TeamBlock({
           <StatCard title="Corners / Tarjetas" value={`${stats.totalCornersWeighted.toFixed(2)} / ${stats.totalCardsWeighted.toFixed(2)}`} subtitle="Ponderado" />
         </div>
 
-        <div className="mb-2 grid gap-3 md:grid-cols-3">
+        <div className="mb-2 grid gap-3 md:grid-cols-4">
           <Select value={meta.style} onChange={(v) => onMetaChange({ style: v as TeamStyle })} options={TEAM_STYLES} />
           <Input value={meta.idealMarkets} onChange={(v) => onMetaChange({ idealMarkets: v })} placeholder="Mercados ideales: goles, corners..." />
           <Input value={meta.notes} onChange={(v) => onMetaChange({ notes: v })} placeholder="Notas del equipo" />
+          <label className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900">
+            <input type="checkbox" checked={meta.favorite} onChange={(e) => onMetaChange({ favorite: e.target.checked })} />
+            Equipo favorito
+          </label>
         </div>
 
         <div className="mb-4 grid gap-2 md:grid-cols-3">
