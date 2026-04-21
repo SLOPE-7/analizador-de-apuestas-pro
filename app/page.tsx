@@ -29,6 +29,7 @@ type NeedLevel = "Alta" | "Media" | "Baja" | "Ninguna";
 type TeamRow = {
   rival: string;
   fecha: string;
+  condition: TeamCondition | "";
   gf: number | "";
   gc: number | "";
   ownCorners: number | "";
@@ -110,7 +111,10 @@ type HeadToHeadInfo = {
   golesVisitante: number | "";
   cornersTotal: number | "";
   tarjetasTotal: number | "";
-  notas: string;
+  manualCorners: number | "";
+  manualTarjetas: number | "";
+  manualAmbosMarcan: "" | "Sí" | "No";
+  manualGanador: "" | "Local" | "Empate" | "Visitante";
 };
 
 type TeamProfile = {
@@ -151,7 +155,9 @@ type MarketFamily =
   | "shots"
   | "shotsOnTarget"
   | "teamGoals"
-  | "halftimeGoals";
+  | "halftimeGoals"
+  | "handicap"
+  | "winHalf";
 
 type MarketLine = {
   id: string;
@@ -177,6 +183,16 @@ type SuggestedPick = {
   tier: "Top" | "Alternativo" | "Agresivo";
   marketPriority: number;
   fallback: boolean;
+};
+
+type ResolvedPickRecord = {
+  id: string;
+  matchLabel: string;
+  pickLabel: string;
+  family: MarketFamily;
+  odd: number;
+  won: boolean;
+  resolvedAt: string;
 };
 
 type StatSummary = {
@@ -247,6 +263,7 @@ const TEAM_STORAGE_KEY = "analizador_saved_teams_v2";
 const REF_STORAGE_KEY = "analizador_saved_refs_v2";
 const DRAFT_STORAGE_KEY = "analizador_match_draft_v3";
 const MARKET_STORAGE_KEY = "analizador_market_presets_v1";
+const RESOLVED_PICKS_STORAGE_KEY = "analizador_resolved_picks_v1";
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
@@ -296,6 +313,7 @@ function createEmptyRow(): TeamRow {
   return {
     rival: "",
     fecha: "",
+    condition: "",
     gf: "",
     gc: "",
     ownCorners: "",
@@ -438,6 +456,46 @@ function classifyPickTier(probability: number, edge: number) {
   return { label: "Agresivo", badge: "border-amber-300 bg-amber-50 text-amber-800" };
 }
 
+function getTablePositionAdjustment(positionFor: number | "", positionAgainst: number | "") {
+  if (positionFor === "" || positionAgainst === "") return 0;
+  const diff = Number(positionAgainst) - Number(positionFor);
+  const absDiff = Math.abs(diff);
+  const mild = Math.min(absDiff, 4) * 0.018;
+  const medium = Math.max(0, Math.min(absDiff - 4, 4)) * 0.026;
+  const strong = Math.max(0, absDiff - 8) * 0.035;
+  const total = clamp(mild + medium + strong, 0, 0.48);
+  return diff >= 0 ? total : -total;
+}
+
+function getMomentumAdjustment(trend: ReturnType<typeof buildTrendSnapshot>) {
+  if (trend.recentCount < 3) return 0;
+  const pointDiff = trend.recent.pointsRate - trend.older.pointsRate;
+  const xgDiff = trend.recent.xg - trend.older.xg;
+  const defenseDiff = trend.older.goalsAgainst - trend.recent.goalsAgainst;
+  const raw = pointDiff * 0.085 + xgDiff * 0.22 + defenseDiff * 0.12;
+  return clamp(raw, -0.22, 0.24);
+}
+
+function getHomeAdvantage(params: { matchType: MatchType; isElimination: boolean; isSecondLeg: boolean }) {
+  const { matchType, isElimination, isSecondLeg } = params;
+  if (matchType !== "Liga") return isElimination ? 0.08 : 0.12;
+  if (isElimination && isSecondLeg) return 0.1;
+  return 0.22;
+}
+
+function getDisplayedEdge(edge: number, qualityScore: number, volatilityLabel: string) {
+  const qualityFactor = qualityScore >= 82 ? 1 : qualityScore >= 70 ? 0.92 : qualityScore >= 60 ? 0.84 : 0.72;
+  const volatilityFactor = volatilityLabel === "Alta" ? 0.78 : volatilityLabel === "Media" ? 0.9 : 1;
+  return edge * qualityFactor * volatilityFactor;
+}
+
+function getDataWarning(qualityScore: number, volatilityLabel: string) {
+  if (qualityScore < 58) return "Muestra floja";
+  if (qualityScore < 68) return "Dato limitado";
+  if (volatilityLabel === "Alta") return "Partido volátil";
+  return "";
+}
+
 function createEmptyMatchSupportInfo(): MatchSupportInfo {
   return {
     possessionLocal: "",
@@ -457,7 +515,10 @@ function emptyHeadToHeadInfo(): HeadToHeadInfo {
     golesVisitante: "",
     cornersTotal: "",
     tarjetasTotal: "",
-    notas: "",
+    manualCorners: "",
+    manualTarjetas: "",
+    manualAmbosMarcan: "",
+    manualGanador: "",
   };
 }
 
@@ -472,6 +533,97 @@ function compareDirection(actual: number, expected: number, label: string) {
   if (Math.abs(diff) < 0.35) return `${label} muy alineado con la proyección actual.`;
   if (diff > 0) return `${label} por encima de lo que hoy espera la IA.`;
   return `${label} por debajo de lo que hoy espera la IA.`;
+}
+
+function similarityFromDifference(actual: number, expected: number, scale: number) {
+  const diff = Math.abs(actual - expected);
+  return clamp(100 - (diff / Math.max(scale, 0.1)) * 100, 0, 100);
+}
+
+function probabilityToYesNoLabel(probability: number) {
+  return probability >= 50 ? "Sí" : "No";
+}
+
+function probabilityToWinnerLabel(localWin: number, awayWin: number, draw: number) {
+  if (localWin >= awayWin && localWin >= draw) return "Local";
+  if (awayWin >= localWin && awayWin >= draw) return "Visitante";
+  return "Empate";
+}
+
+function similarityFromChoice<T extends string>(a: T | "", b: T | "") {
+  if (!a || !b) return 0;
+  return a === b ? 100 : 0;
+}
+
+function buildCompactRankingBoard(
+  profiles: TeamProfile[],
+  categories: string[],
+  maxAppearancesPerTeam = 3,
+  minTeamsPerCategory = 10
+) {
+  const appearances = new Map<string, number>();
+  return categories.map((category) => {
+    const selected = profiles
+      .map((profile) => ({ profile, stats: analyzeRows(profile.rows), score: getCategoryScore(category, analyzeRows(profile.rows)) }))
+      .filter((item) => item.stats.count > 0)
+      .sort((a, b) => b.score - a.score)
+      .filter((item) => {
+        const key = `${item.profile.teamName}__${item.profile.condition}`.toLowerCase();
+        const used = appearances.get(key) ?? 0;
+        if (used >= maxAppearancesPerTeam) return false;
+        appearances.set(key, used + 1);
+        return true;
+      })
+      .slice(0, minTeamsPerCategory);
+
+    return { category, teams: selected };
+  });
+}
+
+function groupProfilesByLeagueCountry(profiles: TeamProfile[]) {
+  const grouped: Record<string, TeamProfile[]> = {};
+  profiles.forEach((profile) => {
+    const key = `${profile.country?.trim() || "Sin país"} · ${profile.league?.trim() || "Sin liga"}`;
+    grouped[key] = grouped[key] || [];
+    grouped[key].push(profile);
+  });
+
+  return Object.entries(grouped)
+    .map(([group, items]) => ({
+      group,
+      items: [...items].sort((a, b) => a.teamName.localeCompare(b.teamName, "es")),
+    }))
+    .sort((a, b) => a.group.localeCompare(b.group, "es"));
+}
+
+function computeHandicapProbability(params: {
+  side: "local" | "visitante";
+  line: number;
+  expectedGoalsLocal: number;
+  expectedGoalsVisit: number;
+  simulation: { localWin: number; awayWin: number; draw: number };
+}) {
+  const { side, line, expectedGoalsLocal, expectedGoalsVisit, simulation } = params;
+  const margin = expectedGoalsLocal - expectedGoalsVisit;
+  const adjustedMargin = side === "local" ? margin + line : -margin + line;
+  const baseCover = side === "local" ? simulation.localWin + simulation.draw * 0.35 : simulation.awayWin + simulation.draw * 0.35;
+  const logistic = 1 / (1 + Math.exp(-1.7 * adjustedMargin));
+  return clamp(baseCover * 0.45 + logistic * 55, 0, 100);
+}
+
+function computeWinHalfProbability(params: {
+  side: "local" | "visitante";
+  expectedGoalsLocal: number;
+  expectedGoalsVisit: number;
+  simulation: { localWin: number; awayWin: number; draw: number };
+}) {
+  const { side, expectedGoalsLocal, expectedGoalsVisit, simulation } = params;
+  const halfLocal = clamp(expectedGoalsLocal * 0.58, 0.05, 2.2);
+  const halfVisit = clamp(expectedGoalsVisit * 0.58, 0.05, 2.2);
+  const diff = side === "local" ? halfLocal - halfVisit : halfVisit - halfLocal;
+  const base = side === "local" ? simulation.localWin : simulation.awayWin;
+  const logistic = 1 / (1 + Math.exp(-2.1 * diff));
+  return clamp(base * 0.48 + logistic * 52, 0, 100);
 }
 
 function buildTrendSnapshot(rows: TeamRow[]) {
@@ -552,7 +704,62 @@ function weightedAvgByRecency(values: number[], dates: string[]) {
   return values.reduce((acc, value, index) => acc + value * weights[index], 0) / total;
 }
 
-function analyzeRows(rows: TeamRow[]): StatSummary {
+function weightedAvgByRecencyAndCondition(
+  values: number[],
+  dates: string[],
+  conditions: (TeamCondition | "")[],
+  preferredCondition?: TeamCondition
+) {
+  if (!values.length) return 0;
+  const weights = values.map((_, index) => {
+    const age = parseDateDaysAgo(dates[index]);
+    const positionWeight = [1.6, 1.48, 1.36, 1.24, 1.12, 1, 0.92, 0.84, 0.76, 0.68][index] ?? 0.68;
+    const rowCondition = conditions[index] || "";
+    const conditionWeight = !preferredCondition || !rowCondition ? 1 : rowCondition === preferredCondition ? 1.28 : 0.72;
+    if (age === null) return positionWeight * conditionWeight;
+    if (age <= 45) return positionWeight * 1.15 * conditionWeight;
+    if (age <= 90) return positionWeight * 1.05 * conditionWeight;
+    if (age <= 180) return positionWeight * conditionWeight;
+    return positionWeight * 0.8 * conditionWeight;
+  });
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (!total) return 0;
+  return values.reduce((acc, value, index) => acc + value * weights[index], 0) / total;
+}
+
+function buildStreakSummary(rows: TeamRow[], teamName: string) {
+  const label = teamName || "Este equipo";
+  const valid = rows.filter((r) => r.estado || r.gf !== "" || r.gc !== "");
+  if (!valid.length) return `${label} aún no tiene racha suficiente.`;
+
+  const countFromStart = (predicate: (row: TeamRow) => boolean) => {
+    let count = 0;
+    for (const row of valid) {
+      if (!predicate(row)) break;
+      count += 1;
+    }
+    return count;
+  };
+
+  const winStreak = countFromStart((row) => row.estado === "G");
+  if (winStreak >= 2) return `${label} llega con ${winStreak} victorias seguidas.`;
+
+  const noWinStreak = countFromStart((row) => row.estado === "E" || row.estado === "P");
+  if (noWinStreak >= 3) return `${label} llega con ${noWinStreak} partidos sin ganar.`;
+
+  const scoringStreak = countFromStart((row) => toNumber(row.gf) > 0);
+  if (scoringStreak >= 3) return `${label} marca en ${scoringStreak} partidos seguidos.`;
+
+  const concedingStreak = countFromStart((row) => toNumber(row.gc) > 0);
+  if (concedingStreak >= 3) return `${label} recibe gol en ${concedingStreak} partidos seguidos.`;
+
+  const cleanSheetStreak = countFromStart((row) => toNumber(row.gc) === 0 && row.gc !== "");
+  if (cleanSheetStreak >= 2) return `${label} enlaza ${cleanSheetStreak} porterías a cero.`;
+
+  return `${label} llega sin racha fuerte marcada.`;
+}
+
+function analyzeRows(rows: TeamRow[], preferredCondition?: TeamCondition): StatSummary {
   const valid = rows.filter(
     (r) =>
       r.rival.trim() ||
@@ -638,6 +845,7 @@ function analyzeRows(rows: TeamRow[]): StatSummary {
   const shotsOnTarget = valid.map((r) => toNumber(r.shotsOnTarget));
   const shotsOnTargetAgainst = valid.map((r) => toNumber(r.shotsOnTargetAgainst));
   const dates = valid.map((r) => r.fecha);
+  const conditions = valid.map((r) => r.condition || "");
   const ages = dates.map(parseDateDaysAgo).filter((x): x is number => x !== null);
   const avgAge = ages.length ? avg(ages) : 999;
   const freshnessScore = clamp(100 - Math.max(0, avgAge - 45) * 0.35, 35, 100);
@@ -667,27 +875,27 @@ function analyzeRows(rows: TeamRow[]): StatSummary {
     gfAvg: avg(gf),
     gcAvg: avg(gc),
     totalGoalsAvg: avg(totalGoals),
-    totalGoalsWeighted: weightedAvgByRecency(totalGoals, dates),
+    totalGoalsWeighted: weightedAvgByRecencyAndCondition(totalGoals, dates, conditions, preferredCondition),
     ownCornersAvg: avg(ownCorners),
     oppCornersAvg: avg(oppCorners),
     totalCornersAvg: avg(totalCorners),
-    totalCornersWeighted: weightedAvgByRecency(totalCorners, dates),
+    totalCornersWeighted: weightedAvgByRecencyAndCondition(totalCorners, dates, conditions, preferredCondition),
     ownCardsAvg: avg(ownCards),
     oppCardsAvg: avg(oppCards),
     totalCardsAvg: avg(totalCards),
-    totalCardsWeighted: weightedAvgByRecency(totalCards, dates),
+    totalCardsWeighted: weightedAvgByRecencyAndCondition(totalCards, dates, conditions, preferredCondition),
     xgAvg: avg(xg),
     xgAgainstAvg: avg(xgAgainst),
-    xgWeighted: weightedAvgByRecency(xg, dates),
-    xgAgainstWeighted: weightedAvgByRecency(xgAgainst, dates),
+    xgWeighted: weightedAvgByRecencyAndCondition(xg, dates, conditions, preferredCondition),
+    xgAgainstWeighted: weightedAvgByRecencyAndCondition(xgAgainst, dates, conditions, preferredCondition),
     shotsAvg: avg(shots),
     shotsAgainstAvg: avg(shotsAgainst),
-    shotsWeighted: weightedAvgByRecency(shots, dates),
-    shotsAgainstWeighted: weightedAvgByRecency(shotsAgainst, dates),
+    shotsWeighted: weightedAvgByRecencyAndCondition(shots, dates, conditions, preferredCondition),
+    shotsAgainstWeighted: weightedAvgByRecencyAndCondition(shotsAgainst, dates, conditions, preferredCondition),
     shotsOnTargetAvg: avg(shotsOnTarget),
     shotsOnTargetAgainstAvg: avg(shotsOnTargetAgainst),
-    shotsOnTargetWeighted: weightedAvgByRecency(shotsOnTarget, dates),
-    shotsOnTargetAgainstWeighted: weightedAvgByRecency(shotsOnTargetAgainst, dates),
+    shotsOnTargetWeighted: weightedAvgByRecencyAndCondition(shotsOnTarget, dates, conditions, preferredCondition),
+    shotsOnTargetAgainstWeighted: weightedAvgByRecencyAndCondition(shotsOnTargetAgainst, dates, conditions, preferredCondition),
     winPct: pct(wins, count),
     drawPct: pct(draws, count),
     lossPct: pct(losses, count),
@@ -748,6 +956,10 @@ function getMarketFamilyLabel(family: MarketFamily) {
       return "resultado";
     case "doubleChance":
       return "doble oportunidad";
+    case "handicap":
+      return "handicap";
+    case "winHalf":
+      return "gana una mitad";
     case "goals":
       return "goles";
     case "btts":
@@ -836,14 +1048,14 @@ function getMarketPriority(
   }
 
   if (family === "cards") {
-    if (tags.includes("alto en tarjetas")) score += 18;
-    if (tags.includes("bajo en tarjetas")) score -= 18;
+    if (tags.includes("alto en tarjetas")) score += 16;
+    if (tags.includes("bajo en tarjetas")) score -= 10;
   }
 
-  if (family === "result" || family === "doubleChance") {
+  if (family === "result" || family === "doubleChance" || family === "handicap" || family === "winHalf") {
     if (tags.includes("gana constante")) score += 12;
     if (tags.includes("pierde seguido")) score += 8;
-    if (matchTypeLabel === "Partido equilibrado") score -= 12;
+    if (matchTypeLabel === "Partido equilibrado") score -= 8;
     if (matchTypeLabel === "Partido desigual") score += 10;
   }
 
@@ -856,9 +1068,9 @@ function getMarketPriority(
 }
 
 function getRealConfidence(probability: number, qualityScore: number, volatilityLabel: string, edge: number) {
-  const qualityFactor = qualityScore / 100;
-  const volatilityFactor = volatilityLabel === "Alta" ? 0.76 : volatilityLabel === "Media" ? 0.9 : 1;
-  const edgeFactor = edge >= 10 ? 1.08 : edge >= 6 ? 1.03 : 0.96;
+  const qualityFactor = qualityScore >= 82 ? 0.98 : qualityScore >= 70 ? 0.9 : qualityScore >= 60 ? 0.82 : 0.7;
+  const volatilityFactor = volatilityLabel === "Alta" ? 0.74 : volatilityLabel === "Media" ? 0.88 : 1;
+  const edgeFactor = edge >= 10 ? 1.06 : edge >= 6 ? 1.02 : 0.94;
   return clamp(probability * qualityFactor * volatilityFactor * edgeFactor, 0, 100);
 }
 
@@ -934,11 +1146,16 @@ function tagClass(tag: string) {
   return "border-slate-400 bg-slate-100 text-slate-900";
 }
 
-function StatCard({ title, value, subtitle }: { title: string; value: string; subtitle?: string }) {
+function StatCard({ title, value, subtitle, meter }: { title: string; value: string; subtitle?: string; meter?: number }) {
   return (
     <div className="rounded-2xl border border-slate-700/60 bg-slate-800/95 p-4 shadow-sm shadow-slate-950/20">
       <div className="text-xs font-semibold uppercase tracking-wide text-white">{title}</div>
       <div className="mt-2 text-2xl font-bold text-white">{value}</div>
+      {typeof meter === "number" ? (
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-700">
+          <div className="h-full rounded-full bg-white" style={{ width: `${clamp(meter, 0, 100)}%` }} />
+        </div>
+      ) : null}
       {subtitle ? <div className="mt-1 text-sm text-white">{subtitle}</div> : null}
     </div>
   );
@@ -1039,6 +1256,7 @@ export default function Page() {
   const [matchSupportInfo, setMatchSupportInfo] = useState<MatchSupportInfo>(createEmptyMatchSupportInfo());
   const [headToHeadInfo, setHeadToHeadInfo] = useState<HeadToHeadInfo>(emptyHeadToHeadInfo());
   const [savedPresets, setSavedPresets] = useState<string[]>([]);
+  const [resolvedPicks, setResolvedPicks] = useState<ResolvedPickRecord[]>([]);
 
 const resetAll = () => {
   if (!window.confirm("¿Seguro que quieres limpiar todo el partido actual?")) return;
@@ -1065,6 +1283,7 @@ const resetAll = () => {
     setSavedTeams(safeParse(localStorage.getItem(TEAM_STORAGE_KEY), []));
     setSavedRefs(safeParse(localStorage.getItem(REF_STORAGE_KEY), []));
     setSavedPresets(Object.keys(safeParse<Record<string, MarketLine[]>>(localStorage.getItem(MARKET_STORAGE_KEY), {})));
+    setResolvedPicks(safeParse(localStorage.getItem(RESOLVED_PICKS_STORAGE_KEY), []));
 
     const draft = safeParse<{
       matchInfo: MatchInfo;
@@ -1122,10 +1341,18 @@ const resetAll = () => {
     );
   }, [matchInfo, tieContext, refInfo, localRows, visitRows, localMeta, visitMeta, marketLines, minEdge, minProb, pickDecisions, matchSupportInfo, headToHeadInfo]);
 
-  const localStats = useMemo(() => analyzeRows(localRows), [localRows]);
-  const visitStats = useMemo(() => analyzeRows(visitRows), [visitRows]);
+  useEffect(() => {
+    localStorage.setItem(RESOLVED_PICKS_STORAGE_KEY, JSON.stringify(resolvedPicks));
+  }, [resolvedPicks]);
+
+  const localStats = useMemo(() => analyzeRows(localRows, "local"), [localRows]);
+  const visitStats = useMemo(() => analyzeRows(visitRows, "visitante"), [visitRows]);
   const localTags = useMemo(() => buildTeamTags(localStats), [localStats]);
   const visitTags = useMemo(() => buildTeamTags(visitStats), [visitStats]);
+  const localTrend = useMemo(() => buildTrendSnapshot(localRows), [localRows]);
+  const visitTrend = useMemo(() => buildTrendSnapshot(visitRows), [visitRows]);
+  const localStreakText = useMemo(() => buildStreakSummary(localRows, matchInfo.local || "Local"), [localRows, matchInfo.local]);
+  const visitStreakText = useMemo(() => buildStreakSummary(visitRows, matchInfo.visitante || "Visitante"), [visitRows, matchInfo.visitante]);
 
   const qualityScore = useMemo(() => {
     const sampleScore = clamp(((localStats.count + visitStats.count) / 20) * 100, 0, 100);
@@ -1133,34 +1360,47 @@ const resetAll = () => {
     const shotCoverage = [localStats.shotsWeighted, visitStats.shotsWeighted, localStats.shotsOnTargetWeighted, visitStats.shotsOnTargetWeighted].filter((v) => v > 0).length;
     const shotsScore = shotCoverage >= 4 ? 100 : shotCoverage >= 2 ? 70 : 40;
     const refereeScore = refInfo.sinConfirmar ? 70 : refInfo.nombre.trim() && refInfo.promedioAmarillas !== "" ? 100 : 55;
-    return clamp(sampleScore * 0.35 + freshness * 0.3 + shotsScore * 0.2 + refereeScore * 0.15, 0, 100);
-  }, [localStats, visitStats, refInfo]);
+    const trendCoverage = localTrend.recentCount >= 3 && visitTrend.recentCount >= 3 ? 100 : 72;
+    return clamp(sampleScore * 0.32 + freshness * 0.28 + shotsScore * 0.18 + refereeScore * 0.12 + trendCoverage * 0.1, 0, 100);
+  }, [localStats, visitStats, refInfo, localTrend.recentCount, visitTrend.recentCount]);
 
   const expectedGoalsLocal = useMemo(() => {
     let value = localStats.xgWeighted > 0 || visitStats.xgAgainstWeighted > 0
       ? localStats.xgWeighted * 0.62 + visitStats.xgAgainstWeighted * 0.38
       : localStats.gfAvg * 0.58 + visitStats.gcAvg * 0.42;
 
-    if (matchInfo.posicionLocal !== "" && matchInfo.posicionVisitante !== "") {
-      value += clamp((Number(matchInfo.posicionVisitante) - Number(matchInfo.posicionLocal)) * 0.025, -0.25, 0.35);
-    }
-    if (tieContext.necesidadLocal === "Alta") value += 0.18;
-    if (tieContext.necesidadVisitante === "Alta") value -= 0.06;
-    return clamp(value, 0.15, 4.2);
-  }, [localStats, visitStats, matchInfo.posicionLocal, matchInfo.posicionVisitante, tieContext.necesidadLocal, tieContext.necesidadVisitante]);
+    value += getTablePositionAdjustment(matchInfo.posicionLocal, matchInfo.posicionVisitante);
+    value += getMomentumAdjustment(localTrend);
+    value -= getMomentumAdjustment(visitTrend) * 0.45;
+    value += getHomeAdvantage({
+      matchType: matchInfo.tipo,
+      isElimination: tieContext.esEliminatoria,
+      isSecondLeg: !tieContext.esPartidoIda && tieContext.partidoIdaJugado,
+    });
+
+    if (tieContext.necesidadLocal === "Alta") value += 0.16;
+    if (tieContext.necesidadVisitante === "Alta") value -= 0.07;
+    return clamp(value, 0.15, 4.35);
+  }, [localStats, visitStats, matchInfo.posicionLocal, matchInfo.posicionVisitante, matchInfo.tipo, tieContext.necesidadLocal, tieContext.necesidadVisitante, tieContext.esEliminatoria, tieContext.esPartidoIda, tieContext.partidoIdaJugado, localTrend, visitTrend]);
 
   const expectedGoalsVisit = useMemo(() => {
     let value = visitStats.xgWeighted > 0 || localStats.xgAgainstWeighted > 0
       ? visitStats.xgWeighted * 0.62 + localStats.xgAgainstWeighted * 0.38
       : visitStats.gfAvg * 0.58 + localStats.gcAvg * 0.42;
 
-    if (matchInfo.posicionLocal !== "" && matchInfo.posicionVisitante !== "") {
-      value += clamp((Number(matchInfo.posicionLocal) - Number(matchInfo.posicionVisitante)) * 0.025, -0.25, 0.35);
-    }
-    if (tieContext.necesidadVisitante === "Alta") value += 0.18;
-    if (tieContext.necesidadLocal === "Alta") value -= 0.06;
-    return clamp(value, 0.15, 4.2);
-  }, [visitStats, localStats, matchInfo.posicionLocal, matchInfo.posicionVisitante, tieContext.necesidadVisitante, tieContext.necesidadLocal]);
+    value += getTablePositionAdjustment(matchInfo.posicionVisitante, matchInfo.posicionLocal);
+    value += getMomentumAdjustment(visitTrend);
+    value -= getMomentumAdjustment(localTrend) * 0.45;
+    value -= getHomeAdvantage({
+      matchType: matchInfo.tipo,
+      isElimination: tieContext.esEliminatoria,
+      isSecondLeg: !tieContext.esPartidoIda && tieContext.partidoIdaJugado,
+    }) * 0.5;
+
+    if (tieContext.necesidadVisitante === "Alta") value += 0.16;
+    if (tieContext.necesidadLocal === "Alta") value -= 0.07;
+    return clamp(value, 0.15, 4.15);
+  }, [visitStats, localStats, matchInfo.posicionLocal, matchInfo.posicionVisitante, matchInfo.tipo, tieContext.necesidadVisitante, tieContext.necesidadLocal, tieContext.esEliminatoria, tieContext.esPartidoIda, tieContext.partidoIdaJugado, localTrend, visitTrend]);
 
   const expectedTotalGoals = expectedGoalsLocal + expectedGoalsVisit;
   const expectedTotalShots = clamp(localStats.shotsWeighted * 0.55 + visitStats.shotsWeighted * 0.55, 8, 35);
@@ -1367,12 +1607,12 @@ const resetAll = () => {
     return reasons;
   }, [qualityScore, volatilityLabel, simulation.localWin, simulation.awayWin, simulation.draw, marketLines, matchTypeInfo, expectedTotalGoals, expectedTotalShotsOnTarget]);
 
-  const hardNoBet = noBetReasons.length >= 3;
-
-  const localTrend = useMemo(() => buildTrendSnapshot(localRows), [localRows]);
-  const visitTrend = useMemo(() => buildTrendSnapshot(visitRows), [visitRows]);
+  const hardNoBet = noBetReasons.length >= 4;
 
   const headToHeadAnalysis = useMemo(() => {
+    const iaWinner = probabilityToWinnerLabel(simulation.localWin, simulation.awayWin, simulation.draw);
+    const iaBtts = probabilityToYesNoLabel(simulation.btts);
+
     if (!headToHeadInfo.played || headToHeadInfo.golesLocal === "" || headToHeadInfo.golesVisitante === "") {
       return {
         available: false,
@@ -1385,10 +1625,19 @@ const resetAll = () => {
         previousGoals: 0,
         previousCorners: 0,
         previousCards: 0,
+        previousBtts: "-",
+        manualWinner: headToHeadInfo.manualGanador || "-",
+        manualBtts: headToHeadInfo.manualAmbosMarcan || "-",
+        cornersSimilarity: 0,
+        cardsSimilarity: 0,
+        winnerSimilarity: 0,
+        bttsSimilarity: 0,
+        overallSimilarity: 0,
         goalsText: "Carga un duelo anterior para comparar goles.",
         cornersText: "Carga un duelo anterior para comparar corners.",
         cardsText: "Carga un duelo anterior para comparar tarjetas.",
         outcomeText: "Aquí se comparará el ganador anterior contra la lectura actual.",
+        manualText: "Agrega tus casillas manuales para medir parecido entre antecedente, lectura propia e IA.",
         improvementTextLocal: buildImprovementText(matchInfo.local || "Local", localTrend),
         improvementTextVisit: buildImprovementText(matchInfo.visitante || "Visitante", visitTrend),
         prepText: "La preparación se leerá según forma reciente, xG, tiros y resultados de cada tramo.",
@@ -1400,7 +1649,9 @@ const resetAll = () => {
     const previousGoals = prevLocal + prevVisit;
     const previousCorners = headToHeadInfo.cornersTotal === "" ? 0 : Number(headToHeadInfo.cornersTotal);
     const previousCards = headToHeadInfo.tarjetasTotal === "" ? 0 : Number(headToHeadInfo.tarjetasTotal);
+    const previousWinnerLabel = prevLocal > prevVisit ? "Local" : prevVisit > prevLocal ? "Visitante" : "Empate";
     const previousWinner = resultLabelFromScore(prevLocal, prevVisit, headToHeadInfo.anteriorLocal || "Local", headToHeadInfo.anteriorVisitante || "Visitante");
+    const previousBtts = prevLocal > 0 && prevVisit > 0 ? "Sí" : "No";
 
     const projectedWinner = simulation.localWin > simulation.awayWin + 6
       ? `${matchInfo.local || "Local"} gana el próximo duelo en la lectura IA`
@@ -1418,6 +1669,12 @@ const resetAll = () => {
       if (prevVisit > prevLocal && simulation.localWin > simulation.awayWin + 4) return `${matchInfo.visitante || "Visitante"} ganó antes, pero hoy la lectura se mueve hacia ${matchInfo.local || "Local"}.`;
       return "El antecedente y la proyección actual no se alinean del todo; cuidado con sobrevalorar el choque previo.";
     })();
+
+    const cornersSimilarity = headToHeadInfo.manualCorners === "" ? 0 : similarityFromDifference(Number(headToHeadInfo.manualCorners), expectedTotalCorners, 4);
+    const cardsSimilarity = headToHeadInfo.manualTarjetas === "" ? 0 : similarityFromDifference(Number(headToHeadInfo.manualTarjetas), expectedTotalCards, 2.5);
+    const winnerSimilarity = similarityFromChoice(headToHeadInfo.manualGanador, iaWinner);
+    const bttsSimilarity = similarityFromChoice(headToHeadInfo.manualAmbosMarcan, iaBtts);
+    const overallSimilarity = Math.round(avg([cornersSimilarity, cardsSimilarity, winnerSimilarity, bttsSimilarity]));
 
     const localImprove = buildImprovementText(matchInfo.local || "Local", localTrend);
     const visitImprove = buildImprovementText(matchInfo.visitante || "Visitante", visitTrend);
@@ -1438,15 +1695,24 @@ const resetAll = () => {
       previousGoals,
       previousCorners,
       previousCards,
+      previousBtts,
+      manualWinner: headToHeadInfo.manualGanador || "-",
+      manualBtts: headToHeadInfo.manualAmbosMarcan || "-",
+      cornersSimilarity: Math.round(cornersSimilarity),
+      cardsSimilarity: Math.round(cardsSimilarity),
+      winnerSimilarity: Math.round(winnerSimilarity),
+      bttsSimilarity: Math.round(bttsSimilarity),
+      overallSimilarity,
       goalsText: compareDirection(previousGoals, expectedTotalGoals, `El duelo anterior dejó ${previousGoals} goles`),
       cornersText: previousCorners ? compareDirection(previousCorners, expectedTotalCorners, `El duelo anterior dejó ${previousCorners} corners`) : "No cargaste corners del duelo anterior.",
       cardsText: previousCards ? compareDirection(previousCards, expectedTotalCards, `El duelo anterior dejó ${previousCards} tarjetas`) : "No cargaste tarjetas del duelo anterior.",
       outcomeText,
+      manualText: `Comparación triple activa: IA actual (${iaWinner} / BTTS ${iaBtts}), duelo previo (${previousWinnerLabel} / BTTS ${previousBtts}) y lectura manual.` ,
       improvementTextLocal: localImprove,
       improvementTextVisit: visitImprove,
       prepText,
     };
-  }, [headToHeadInfo, simulation.localWin, simulation.awayWin, matchInfo.local, matchInfo.visitante, localTrend, visitTrend, expectedTotalGoals, expectedTotalCorners, expectedTotalCards]);
+  }, [headToHeadInfo, simulation.localWin, simulation.awayWin, simulation.draw, simulation.btts, matchInfo.local, matchInfo.visitante, localTrend, visitTrend, expectedTotalGoals, expectedTotalCorners, expectedTotalCards]);
 
   const suggestedPicks = useMemo(() => {
     if (hardNoBet) return [];
@@ -1455,7 +1721,8 @@ const resetAll = () => {
 
     function addCandidate(line: MarketLine, probability: number, reason: string) {
       const implied = impliedProb(line.odd);
-      const edge = probability - implied;
+      const rawEdge = probability - implied;
+      const edge = getDisplayedEdge(rawEdge, qualityScore, volatilityLabel);
       if (line.odd === "" || !line.enabled) return;
 
       const normalizedLabel = line.label.toLowerCase();
@@ -1465,8 +1732,8 @@ const resetAll = () => {
 
       const primaryMinProb = minProb;
       const primaryMinEdge = minEdge;
-      const fallbackMinProb = Math.max(53, minProb - 3);
-      const fallbackMinEdge = Math.max(2, minEdge - 1.5);
+      const fallbackMinProb = Math.max(50, minProb - 6);
+      const fallbackMinEdge = Math.max(1, minEdge - 3);
       const passesPrimary = probability >= primaryMinProb && edge >= primaryMinEdge;
       const passesFallback = probability >= fallbackMinProb && edge >= fallbackMinEdge;
 
@@ -1477,7 +1744,7 @@ const resetAll = () => {
       const fallback = !passesPrimary;
       const tier = fallback ? "Alternativo" : getTier(realConfidence, edge);
 
-      if ((!fallback && realConfidence < 54) || (fallback && realConfidence < 50)) return;
+      if ((!fallback && realConfidence < 50) || (fallback && realConfidence < 45)) return;
 
       candidates.push({
         id: line.id,
@@ -1487,7 +1754,7 @@ const resetAll = () => {
         edge,
         implied,
         risk: riskByProbability(probability),
-        reason: fallback ? buildFallbackReason(reason) : reason,
+        reason: `${fallback ? buildFallbackReason(reason) : reason}${getDataWarning(qualityScore, volatilityLabel) ? ` · ${getDataWarning(qualityScore, volatilityLabel)}.` : ""}`,
         realConfidence,
         tier,
         marketPriority,
@@ -1576,6 +1843,28 @@ const resetAll = () => {
         }
       }
 
+      if (line.family === "handicap" && line.line !== "" && (line.side === "local" || line.side === "visitante")) {
+        const numericLine = toNumber(line.line);
+        probability = computeHandicapProbability({
+          side: line.side,
+          line: numericLine,
+          expectedGoalsLocal,
+          expectedGoalsVisit,
+          simulation,
+        });
+        reason = `Hándicap ${line.side} recalculado con diferencia esperada de ${(expectedGoalsLocal - expectedGoalsVisit).toFixed(2)} goles.`;
+      }
+
+      if (line.family === "winHalf" && (line.side === "local" || line.side === "visitante")) {
+        probability = computeWinHalfProbability({
+          side: line.side,
+          expectedGoalsLocal,
+          expectedGoalsVisit,
+          simulation,
+        });
+        reason = `Se estima si ${line.side === "local" ? (matchInfo.local || "el local") : (matchInfo.visitante || "el visitante")} puede ganar al menos una mitad.`;
+      }
+
       if (line.family === "goals" && line.line !== "" && line.direction) {
         const numericLine = toNumber(line.line);
         probability =
@@ -1584,10 +1873,10 @@ const resetAll = () => {
             : probabilityFromLambdaUnder(shotBoostInfo.adjustedGoals, numericLine);
 
         if (line.direction === "under" && hardUnderBlockProfile && numericLine <= 1.5) {
-          probability -= 42;
+          probability -= 30;
           reason = "Under bloqueado: el volumen ofensivo no encaja con un partido tan corto.";
         } else if (line.direction === "under" && dynamicOpenProfile && numericLine <= 2.5) {
-          probability -= 22;
+          probability -= 15;
           reason = "Under castigado: el partido proyecta demasiada actividad ofensiva.";
         } else if ((usefulGoalsProfile || dynamicOpenProfile) && line.direction === "over" && numericLine === 1.5) {
           probability += 22;
@@ -1603,11 +1892,11 @@ const resetAll = () => {
         }
 
         if (oneSideDeadProfile && line.direction === "over" && numericLine === 1.5) {
-          probability -= 14;
+          probability -= 8;
           reason = "Over castigado: uno de los equipos proyecta muy poco ataque.";
         }
         if (oneSideDeadProfile && line.direction === "over" && numericLine === 2.5) {
-          probability -= 20;
+          probability -= 12;
           reason = "Over castigado fuerte: un equipo casi no genera volumen ofensivo.";
         }
         if (oneSideDeadProfile && line.direction === "under" && numericLine === 2.5) {
@@ -1675,7 +1964,7 @@ const resetAll = () => {
         probability = probabilityByHeuristic(expectedTotalCards, numericLine, 1.15, line.direction);
         if (lowCardProfile && line.direction === "over") probability -= 34;
         if (lowCardProfile && line.direction === "under") probability += 14;
-        if (openGameProfile && expectedTotalCards < 4.8 && line.direction === "over") probability -= 22;
+        if (openGameProfile && expectedTotalCards < 4.8 && line.direction === "over") probability -= 15;
         reason = `Tarjetas recalculadas con ${expectedTotalCards.toFixed(2)} esperadas y sesgo arbitral.`;
       }
 
@@ -1704,14 +1993,14 @@ const resetAll = () => {
       }
 
       if (qualityScore < 60) probability -= 6;
-      if (volatilityLabel === "Alta" && ["result", "doubleChance", "shots", "shotsOnTarget"].includes(line.family)) probability -= 4;
-      if (shotBoostInfo.active && ["result", "doubleChance"].includes(line.family)) probability -= 5;
-      if (dynamicOpenProfile && line.family === "result") probability -= 14;
-      if (dynamicOpenProfile && line.family === "doubleChance") probability -= 4;
+      if (volatilityLabel === "Alta" && ["result", "doubleChance", "shots", "shotsOnTarget", "handicap", "winHalf"].includes(line.family)) probability -= 3;
+      if (shotBoostInfo.active && ["result", "doubleChance", "handicap", "winHalf"].includes(line.family)) probability -= 3;
+      if (dynamicOpenProfile && line.family === "result") probability -= 8;
+      if (dynamicOpenProfile && ["doubleChance", "handicap"].includes(line.family)) probability -= 3;
       if (line.family === "result" && line.side === "local" && localShotDominance) probability += 16;
       if (line.family === "result" && line.side === "visitante" && visitShotDominance) probability += 16;
-      if (line.family === "doubleChance" && line.side === "local" && localShotDominance) probability += 9;
-      if (line.family === "doubleChance" && line.side === "visitante" && visitShotDominance) probability += 9;
+      if (["doubleChance", "handicap", "winHalf"].includes(line.family) && line.side === "local" && localShotDominance) probability += 8;
+      if (["doubleChance", "handicap", "winHalf"].includes(line.family) && line.side === "visitante" && visitShotDominance) probability += 8;
       if (openGameProfile && line.family === "cards") probability -= 12;
       if (tieContext.esEliminatoria && (tieContext.necesidadLocal === "Alta" || tieContext.necesidadVisitante === "Alta")) {
         if (line.family === "goals" && line.direction === "over") probability += 3;
@@ -1728,6 +2017,56 @@ const resetAll = () => {
 
       addCandidate(line, clamp(probability, 0, 100), reason);
     }
+
+ if (!candidates.length && !hardNoBet) {
+      if (expectedTotalGoals >= 2.1) {
+        candidates.push({
+          id: `fallback-goals-${makeId()}`,
+          label: decoratePickLabel("Más de 1.5 goles", "goals", "total", matchInfo.local, matchInfo.visitante),
+          family: "goals",
+          probability: clamp(simulation.over15, 52, 75),
+          edge: clamp(simulation.over15 - 50, 1, 8),
+          implied: 50,
+          risk: riskByProbability(clamp(simulation.over15, 52, 75)),
+          reason: "Pick de respaldo: el partido no dio una señal top, pero sí una base mínima ofensiva.",
+          realConfidence: clamp(simulation.over15 * 0.9, 47, 72),
+          tier: "Alternativo",
+          marketPriority: 8,
+          fallback: true,
+        });
+      } else if (simulation.localWin >= simulation.awayWin + 6) {
+        candidates.push({
+          id: `fallback-local-${makeId()}`,
+          label: decoratePickLabel("Local o empate", "doubleChance", "local", matchInfo.local, matchInfo.visitante),
+          family: "doubleChance",
+          probability: clamp(simulation.localWin + simulation.draw, 52, 82),
+          edge: clamp(simulation.localWin + simulation.draw - 55, 1, 9),
+          implied: 55,
+          risk: riskByProbability(clamp(simulation.localWin + simulation.draw, 52, 82)),
+          reason: "Pick de respaldo: no hubo señal top, pero el modelo inclina el partido hacia el local.",
+          realConfidence: clamp((simulation.localWin + simulation.draw) * 0.88, 47, 75),
+          tier: "Alternativo",
+          marketPriority: 8,
+          fallback: true,
+        });
+      } else if (simulation.awayWin >= simulation.localWin + 6) {
+        candidates.push({
+          id: `fallback-away-${makeId()}`,
+          label: decoratePickLabel("Visitante o empate", "doubleChance", "visitante", matchInfo.local, matchInfo.visitante),
+          family: "doubleChance",
+          probability: clamp(simulation.awayWin + simulation.draw, 52, 82),
+          edge: clamp(simulation.awayWin + simulation.draw - 55, 1, 9),
+          implied: 55,
+          risk: riskByProbability(clamp(simulation.awayWin + simulation.draw, 52, 82)),
+          reason: "Pick de respaldo: no hubo señal top, pero el modelo inclina el partido hacia el visitante.",
+          realConfidence: clamp((simulation.awayWin + simulation.draw) * 0.88, 47, 75),
+          tier: "Alternativo",
+          marketPriority: 8,
+          fallback: true,
+        });
+      }
+    }
+
 
     const uniqueByFamily = new Map<string, SuggestedPick>();
 
@@ -1766,34 +2105,56 @@ const resetAll = () => {
   }, [hardNoBet, marketLines, minProb, minEdge, simulation, expectedTotalGoals, expectedHalftimeGoals, expectedTotalCorners, expectedTotalCards, expectedTotalShots, expectedTotalShotsOnTarget, expectedLocalTeamGoals, expectedVisitTeamGoals, qualityScore, volatilityLabel, tieContext, shotBoostInfo, localStats, visitStats, localTags, visitTags, matchTypeInfo, matchInfo.local, matchInfo.visitante]);
 
   const crossSuggestions = useMemo(() => {
-    const items: { title: string; explanation: string; picks: string[]; side: "local" | "visitante" | "neutral"; confidence: number }[] = [];
-    const localName = matchInfo.local.trim() || "Local";
-    const visitName = matchInfo.visitante.trim() || "Visitante";
-    const hasLocalTag = (needle: string) => localTags.some((tag) => tag.toLowerCase().includes(needle));
-    const hasVisitTag = (needle: string) => visitTags.some((tag) => tag.toLowerCase().includes(needle));
-    const addCross = (item: { title: string; explanation: string; picks: string[]; side: "local" | "visitante" | "neutral"; confidence: number }) => {
-      items.push({ ...item, confidence: clamp(item.confidence, 52, 92) });
-    };
+const items: { title: string; explanation: string; picks: string[]; side: "local" | "visitante" | "neutral"; confidence: number }[] = [];
+const localName = matchInfo.local.trim() || "Local";
+const visitName = matchInfo.visitante.trim() || "Visitante";
+const hasLocalTag = (needle: string) => localTags.some((tag) => tag.toLowerCase().includes(needle));
+const hasVisitTag = (needle: string) => visitTags.some((tag) => tag.toLowerCase().includes(needle));
 
-    if (!localStats.count || !visitStats.count) return items;
+const addCross = (item: { title: string; explanation: string; picks: string[]; side: "local" | "visitante" | "neutral"; confidence: number }) => {
+  items.push({ ...item, confidence: clamp(item.confidence, 50, 90) });
+};
 
-    if ((localStats.winPct >= 55 && visitStats.lossPct >= 40) || (hasLocalTag("gana") && hasVisitTag("pierde"))) {
+
+const minCrossMatches = 5;
+
+if (localStats.count < minCrossMatches || visitStats.count < minCrossMatches) {
+  return items;
+}
+
+    if (
+  (localStats.winPct >= 45 && visitStats.lossPct >= 30) ||
+  (simulation.localWin >= simulation.awayWin + 8) ||
+  (hasLocalTag("gana") && hasVisitTag("pierde"))
+) {
       addCross({
         title: `${localName} fuerte vs ${visitName} frágil`,
         explanation: `${localName} gana seguido y ${visitName} pierde con frecuencia. El cruce favorece mercados del local.`,
         picks: [`${localName} gana`, `${localName} o empate`],
         side: "local",
-        confidence: 56 + (localStats.winPct - visitStats.lossPct) * 0.18 + (localStats.gfAvg - visitStats.gfAvg) * 6 + (simulation.localWin - simulation.awayWin) * 0.22,
+        confidence:
+  54 +
+  (localStats.winPct - visitStats.lossPct) * 0.14 +
+  (localStats.gfAvg - visitStats.gfAvg) * 5 +
+  (simulation.localWin - simulation.awayWin) * 0.18,
       });
     }
 
-    if ((visitStats.winPct >= 55 && localStats.lossPct >= 40) || (hasVisitTag("gana") && hasLocalTag("pierde"))) {
+    if (
+  (visitStats.winPct >= 45 && localStats.lossPct >= 30) ||
+  (simulation.awayWin >= simulation.localWin + 8) ||
+  (hasVisitTag("gana") && hasLocalTag("pierde"))
+) {
       addCross({
         title: `${visitName} fuerte vs ${localName} frágil`,
         explanation: `${visitName} trae mejor patrón de resultados y ${localName} se cae más de lo deseado. El cruce favorece mercados del visitante.`,
         picks: [`${visitName} gana`, `${visitName} o empate`],
         side: "visitante",
-        confidence: 56 + (visitStats.winPct - localStats.lossPct) * 0.18 + (visitStats.gfAvg - localStats.gfAvg) * 6 + (simulation.awayWin - simulation.localWin) * 0.22,
+        confidence:
+  54 +
+  (visitStats.winPct - localStats.lossPct) * 0.14 +
+  (visitStats.gfAvg - localStats.gfAvg) * 5 +
+  (simulation.awayWin - simulation.localWin) * 0.18,
       });
     }
 
@@ -1843,6 +2204,71 @@ const resetAll = () => {
       });
     }
 
+if (
+  localStats.gfAvg >= 1.2 &&
+  visitStats.gcAvg >= 1.1
+) {
+  addCross({
+    title: `Ataque del ${localName} vs defensa del ${visitName}`,
+    explanation: `${localName} tiene producción ofensiva suficiente y ${visitName} concede más de lo ideal. Hay valor en mercados ofensivos del local.`,
+    picks: [`${localName} más de 0.5 goles`, `${localName} gana o empate`, `Más de 1.5 goles`],
+    side: "local",
+    confidence:
+      53 +
+      (localStats.gfAvg - 1.1) * 10 +
+      (visitStats.gcAvg - 1.0) * 10 +
+      (expectedGoalsLocal - expectedGoalsVisit) * 7,
+  });
+}
+
+if (
+  visitStats.gfAvg >= 1.2 &&
+  localStats.gcAvg >= 1.1
+) {
+  addCross({
+    title: `Ataque del ${visitName} vs defensa del ${localName}`,
+    explanation: `${visitName} también encuentra forma ofensiva y ${localName} concede espacios. Puede haber valor en goles del visitante.`,
+    picks: [`${visitName} más de 0.5 goles`, `Ambos marcan`, `Más de 1.5 goles`],
+    side: "visitante",
+    confidence:
+      53 +
+      (visitStats.gfAvg - 1.1) * 10 +
+      (localStats.gcAvg - 1.0) * 10 +
+      (expectedGoalsVisit - expectedGoalsLocal) * 7,
+  });
+}
+
+if (
+  expectedTotalGoals >= 2.25 ||
+  (localStats.bttsPct >= 45 && visitStats.bttsPct >= 45)
+) {
+  addCross({
+    title: `Cruce ofensivo general`,
+    explanation: `El partido muestra señales suficientes para pensar en intercambio o al menos en una línea corta de goles.`,
+    picks: [`Más de 1.5 goles`, `Ambos marcan`],
+    side: "neutral",
+    confidence:
+      52 +
+      (expectedTotalGoals - 2) * 12 +
+      ((localStats.bttsPct + visitStats.bttsPct) / 2 - 40) * 0.18,
+  });
+}
+
+if (
+  expectedTotalCorners >= 8.2 ||
+  (localStats.totalCornersWeighted >= 8 && visitStats.totalCornersWeighted >= 8)
+) {
+  addCross({
+    title: `Cruce de corners activo`,
+    explanation: `Las métricas del partido sí dejan una lectura útil para corners, aunque no sea extrema.`,
+    picks: [`Más de 7.5 corners`, `Más de 8.5 corners`],
+    side: "neutral",
+    confidence:
+      52 +
+      (expectedTotalCorners - 7.5) * 7,
+  });
+}
+
     if (
       (hasLocalTag("alto en corners") && visitStats.oppCornersAvg >= 4.8) ||
       (localStats.ownCornersAvg >= 5 && visitStats.oppCornersAvg >= 4.6)
@@ -1883,6 +2309,34 @@ const resetAll = () => {
       });
     }
 
+if (!items.length && localStats.count >= 5 && visitStats.count >= 5) {
+  if (expectedTotalGoals >= 2.1) {
+    addCross({
+      title: "Lectura base ofensiva",
+      explanation: "No hubo un cruce dominante de etiquetas, pero la proyección general sí permite una lectura ofensiva básica.",
+      picks: ["Más de 1.5 goles"],
+      side: "neutral",
+      confidence: 52 + (expectedTotalGoals - 2) * 10,
+    });
+  } else if (simulation.localWin >= simulation.awayWin + 6) {
+    addCross({
+      title: `${localName} ligeramente mejor perfilado`,
+      explanation: "No hay un dominio brutal en etiquetas, pero el modelo sí inclina el partido hacia el local.",
+      picks: [`${localName} o empate`],
+      side: "local",
+      confidence: 52 + (simulation.localWin - simulation.awayWin) * 0.2,
+    });
+  } else if (simulation.awayWin >= simulation.localWin + 6) {
+    addCross({
+      title: `${visitName} ligeramente mejor perfilado`,
+      explanation: "No hay un dominio brutal en etiquetas, pero el modelo sí inclina el partido hacia el visitante.",
+      picks: [`${visitName} o empate`],
+      side: "visitante",
+      confidence: 52 + (simulation.awayWin - simulation.localWin) * 0.2,
+    });
+  }
+}
+
     const unique = new Set<string>();
     return items
       .filter((item) => {
@@ -1908,6 +2362,23 @@ const resetAll = () => {
     () => suggestedPicks.filter((pick) => pickDecisions[pick.id] === "selected"),
     [suggestedPicks, pickDecisions]
   );
+
+  const resolvedStats = useMemo(() => {
+    const total = resolvedPicks.length;
+    const wins = resolvedPicks.filter((pick) => pick.won).length;
+    const roiUnits = resolvedPicks.reduce((acc, pick) => acc + (pick.won ? Math.max(pick.odd - 1, 0) : -1), 0);
+    const byFamily: Record<string, { total: number; wins: number }> = {};
+    resolvedPicks.forEach((pick) => {
+      const key = pick.family;
+      byFamily[key] = byFamily[key] || { total: 0, wins: 0 };
+      byFamily[key].total += 1;
+      if (pick.won) byFamily[key].wins += 1;
+    });
+    const familyRows = Object.entries(byFamily)
+      .map(([family, row]) => ({ family, total: row.total, hitRate: row.total ? (row.wins / row.total) * 100 : 0 }))
+      .sort((a, b) => b.hitRate - a.hitRate);
+    return { total, wins, hitRate: total ? (wins / total) * 100 : 0, roiUnits, familyRows };
+  }, [resolvedPicks]);
 
   const simulatedTicket = useMemo(() => {
     if (!selectedPicks.length) return null;
@@ -1965,6 +2436,24 @@ const resetAll = () => {
       ...prev,
       [id]: prev[id] === decision ? null : decision,
     }));
+  }
+
+  function registerResolvedPick(pick: SuggestedPick, won: boolean) {
+    const oddLine = marketLines.find((line) => line.id === pick.id)?.odd ?? "0";
+    const odd = Number(String(oddLine).replace(",", ".")) || 0;
+    const matchLabel = `${matchInfo.local || "Local"} vs ${matchInfo.visitante || "Visitante"}`;
+    setResolvedPicks((prev) => [
+      {
+        id: `${pick.id}-${Date.now()}-${won ? "W" : "L"}`,
+        matchLabel,
+        pickLabel: pick.label,
+        family: pick.family,
+        odd,
+        won,
+        resolvedAt: new Date().toISOString(),
+      },
+      ...prev,
+    ].slice(0, 200));
   }
 
   function handleRowChange(side: TeamCondition, index: number, field: keyof TeamRow, raw: string) {
@@ -2034,7 +2523,7 @@ const resetAll = () => {
       return next;
     });
 
-    alert(`Perfil de ${teamName} guardado.`);
+    alert(`Perfil de ${teamName} (${side}) guardado y actualizado para esa posición.`);
   }
 
   function loadTeamProfile(profile: TeamProfile) {
@@ -2095,9 +2584,10 @@ const resetAll = () => {
       shotsOnTarget: 5.5,
       teamGoals: 0.5,
       halftimeGoals: 0.5,
+      handicap: -0.5,
     };
-    const side = family === "result" || family === "doubleChance" || family === "teamGoals" ? "local" : "total";
-    const direction = family === "btts" ? "yes" : family === "result" || family === "doubleChance" ? "pick" : "over";
+    const side = family === "result" || family === "doubleChance" || family === "teamGoals" || family === "handicap" || family === "winHalf" ? "local" : "total";
+    const direction = family === "btts" ? "yes" : family === "result" || family === "doubleChance" || family === "handicap" || family === "winHalf" ? "pick" : "over";
     setMarketLines((prev) => [
       ...prev,
       {
@@ -2224,24 +2714,35 @@ const resetAll = () => {
           setMinProb(raw.minProb ?? 56);
           return;
         }
-        if (target === "referee") {
-          const incoming = raw.refInfo ?? raw;
-          setRefInfo({
-            nombre: incoming.nombre ?? "",
-            promedioAmarillas: incoming.promedioAmarillas ?? "",
-            promedioRojas: incoming.promedioRojas ?? "",
-          });
-          return;
-        }
+     if (target === "referee") {
+  const incoming = raw.refInfo ?? raw;
+  setRefInfo({
+    nombre: incoming.nombre ?? "",
+    promedioAmarillas: incoming.promedioAmarillas ?? "",
+    promedioRojas: incoming.promedioRojas ?? "",
+    sinConfirmar: incoming.sinConfirmar ?? false,
+  });
+  return;
+}
         const profile = raw.profile ?? raw;
         if (target === "local") {
           setMatchInfo((prev) => ({ ...prev, local: profile.teamName ?? prev.local, paisLocal: profile.country ?? prev.paisLocal, liga: prev.liga || profile.league || "" }));
           setLocalRows(profile.rows ?? createEmptyRows());
-          setLocalMeta({ style: profile.style ?? "Mixto", idealMarkets: profile.idealMarkets ?? "", notes: profile.notes ?? "" });
+         setLocalMeta({
+  style: (profile.style as TeamStyle) ?? "Mixto",
+  idealMarkets: profile.idealMarkets ?? "",
+  notes: profile.notes ?? "",
+  favorite: profile.favorite ?? false,
+});
         } else {
           setMatchInfo((prev) => ({ ...prev, visitante: profile.teamName ?? prev.visitante, paisVisitante: profile.country ?? prev.paisVisitante, liga: prev.liga || profile.league || "" }));
           setVisitRows(profile.rows ?? createEmptyRows());
-          setVisitMeta({ style: profile.style ?? "Mixto", idealMarkets: profile.idealMarkets ?? "", notes: profile.notes ?? "" });
+          setVisitMeta({
+  style: (profile.style as TeamStyle) ?? "Mixto",
+  idealMarkets: profile.idealMarkets ?? "",
+  notes: profile.notes ?? "",
+  favorite: profile.favorite ?? false,
+});
         }
       } catch (error) {
         alert("No se pudo importar el archivo JSON.");
@@ -2287,21 +2788,14 @@ const resetAll = () => {
     }
     const map = new Map<string, TeamProfile>();
     [...current, ...savedTeams].forEach((profile) => {
-      map.set(`${profile.teamName}__${profile.country}__${profile.condition}`, profile);
+      map.set(`${profile.teamName}__${profile.condition}`.toLowerCase(), profile);
     });
     return Array.from(map.values());
   }, [savedTeams, matchInfo, localMeta, visitMeta, localRows, visitRows]);
 
   const teamCategoryBoard = useMemo(() => {
     const categories = ["Ganador", "Empate", "Pierde", "Goleador", "Recibe goles", "Corners", "Tarjetas", "Remates", "A puerta"];
-    return categories.map((category) => ({
-      category,
-      teams: rankingProfiles
-        .map((profile) => ({ profile, stats: analyzeRows(profile.rows), score: getCategoryScore(category, analyzeRows(profile.rows)) }))
-        .filter((item) => item.stats.count > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 6),
-    }));
+    return buildCompactRankingBoard(rankingProfiles, categories, 3, 10);
   }, [rankingProfiles]);
 
   const favoriteProfiles = useMemo(
@@ -2309,15 +2803,7 @@ const resetAll = () => {
     [rankingProfiles]
   );
 
-  const teamsByCountry = useMemo(() => {
-    const grouped: Record<string, TeamProfile[]> = {};
-    rankingProfiles.forEach((profile) => {
-      const key = profile.country?.trim() || "Sin país";
-      grouped[key] = grouped[key] || [];
-      grouped[key].push(profile);
-    });
-    return Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0], "es"));
-  }, [rankingProfiles]);
+  const profilesGroupedByLeagueCountry = useMemo(() => groupProfilesByLeagueCountry(savedTeams), [savedTeams]);
 
   return (
     <div className="min-h-screen bg-slate-950 p-4 text-white md:p-6">
@@ -2480,6 +2966,7 @@ const resetAll = () => {
             meta={localMeta}
             onMetaChange={(patch) => setLocalMeta((prev) => ({ ...prev, ...patch }))}
             suggestions={allNameSuggestions}
+            streakText={localStreakText}
           />
           <TeamBlock
             title="5. Datos del visitante"
@@ -2493,6 +2980,7 @@ const resetAll = () => {
             meta={visitMeta}
             onMetaChange={(patch) => setVisitMeta((prev) => ({ ...prev, ...patch }))}
             suggestions={allNameSuggestions}
+            streakText={visitStreakText}
           />
         </div>
 
@@ -2526,65 +3014,72 @@ const resetAll = () => {
         <Section title="5.5 Ranking de etiquetas y favoritos" subtitle="Aquí se ordenan los equipos por fortaleza detectada en cada etiqueta o categoría para que puedas ir directo al mercado que más conviene.">
           <div className="grid gap-4 xl:grid-cols-3">
             {teamCategoryBoard.map((bucket) => (
-              <div key={bucket.category} className="rounded-2xl border border-slate-700 bg-slate-800/90 p-4">
-                <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">{bucket.category}</div>
+              <details key={bucket.category} className="rounded-2xl border border-slate-700 bg-slate-800/90 p-4">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">{bucket.category}</div>
+                    <div className="mt-1 text-xs text-slate-300">Top {bucket.teams.length} · máximo 3 rankings por equipo</div>
+                  </div>
+                  <div className="text-lg text-cyan-200">🔽</div>
+                </summary>
                 <div className="mt-3 space-y-2">
                   {bucket.teams.length ? bucket.teams.map((item, index) => (
-                    <div key={`${bucket.category}-${item.profile.teamName}-${index}`} className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm">
-                      <span className="font-medium text-white">{index + 1}. {item.profile.teamName}</span>
-                      <span className="text-cyan-200">{item.score.toFixed(1)}</span>
+                    <div key={`${bucket.category}-${item.profile.teamName}-${item.profile.condition}-${index}`} className="flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm">
+                      <span className="font-medium text-white">{index + 1}. {item.profile.teamName} <span className="text-xs text-slate-400">({item.profile.condition})</span></span>
+                      <span className="text-cyan-200">{item.score.toFixed(1)}%</span>
                     </div>
                   )) : <div className="text-sm text-slate-300">Sin equipos todavía.</div>}
                 </div>
-              </div>
+              </details>
             ))}
 
-            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
-              <div className="text-sm font-semibold uppercase tracking-wide text-emerald-200">Equipos favoritos / que te hacen ganar</div>
+            <details className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold uppercase tracking-wide text-emerald-200">Equipos favoritos / que te hacen ganar</div>
+                  <div className="mt-1 text-xs text-emerald-100">Lista compacta de favoritos guardados</div>
+                </div>
+                <div className="text-lg text-emerald-200">🔽</div>
+              </summary>
               <div className="mt-3 space-y-2">
                 {favoriteProfiles.length ? favoriteProfiles.map((profile) => (
                   <div key={`fav-${profile.teamName}-${profile.condition}`} className="rounded-xl border border-emerald-300 bg-white px-3 py-2 text-sm text-slate-900">
-                    <div className="font-semibold">{profile.teamName}</div>
+                    <div className="font-semibold">{profile.teamName} <span className="text-xs text-slate-500">({profile.condition})</span></div>
                     <div className="text-xs text-slate-600">{profile.country || "Sin país"} · {profile.league || "Sin liga"}</div>
                   </div>
                 )) : <div className="text-sm text-emerald-100">Marca equipos como favoritos dentro de local o visitante para verlos aquí.</div>}
               </div>
-            </div>
+            </details>
           </div>
         </Section>
 
 {savedTeams.length ? (
-          <Section title="6. Perfiles guardados" subtitle="Liga, país y datos del equipo quedan listos para reutilizar.">
-            <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {savedTeams.map((profile) => (
-                  <div key={`${profile.teamName}-${profile.condition}`} className="rounded-2xl border border-slate-200 bg-white p-4 text-left">
-                    <button onClick={() => loadTeamProfile(profile)} className="w-full text-left transition hover:opacity-90">
-                      <div className="font-semibold text-slate-900">{profile.teamName}</div>
-                      <div className="mt-1 text-sm text-slate-700">{profile.condition} · {profile.country || "Sin país"} · {profile.league || "Sin liga"}</div>
-                      {profile.favorite ? <div className="mt-2 text-xs font-semibold text-emerald-700">Favorito</div> : null}
-                    </button>
-                    <button onClick={() => deleteTeamProfile(profile)} className="mt-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">Eliminar perfil</button>
-                  </div>
-                ))}
-              </div>
-              <div className="rounded-2xl border border-slate-700 bg-slate-800/90 p-4">
-                <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Equipos por país</div>
-                <div className="mt-3 space-y-3">
-                  {teamsByCountry.map(([country, profiles]) => (
-                    <div key={country}>
-                      <div className="font-semibold text-white">{country}</div>
-                      <div className="mt-1 flex flex-wrap gap-2">
-                        {profiles.map((profile) => (
-                          <span key={`${country}-${profile.teamName}-${profile.condition}`} className="rounded-full border border-slate-600 bg-slate-900 px-3 py-1 text-xs text-slate-200">
-                            {profile.teamName}
-                          </span>
-                        ))}
-                      </div>
+          <Section title="6. Perfiles guardados" subtitle="Liga, país y datos del equipo quedan listos para reutilizar en formato compacto.">
+            <div className="space-y-4">
+              {profilesGroupedByLeagueCountry.map((group) => (
+                <details key={group.group} className="rounded-2xl border border-slate-700 bg-slate-800/90 p-4">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold text-white">{group.group}</div>
+                      <div className="mt-1 text-xs text-slate-300">{group.items.length} perfil(es)</div>
                     </div>
-                  ))}
-                </div>
-              </div>
+                    <div className="text-lg text-cyan-200">🔽</div>
+                  </summary>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {group.items.map((profile) => (
+                      <div key={`${profile.teamName}-${profile.condition}`} className="rounded-2xl border border-slate-200 bg-white p-3 text-left">
+                        <button onClick={() => loadTeamProfile(profile)} className="w-full text-left transition hover:opacity-90">
+                          <div className="font-semibold text-slate-900">{profile.teamName}</div>
+                          <div className="mt-1 text-sm text-slate-700">{profile.condition} · {profile.country || "Sin país"}</div>
+                          <div className="text-xs text-slate-500">{profile.league || "Sin liga"}</div>
+                          {profile.favorite ? <div className="mt-2 text-xs font-semibold text-emerald-700">Favorito</div> : null}
+                        </button>
+                        <button onClick={() => deleteTeamProfile(profile)} className="mt-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">Eliminar perfil</button>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              ))}
             </div>
           </Section>
         ) : null}
@@ -2594,7 +3089,7 @@ const resetAll = () => {
           <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-3">
           <div className="mb-3 rounded-xl border border-cyan-400/30 bg-slate-950/40 px-3 py-2 text-sm text-cyan-100">Usa este bloque para guardar un perfil de cuotas que repites seguido y cargarlo más rápido en otros partidos. Los cambios de formato en línea/cuota no rompen la IA: solo mejoran cómo escribes decimales y luego el sistema los convierte al calcular.</div>
           <div className="flex flex-wrap gap-2">
-            {(["result", "doubleChance", "goals", "btts", "corners", "cards", "shots", "shotsOnTarget", "teamGoals", "halftimeGoals"] as MarketFamily[]).map((family) => (
+            {(["result", "doubleChance", "handicap", "winHalf", "goals", "btts", "corners", "cards", "shots", "shotsOnTarget", "teamGoals", "halftimeGoals"] as MarketFamily[]).map((family) => (
               <button key={family} onClick={() => addMarketLine(family)} className="rounded-full border border-slate-300 bg-white px-3 py-1 text-sm text-slate-900">
                 + {getMarketFamilyLabel(family)}
               </button>
@@ -2625,7 +3120,7 @@ const resetAll = () => {
                 <Select
                   value={line.family}
                   onChange={(v) => updateMarketLine(line.id, { family: v as MarketFamily })}
-                  options={["result", "doubleChance", "goals", "btts", "corners", "cards", "shots", "shotsOnTarget", "teamGoals", "halftimeGoals"]}
+                  options={["result", "doubleChance", "handicap", "winHalf", "goals", "btts", "corners", "cards", "shots", "shotsOnTarget", "teamGoals", "halftimeGoals"]}
                 />
                 <Select
                   value={line.side ?? "total"}
@@ -2635,7 +3130,7 @@ const resetAll = () => {
                 <Select
                   value={line.direction ?? "over"}
                   onChange={(v) => updateMarketLine(line.id, { direction: v as MarketLine["direction"] })}
-                  options={line.family === "btts" ? ["yes", "no"] : line.family === "result" || line.family === "doubleChance" ? ["pick"] : ["over", "under"]}
+                  options={line.family === "btts" ? ["yes", "no"] : ["result", "doubleChance", "handicap", "winHalf"].includes(line.family) ? ["pick"] : ["over", "under"]}
                 />
                 <Input value={line.line || ""} onChange={(v) => updateMarketLine(line.id, { line: v })} placeholder="Línea" type="text" inputMode="decimal" />
                 <Input value={line.odd} onChange={(v) => updateMarketLine(line.id, { odd: v })} placeholder="Cuota" type="text" inputMode="decimal" />
@@ -2753,7 +3248,7 @@ const resetAll = () => {
               </div>
             ) : (
               <div className="rounded-2xl border border-slate-300 bg-white p-4 text-sm text-slate-700">
-                Aún no hay suficiente cruce limpio entre ambos perfiles. Llena más partidos o afina local/visitante para que la IA compare mejor.
+                Aún no hay cruce suficiente para mostrar sugerencias claras. Mínimo 5 partidos por equipo y, si no aparece nada, revisa si la muestra está muy pareja o muy pobre.
               </div>
             )}
           </div>
@@ -2764,7 +3259,7 @@ const resetAll = () => {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold uppercase tracking-wide text-cyan-200">Historial de choque IA</div>
-                  <div className="mt-1 text-sm text-slate-100">Carga el último duelo directo y la app lo compara contra lo que hoy espera tu modelo.</div>
+                  <div className="mt-1 text-sm text-slate-100">Carga el último duelo directo y compara IA actual vs choque previo vs tu lectura manual con % de parecido.</div>
                 </div>
                 <label className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/30 bg-slate-950/30 px-3 py-2 text-sm text-cyan-100">
                   <input
@@ -2780,11 +3275,14 @@ const resetAll = () => {
                 <Input value={headToHeadInfo.fecha} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, fecha: v }))} placeholder="Fecha del último duelo" type="date" />
                 <Input value={headToHeadInfo.anteriorLocal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, anteriorLocal: v }))} placeholder="Local anterior" list="team-names" />
                 <Input value={headToHeadInfo.anteriorVisitante} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, anteriorVisitante: v }))} placeholder="Visitante anterior" list="team-names" />
-                <TextArea value={headToHeadInfo.notas} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, notas: v }))} placeholder="Lectura manual del choque anterior" />
                 <Input value={headToHeadInfo.golesLocal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, golesLocal: v === "" ? "" : Number(v) }))} placeholder="Goles local" type="number" inputMode="numeric" />
                 <Input value={headToHeadInfo.golesVisitante} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, golesVisitante: v === "" ? "" : Number(v) }))} placeholder="Goles visitante" type="number" inputMode="numeric" />
                 <Input value={headToHeadInfo.cornersTotal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, cornersTotal: v === "" ? "" : Number(v) }))} placeholder="Corners totales" type="number" inputMode="numeric" />
                 <Input value={headToHeadInfo.tarjetasTotal} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, tarjetasTotal: v === "" ? "" : Number(v) }))} placeholder="Tarjetas totales" type="number" inputMode="numeric" />
+                <Input value={headToHeadInfo.manualCorners} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, manualCorners: v === "" ? "" : Number(v) }))} placeholder="Manual total corners" type="number" inputMode="numeric" />
+                <Input value={headToHeadInfo.manualTarjetas} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, manualTarjetas: v === "" ? "" : Number(v) }))} placeholder="Manual total tarjetas" type="number" inputMode="numeric" />
+                <Select value={headToHeadInfo.manualAmbosMarcan} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, manualAmbosMarcan: v as HeadToHeadInfo["manualAmbosMarcan"] }))} options={["", "Sí", "No"]} />
+                <Select value={headToHeadInfo.manualGanador} onChange={(v) => setHeadToHeadInfo((prev) => ({ ...prev, manualGanador: v as HeadToHeadInfo["manualGanador"] }))} options={["", "Local", "Empate", "Visitante"]} />
               </div>
 
               <div className="mt-4 grid gap-4 xl:grid-cols-2">
@@ -2793,10 +3291,10 @@ const resetAll = () => {
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     <StatCard title="Ganador anterior" value={headToHeadAnalysis.previousWinner} subtitle={headToHeadInfo.fecha || "Sin fecha"} />
                     <StatCard title="Lectura próximo duelo" value={headToHeadAnalysis.projectedWinner} subtitle="Proyección IA" />
-                    <StatCard title="Goles anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousGoals) : "-"} subtitle={`Esperados hoy ${expectedTotalGoals.toFixed(2)}`} />
-                    <StatCard title="Corners anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCorners || "-") : "-"} subtitle={`Esperados hoy ${expectedTotalCorners.toFixed(2)}`} />
-                    <StatCard title="Tarjetas anteriores" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCards || "-") : "-"} subtitle={`Esperadas hoy ${expectedTotalCards.toFixed(2)}`} />
-                    <StatCard title="Resultado esperado hoy" value={simulation.localWin > simulation.awayWin ? `${matchInfo.local || "Local"} mejor` : simulation.awayWin > simulation.localWin ? `${matchInfo.visitante || "Visitante"} mejor` : "Muy parejo"} subtitle={`Empate ${formatPct(simulation.draw)}`} />
+                    <StatCard title="Corners choque previo" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCorners || "-") : "-"} subtitle={`IA hoy ${expectedTotalCorners.toFixed(2)}`} />
+                    <StatCard title="Tarjetas choque previo" value={headToHeadAnalysis.available ? String(headToHeadAnalysis.previousCards || "-") : "-"} subtitle={`IA hoy ${expectedTotalCards.toFixed(2)}`} />
+                    <StatCard title="Manual ambos marcan" value={headToHeadAnalysis.manualBtts} subtitle={`Previo ${headToHeadAnalysis.previousBtts}`} />
+                    <StatCard title="Parecido global" value={`${headToHeadAnalysis.overallSimilarity}%`} subtitle="IA vs previo vs manual" />
                   </div>
                 </div>
 
@@ -2807,9 +3305,13 @@ const resetAll = () => {
                     <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.goalsText}</div>
                     <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.cornersText}</div>
                     <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">{headToHeadAnalysis.cardsText}</div>
-                    {headToHeadInfo.notas.trim() ? (
-                      <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-amber-100">Apunte manual: {headToHeadInfo.notas}</div>
-                    ) : null}
+                    <div className="rounded-xl border border-amber-300/30 bg-amber-500/10 p-3 text-amber-100">{headToHeadAnalysis.manualText}</div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">Parecido ganador: {headToHeadAnalysis.winnerSimilarity}%</div>
+                      <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">Parecido ambos marcan: {headToHeadAnalysis.bttsSimilarity}%</div>
+                      <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">Parecido tarjetas: {headToHeadAnalysis.cardsSimilarity}%</div>
+                      <div className="rounded-xl border border-slate-700/60 bg-slate-950/35 p-3">Parecido corners: {headToHeadAnalysis.cornersSimilarity}%</div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2861,9 +3363,17 @@ const resetAll = () => {
                           <span className="inline-flex rounded-full border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                             Confianza real {formatPct(pick.realConfidence)}
                           </span>
+                          {getDataWarning(qualityScore, volatilityLabel) ? (
+                            <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-800">
+                              {getDataWarning(qualityScore, volatilityLabel)}
+                            </span>
+                          ) : null}
                         </div>
                         <div className={`mt-2 text-2xl font-bold ${palette.body}`}>{pick.label}</div>
-                        <div className={`mt-2 text-sm ${palette.body}`}>Probabilidad: {formatPct(pick.probability)} · Casa: {formatPct(pick.implied)} · Edge: {pick.edge.toFixed(1)} · Prioridad: {pick.marketPriority.toFixed(0)}</div>
+                        <div className={`mt-2 text-sm ${palette.body}`}>Probabilidad: {formatPct(pick.probability)} · Casa: {formatPct(pick.implied)} · Edge ajustado: {pick.edge.toFixed(1)} · Prioridad: {pick.marketPriority.toFixed(0)}</div>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/70">
+                          <div className="h-full rounded-full bg-current" style={{ width: `${clamp(pick.realConfidence, 0, 100)}%` }} />
+                        </div>
                         <div className={`mt-2 text-sm ${palette.body}`}>{pick.reason}</div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
@@ -2897,7 +3407,21 @@ const resetAll = () => {
                       {selectedPicks.map((pick) => (
                         <div key={`sel-${pick.id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                           <div className="font-semibold text-slate-900">{pick.label}</div>
-                          <div className="mt-1 text-sm text-slate-700">Prob. {formatPct(pick.probability)} · Conf. real {formatPct(pick.realConfidence)} · Edge {pick.edge.toFixed(1)}</div>
+                          <div className="mt-1 text-sm text-slate-700">Prob. {formatPct(pick.probability)} · Conf. real {formatPct(pick.realConfidence)} · Edge ajustado {pick.edge.toFixed(1)}</div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              onClick={() => registerResolvedPick(pick, true)}
+                              className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700"
+                            >
+                              Registrar acierto
+                            </button>
+                            <button
+                              onClick={() => registerResolvedPick(pick, false)}
+                              className="rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700"
+                            >
+                              Registrar fallo
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -2928,6 +3452,28 @@ const resetAll = () => {
                   )) : <div className="text-sm text-slate-700">No quedan picks visibles porque fueron descartados o no cumplen filtro.</div>}
                 </div>
               </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 xl:grid-cols-3">
+              <StatCard title="Historial resuelto" value={String(resolvedStats.total)} subtitle="Picks registrados" />
+              <StatCard title="Acierto histórico" value={`${resolvedStats.hitRate.toFixed(1)}%`} subtitle={`${resolvedStats.wins} acertados`} />
+              <StatCard title="ROI unidades" value={resolvedStats.roiUnits.toFixed(2)} subtitle="+ gana / - pierde" />
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="text-sm font-semibold uppercase tracking-wide text-slate-700">Mercados que mejor te están funcionando</div>
+              {resolvedStats.familyRows.length ? (
+                <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                  {resolvedStats.familyRows.slice(0, 6).map((row) => (
+                    <div key={row.family} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="font-semibold text-slate-900">{getMarketFamilyLabel(row.family as MarketFamily)}</div>
+                      <div className="mt-1 text-sm text-slate-700">Acierto {row.hitRate.toFixed(1)}% · Muestra {row.total}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-3 text-sm text-slate-700">Aún no has registrado picks resueltos.</div>
+              )}
             </div>
 
             <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-700 bg-white">
@@ -2975,6 +3521,7 @@ function TeamBlock({
   meta,
   onMetaChange,
   suggestions,
+  streakText,
 }: {
   title: string;
   side: TeamCondition;
@@ -2987,6 +3534,7 @@ function TeamBlock({
   meta: TeamMeta;
   onMetaChange: (patch: Partial<TeamMeta>) => void;
   suggestions: string[];
+  streakText: string;
 }) {
   const shiftRows = () => {
     const filledRows = rows.filter(
@@ -3025,6 +3573,7 @@ function TeamBlock({
       const fields: (keyof TeamRow)[] = [
         "rival",
         "fecha",
+        "condition",
         "gf",
         "gc",
         "ownCorners",
@@ -3108,6 +3657,10 @@ function TeamBlock({
           )}
         </div>
 
+        <div className="mb-4 rounded-2xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-50">
+          <span className="font-semibold">Racha automática:</span> {streakText}
+        </div>
+
         <div className="overflow-x-auto rounded-2xl border border-slate-700">
           <table className="min-w-[1100px] w-full text-sm">
             <thead className="bg-slate-900/80 text-slate-200">
@@ -3115,6 +3668,7 @@ function TeamBlock({
                 {[
                   "Rival",
                   "Fecha",
+                  "Cond.",
                   "GF",
                   "GC",
                   "Corners+",
@@ -3155,6 +3709,17 @@ function TeamBlock({
                       value={row.fecha}
                       onChange={(e) => onRowChange(side, index, "fecha", e.target.value)}
                     />
+                  </td>
+                  <td className="px-2 py-2">
+                    <select
+                      className="w-24 rounded border border-slate-500 bg-slate-800 px-2 py-1 text-sm text-white"
+                      value={row.condition}
+                      onChange={(e) => onRowChange(side, index, "condition", e.target.value)}
+                    >
+                      <option value=""></option>
+                      <option value="local">Local</option>
+                      <option value="visitante">Visitante</option>
+                    </select>
                   </td>
                   {([
                     "gf",
@@ -3213,6 +3778,8 @@ function buildLabel(family: MarketFamily, side: "local" | "visitante" | "total",
   const teamLabel = side === "local" ? "Local" : side === "visitante" ? "Visitante" : "Total";
   if (family === "result") return side === "local" ? "Local gana" : "Visitante gana";
   if (family === "doubleChance") return side === "local" ? "Local o empate" : "Visitante o empate";
+  if (family === "handicap") return `${teamLabel} handicap ${line || "-0.5"}`;
+  if (family === "winHalf") return `${teamLabel} gana una mitad`;
   if (family === "btts") return direction === "no" ? "BTTS No" : "BTTS Sí";
   if (family === "goals") return `${direction === "under" ? "Menos de" : "Más de"} ${line || "1.5"} goles`;
   if (family === "corners") return `${direction === "under" ? "Menos de" : "Más de"} ${line || "8.5"} corners`;
@@ -3232,5 +3799,7 @@ function buildDefaultMarketLines(): MarketLine[] {
     { id: makeId(), family: "corners", label: "Más de 8.5 corners", odd: "", line: "8.5", direction: "over", side: "total", enabled: true },
     { id: makeId(), family: "cards", label: "Más de 3.5 tarjetas", odd: "", line: "3.5", direction: "over", side: "total", enabled: true },
     { id: makeId(), family: "doubleChance", label: "Local o empate", odd: "", line: "", direction: "pick", side: "local", enabled: true },
+    { id: makeId(), family: "handicap", label: "Local handicap -0.5", odd: "", line: "-0.5", direction: "pick", side: "local", enabled: true },
+    { id: makeId(), family: "winHalf", label: "Local gana una mitad", odd: "", line: "", direction: "pick", side: "local", enabled: true },
   ];
 }
