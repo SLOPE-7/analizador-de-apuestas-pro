@@ -8,6 +8,8 @@ type MatchResult = "" | "G" | "E" | "P";
 type Grade = "safe" | "reasonable" | "risky";
 type MatchProfileType = "abierto" | "cerrado" | "trampa" | "equilibrado";
 type MarketGroup = "goals" | "corners" | "cards";
+type BackgroundMode = "team" | "stadium" | "neon" | "dark";
+type TrapLevel = "valor_real" | "linea_comoda" | "linea_estrecha" | "linea_sospechosa" | "trampa_probable" | "neutral";
 
 type Indicator = {
   id: string;
@@ -29,6 +31,8 @@ type Match = {
   localColor2: string;
   visitColor1: string;
   visitColor2: string;
+  backgroundMode: BackgroundMode;
+  backgroundImage: string;
 };
 
 type RecentRow = {
@@ -86,6 +90,9 @@ type HousePick = {
   grade: Grade;
   tier: string;
   riskFlags: string[];
+  trapLevel?: TrapLevel;
+  trapLabel?: string;
+  margin?: number;
 };
 
 type ExportShape = {
@@ -157,6 +164,21 @@ const GOAL_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"];
 const CORNER_OVER_LINES = ["4.5", "5.5", "6.5", "7.5", "8.5", "9.5", "10.5"];
 const CORNER_UNDER_LINES = ["14.5", "13.5", "12.5", "11.5", "10.5", "9.5", "8.5", "7.5", "6.5", "5.5"];
 const CARD_LINES = ["1.5", "2.5", "3.5", "4.5", "5.5", "6.5"];
+const TEAM_COLOR_PRESETS = [
+  { label: "Man City", local1: "#6CABDD", local2: "#ffffff", visit1: "#6CABDD", visit2: "#ffffff" },
+  { label: "Barcelona", local1: "#A50044", local2: "#004D98", visit1: "#A50044", visit2: "#004D98" },
+  { label: "Real Madrid", local1: "#ffffff", local2: "#facc15", visit1: "#ffffff", visit2: "#facc15" },
+  { label: "PSG", local1: "#004170", local2: "#DA291C", visit1: "#004170", visit2: "#DA291C" },
+  { label: "Bayern", local1: "#DC052D", local2: "#0066B2", visit1: "#DC052D", visit2: "#0066B2" },
+  { label: "Flamengo", local1: "#D50000", local2: "#111111", visit1: "#D50000", visit2: "#111111" },
+];
+
+const BACKGROUND_PRESETS = [
+  { label: "Estadio nocturno", value: "https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=1800&q=80" },
+  { label: "Luces estadio", value: "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&w=1800&q=80" },
+  { label: "Césped", value: "https://images.unsplash.com/photo-1575361204480-aadea25e6e68?auto=format&fit=crop&w=1800&q=80" },
+];
+
 
 function makeId() {
   return Math.random().toString(36).slice(2, 10);
@@ -613,6 +635,113 @@ function scoreHouseMarket(group: MarketGroup, direction: "over" | "under", line:
   return clamp(probabilityByLine(projection.expectedCards, lineNumber, direction, 3.4), 0, 88);
 }
 
+function getLineTrapAssessment(
+  group: MarketGroup,
+  direction: "over" | "under",
+  line: string,
+  expected: number,
+  odd: number,
+  modelScore: number
+) {
+  const lineNumber = toNumber(line);
+  const margin = direction === "over" ? expected - lineNumber : lineNumber - expected;
+  const absMargin = Math.abs(expected - lineNumber);
+  const flags: string[] = [];
+  let adjustment = 0;
+  let level: TrapLevel = "neutral";
+  let label = "⚪ Línea neutra";
+
+  if (!expected || !lineNumber) {
+    return { level, label, margin: 0, adjustment, flags };
+  }
+
+  const tightLimit = group === "goals" ? 0.35 : group === "corners" ? 1.5 : 0.8;
+  const comfortLimit = group === "goals" ? 0.9 : group === "corners" ? 2.4 : 1.4;
+
+  if (absMargin <= tightLimit) {
+    level = "linea_estrecha";
+    label = "🟡 Línea estrecha";
+    adjustment -= group === "corners" ? 22 : group === "cards" ? 16 : 18;
+    flags.push(`Línea estrecha: proyección ${expected.toFixed(1)} vs línea ${lineNumber.toFixed(1)}. No usar fuerte en parlay.`);
+  }
+
+  if (group === "corners" && direction === "under" && lineNumber <= 11.5 && absMargin <= 2.0) {
+    level = "trampa_probable";
+    label = "🔴 Trampa probable";
+    adjustment -= 18;
+    flags.push("Under corners apretado: la casa suele poner esta línea al límite. Evitar como base de parlay.");
+  }
+
+  if (group === "corners" && direction === "over" && lineNumber <= 5.5 && expected < lineNumber + 2.0) {
+    level = "linea_sospechosa";
+    label = "🟠 Línea sospechosamente baja";
+    adjustment -= 14;
+    flags.push("Over corners muy bajo: puede parecer regalo, pero si la proyección no sobra, cuidado con trampa de ritmo.");
+  }
+
+  if (group === "goals" && direction === "over" && lineNumber <= 1.5 && expected < lineNumber + 0.65) {
+    level = "linea_sospechosa";
+    label = "🟠 Línea baja sospechosa";
+    adjustment -= 10;
+    flags.push("Over goles bajo: parece fácil, pero la proyección no da colchón suficiente.");
+  }
+
+  if (group === "cards" && direction === "over" && lineNumber <= 2.5 && expected < lineNumber + 1.2) {
+    level = "linea_sospechosa";
+    label = "🟠 Línea baja sospechosa";
+    adjustment -= 10;
+    flags.push("Over tarjetas bajo: sin árbitro/contexto puede ser value engañoso.");
+  }
+
+  if (margin >= comfortLimit && modelScore >= 64 && level === "neutral") {
+    level = "linea_comoda";
+    label = "🟢 Línea cómoda";
+    adjustment += 4;
+    flags.push(`Línea con colchón: proyección ${expected.toFixed(1)} vs línea ${lineNumber.toFixed(1)}.`);
+  }
+
+  if (margin >= comfortLimit + (group === "corners" ? 0.8 : 0.25) && odd > 1.35 && modelScore >= 66) {
+    level = "valor_real";
+    label = "💰 Valor real posible";
+    adjustment += 5;
+    flags.push("Valor real posible: la proyección supera la línea y la cuota no está completamente exprimida.");
+  }
+
+  return { level, label, margin, adjustment, flags };
+}
+
+function marketTrapInput(marketValue: string, line: string, projection: ReturnType<typeof buildProjection>) {
+  const lineNumber = toNumber(line);
+  if (!lineNumber) return null;
+
+  if (marketValue.includes("corners")) {
+    return {
+      group: "corners" as MarketGroup,
+      direction: marketValue.includes("over") ? "over" as const : "under" as const,
+      expected: projection.expectedCorners,
+    };
+  }
+
+  if (isCardMarket(marketValue)) {
+    return {
+      group: "cards" as MarketGroup,
+      direction: marketValue.includes("over") ? "over" as const : "under" as const,
+      expected: projection.expectedCards,
+    };
+  }
+
+  if (marketValue === "over_1_5" || marketValue === "over_2_5") {
+    return { group: "goals" as MarketGroup, direction: "over" as const, expected: projection.expectedGoals };
+  }
+
+  if (marketValue === "under_2_5" || marketValue === "under_4_5") {
+    return { group: "goals" as MarketGroup, direction: "under" as const, expected: projection.expectedGoals };
+  }
+
+  return null;
+}
+
+
 export default function Page() {
   const importRef = useRef<HTMLInputElement | null>(null);
 
@@ -626,6 +755,8 @@ export default function Page() {
     localColor2: "#ffffff",
     visitColor1: "#ef4444",
     visitColor2: "#111827",
+    backgroundMode: "team",
+    backgroundImage: "",
   });
 
   const [indicators, setIndicators] = useState<Indicator[]>([]);
@@ -709,6 +840,12 @@ export default function Page() {
           modelScore = clamp(modelScore - 8, 0, 100);
           riskFlags.push("Tarjetas dependen de árbitro/contexto: bajar stake.");
         }
+
+        const expectedForTrap = candidate.group === "goals" ? projection.expectedGoals : candidate.group === "corners" ? projection.expectedCorners : projection.expectedCards;
+        const trap = getLineTrapAssessment(candidate.group, candidate.direction, candidate.line, expectedForTrap, odd, modelScore);
+        modelScore = clamp(modelScore + trap.adjustment, 0, 100);
+        riskFlags.push(...trap.flags);
+
         if (implied > 0 && modelScore - implied < 0) riskFlags.push("La cuota no acompaña: sin value claro.");
 
         const value = implied > 0 ? modelScore - implied : 0;
@@ -725,6 +862,9 @@ export default function Page() {
           grade,
           tier: getTierLabel(grade),
           riskFlags,
+          trapLevel: trap.level,
+          trapLabel: trap.label,
+          margin: trap.margin,
         };
       });
 
@@ -757,6 +897,17 @@ export default function Page() {
 
     return [...marketLinePicks, ...resultPicks].sort((a, b) => b.modelScore - a.modelScore);
   }, [houseMarkets, localRecent, visitRecent, matchProfile, projection, match, hasMinimumData]);
+
+  const antiCasaAlerts = useMemo(() => {
+    // Anti-Casa solo debe aparecer cuando hay datos reales:
+    // equipos + registros recientes + cuotas/líneas cargadas por el usuario.
+    // Así evitamos que después de Limpiar aparezcan lecturas con líneas default y "Sin cuota".
+    if (!hasMinimumData || totalRecentCount < 2 || !hasHouseOdd(houseMarkets)) return [];
+
+    return housePicks
+      .filter((pick) => pick.trapLevel && pick.trapLevel !== "neutral" && pick.odd > 1)
+      .slice(0, 6);
+  }, [housePicks, hasMinimumData, totalRecentCount, houseMarkets]);
 
   const results = useMemo<ResultPick[]>(() => {
     const grouped: Record<string, Indicator[]> = {};
@@ -802,6 +953,13 @@ export default function Page() {
 
         if (isCornerMarket(marketValue) && marketValue.includes("over") && projection.expectedCorners >= toNumber(line) + 1) {
           blendedScore = clamp(blendedScore + 9, 0, 100);
+        }
+
+        const trapInput = marketTrapInput(marketValue, line, projection);
+        if (trapInput) {
+          const trap = getLineTrapAssessment(trapInput.group, trapInput.direction, line, trapInput.expected, avgOdd, blendedScore);
+          blendedScore = clamp(blendedScore + trap.adjustment, 0, 100);
+          riskFlags.push(...trap.flags);
         }
 
         if (isOverGoalMarket(marketValue) && matchProfile.type === "abierto") {
@@ -918,7 +1076,7 @@ export default function Page() {
 
       for (const pick of combined) {
         if (pick.grade === "risky") continue;
-        if (pick.riskFlags.some((flag) => flag.includes("sin value") || flag.includes("Bloqueado") || flag.includes("Freno"))) continue;
+        if (pick.riskFlags.some((flag) => flag.includes("sin value") || flag.includes("Bloqueado") || flag.includes("Freno") || flag.includes("Línea estrecha") || flag.includes("Under corners apretado") || flag.includes("sospechosa"))) continue;
         if (isCardMarket(pick.marketValue) && (pick.score < 76 || pick.count < 2)) continue;
         if (mode === "conservador" && (pick.marketValue === "btts" || pick.marketValue === "over_2_5" || pick.marketValue === "ganador")) continue;
         if (mode === "conservador" && isUnderGoalMarket(pick.marketValue) && matchProfile.blockUnderGoals) continue;
@@ -955,6 +1113,8 @@ export default function Page() {
         localColor2: saved.match.localColor2 || "#ffffff",
         visitColor1: saved.match.visitColor1 || "#ef4444",
         visitColor2: saved.match.visitColor2 || "#111827",
+        backgroundMode: saved.match.backgroundMode || "team",
+        backgroundImage: saved.match.backgroundImage || "",
       });
     }
 
@@ -995,15 +1155,14 @@ export default function Page() {
   const clearAll = () => {
     if (!confirm("¿Seguro que quieres borrar todo el partido actual?")) return;
     if (typeof window !== "undefined") {
-      [
-        STORAGE_KEY,
-        "analizador_pro_h2h_casa_v4",
-        "analizador_pro_h2h_licuadora_v2",
-        "analizador_pro_h2h_moderno_v1",
-        "simpleApp",
-      ].forEach((key) => localStorage.removeItem(key));
+      // Borra cualquier guardado viejo/nuevo de esta app para que Limpiar sea total.
+      Object.keys(localStorage).forEach((key) => {
+        if (key.startsWith("analizador_") || key === STORAGE_KEY || key === "simpleApp") {
+          localStorage.removeItem(key);
+        }
+      });
     }
-    setMatch({ local: "", visitante: "", oddLocal: "", oddDraw: "", oddVisit: "", localColor1: "#38bdf8", localColor2: "#ffffff", visitColor1: "#ef4444", visitColor2: "#111827" });
+    setMatch({ local: "", visitante: "", oddLocal: "", oddDraw: "", oddVisit: "", localColor1: "#38bdf8", localColor2: "#ffffff", visitColor1: "#ef4444", visitColor2: "#111827", backgroundMode: "team", backgroundImage: "" });
     setIndicators([]);
     setLocalRecent(createRecentRows());
     setVisitRecent(createRecentRows());
@@ -1059,13 +1218,15 @@ export default function Page() {
           localColor2: data.match.localColor2 || "#ffffff",
           visitColor1: data.match.visitColor1 || "#ef4444",
           visitColor2: data.match.visitColor2 || "#111827",
+          backgroundMode: data.match.backgroundMode || "team",
+          backgroundImage: data.match.backgroundImage || "",
         });
 
 const importedIndicators: Indicator[] = Array.isArray(data.indicators)
   ? data.indicators.map((item: Partial<Indicator>) => ({
       id: item.id || makeId(),
       team: (item.team as TeamSide) || "ambos",
-      period: item.period || "full",
+      period: (item.period as IndicatorPeriod) || "full",
       market: getMarketValue(item.market || ""),
       line: item.line || "",
       record: item.record || "",
@@ -1201,14 +1362,49 @@ setIndicators(importedIndicators);
     </div>
   );
 
-  return (
-    <main className="min-h-screen bg-[#070b12] text-white">
-      <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_15%_10%,rgba(56,189,248,0.25),transparent_32%),radial-gradient(circle_at_90%_10%,rgba(251,146,60,0.22),transparent_28%),radial-gradient(circle_at_50%_90%,rgba(168,85,247,0.16),transparent_30%)]" />
 
-      <div className="mx-auto max-w-6xl px-4 py-6 pb-24">
+  const teamBackground = `
+    radial-gradient(circle at 15% 8%, ${match.localColor1}88, transparent 34%),
+    radial-gradient(circle at 85% 10%, ${match.visitColor1}88, transparent 32%),
+    radial-gradient(circle at 50% 95%, ${match.localColor2}30, transparent 28%),
+    #070b12
+  `;
+
+  const neonBackground = `
+    radial-gradient(circle at 20% 10%, ${match.localColor1}aa, transparent 28%),
+    radial-gradient(circle at 80% 5%, ${match.visitColor1}aa, transparent 30%),
+    radial-gradient(circle at 50% 70%, #a855f744, transparent 35%),
+    #020617
+  `;
+
+  const baseBackground =
+    match.backgroundMode === "dark"
+      ? "#070b12"
+      : match.backgroundMode === "neon"
+        ? neonBackground
+        : teamBackground;
+
+  return (
+    <main className="relative min-h-screen overflow-hidden bg-[#070b12] text-white">
+      <div className="pointer-events-none fixed inset-0 z-0" style={{ background: baseBackground }} />
+      {match.backgroundImage.trim() ? (
+        <div
+          className="pointer-events-none fixed inset-0 z-[1] bg-cover bg-center opacity-45"
+          style={{ backgroundImage: `url(${match.backgroundImage.trim()})` }}
+        />
+      ) : null}
+      {match.backgroundMode === "stadium" && !match.backgroundImage.trim() ? (
+        <div
+          className="pointer-events-none fixed inset-0 z-[1] bg-cover bg-center opacity-35"
+          style={{ backgroundImage: `url(${BACKGROUND_PRESETS[0].value})` }}
+        />
+      ) : null}
+      <div className="pointer-events-none fixed inset-0 z-[2] bg-[linear-gradient(to_bottom,rgba(2,6,23,.15),rgba(2,6,23,.88)),radial-gradient(circle_at_50%_0%,rgba(255,255,255,.12),transparent_30%)] backdrop-blur-[1px]" />
+
+      <div className="relative z-10 mx-auto max-w-6xl px-4 py-6 pb-24">
         <header className="mb-6">
           <h1 className="text-3xl font-black tracking-tight sm:text-4xl">🔥ANALIZADOR RAPIDO H2H KAL🔥</h1>
-          <p className="mt-1 text-sm text-slate-300">Rachas + registros reales + líneas de la casa + detector anti-under engañoso</p>
+          <p className="mt-1 text-sm text-slate-300">Rachas + registros reales + líneas de la casa + detector anti-casa</p>
         </header>
 
         <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
@@ -1223,9 +1419,9 @@ setIndicators(importedIndicators);
           <div className="grid gap-3 sm:grid-cols-2">
             <input className={inputClass} placeholder="🛡️ Local" value={match.local} onChange={(event) => setMatch({ ...match, local: event.target.value })} />
             <input className={inputClass} placeholder="🚌 Visitante" value={match.visitante} onChange={(event) => setMatch({ ...match, visitante: event.target.value })} />
-            <input className={inputClass} inputMode="decimal" placeholder="💶 Cuota Local 1X2" value={match.oddLocal} onChange={(event) => setMatch({ ...match, oddLocal: event.target.value })} />
-            <input className={inputClass} inputMode="decimal" placeholder="£ Empate" value={match.oddDraw} onChange={(event) => setMatch({ ...match, oddDraw: event.target.value })} />
-            <input className={inputClass} inputMode="decimal" placeholder="💶 Cuota Visitante 1X2" value={match.oddVisit} onChange={(event) => setMatch({ ...match, oddVisit: event.target.value })} />
+            <input className={inputClass} inputMode="decimal" placeholder="💰 Cuota Local🏡" value={match.oddLocal} onChange={(event) => setMatch({ ...match, oddLocal: event.target.value })} />
+            <input className={inputClass} inputMode="decimal" placeholder="💰 Empate⚔️" value ={match.oddDraw} onChange={(event) => setMatch({ ...match, oddDraw: event.target.value })} />
+            <input className={inputClass} inputMode="decimal" placeholder="💰 Cuota Visitante🛩️" value={match.oddVisit} onChange={(event) => setMatch({ ...match, oddVisit: event.target.value })} />
           </div>
 
           <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/35 p-4">
@@ -1244,6 +1440,77 @@ setIndicators(importedIndicators);
                 <input type="color" className="mt-2 h-10 w-full cursor-pointer rounded-lg bg-transparent" value={match.visitColor2} onChange={(event) => setMatch({ ...match, visitColor2: event.target.value })} />
               </label>
             </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 lg:col-span-1">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-300">Fondo visual</p>
+                <select
+                  className={selectClass}
+                  value={match.backgroundMode}
+                  onChange={(event) => setMatch({ ...match, backgroundMode: event.target.value as BackgroundMode })}
+                >
+                  <option value="team">Gradiente por equipos</option>
+                  <option value="stadium">Estadio + colores</option>
+                  <option value="neon">Neón deportivo</option>
+                  <option value="dark">Oscuro limpio</option>
+                </select>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 lg:col-span-2">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-300">Imagen de fondo opcional</p>
+                <input
+                  className={inputClass}
+                  placeholder="Pega URL de imagen o usa un preset"
+                  value={match.backgroundImage}
+                  onChange={(event) => setMatch({ ...match, backgroundImage: event.target.value })}
+                />
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {BACKGROUND_PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => setMatch({ ...match, backgroundMode: "stadium", backgroundImage: preset.value })}
+                      className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-bold text-slate-100 hover:bg-white/15"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setMatch({ ...match, backgroundImage: "" })}
+                    className="rounded-full border border-rose-300/20 bg-rose-400/10 px-3 py-1 text-xs font-bold text-rose-100 hover:bg-rose-400/20"
+                  >
+                    Quitar imagen
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-300">Presets rápidos de colores</p>
+              <div className="flex flex-wrap gap-2">
+                {TEAM_COLOR_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() =>
+                      setMatch({
+                        ...match,
+                        localColor1: preset.local1,
+                        localColor2: preset.local2,
+                        visitColor1: preset.visit1,
+                        visitColor2: preset.visit2,
+                        backgroundMode: "team",
+                      })
+                    }
+                    className="rounded-full border border-white/10 px-3 py-1 text-xs font-black text-white shadow-lg shadow-black/20"
+                    style={{ background: `linear-gradient(135deg, ${preset.local1}, ${preset.visit1})` }}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 
@@ -1253,8 +1520,8 @@ setIndicators(importedIndicators);
             <p className="text-xs text-slate-300">Ahora los corners y tarjetas se llenan a favor/en contra. Eso frena unders engañosos.</p>
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
-            {renderRecentBlock(`Registro Local · ${match.local || "Local"}`, "local", localRecent)}
-            {renderRecentBlock(`Registro Visitante · ${match.visitante || "Visitante"}`, "visitante", visitRecent)}
+            {renderRecentBlock(`Registro Local🏡 · ${match.local || "Local"}`, "local", localRecent)}
+            {renderRecentBlock(`Registro Visitante🛩️ · ${match.visitante || "Visitante"}`, "visitante", visitRecent)}
           </div>
         </section>
 
@@ -1274,10 +1541,11 @@ setIndicators(importedIndicators);
           ) : null}
         </section>
 
+    
     <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-2xl font-bold">Indicadores SofaScore</h2>
+              <h2 className="text-2xl font-bold">Indicadores SofaScore🧾</h2>
               <p className="text-xs text-slate-300">Carga 3 a 6 señales fuertes. Evita llenar mercados débiles.</p>
             </div>
             <button onClick={addIndicator} className="rounded-2xl bg-gradient-to-r from-sky-300 to-blue-500 px-4 py-3 font-bold text-slate-950 shadow-lg shadow-sky-500/20">+ Agregar indicador</button>
@@ -1345,10 +1613,11 @@ setIndicators(importedIndicators);
                   <div><h3 className="font-black">{pick.label}</h3><p className="text-sm text-slate-300">Modelo: {formatScore(pick.modelScore)} · Prob. casa: {pick.implied ? formatScore(pick.implied) : "—"}</p></div>
                   <span className={`rounded-full px-3 py-1 text-sm font-bold ${pick.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pick.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>{pick.tier}</span>
                 </div>
-                <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+                <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
                   <div className="rounded-xl bg-white/5 p-3">Cuota: <b>{pick.odd ? pick.odd.toFixed(2) : "—"}</b></div>
                   <div className="rounded-xl bg-white/5 p-3">Value: <b>{pick.implied ? `${pick.value >= 0 ? "+" : ""}${pick.value.toFixed(1)}%` : "—"}</b></div>
                   <div className="rounded-xl bg-white/5 p-3">Línea: <b>{pick.line}</b></div>
+                  <div className="rounded-xl bg-white/5 p-3">Anti-casa: <b>{pick.trapLabel || "—"}</b></div>
                 </div>
                 {pick.riskFlags.length > 0 ? <div className="mt-3 rounded-xl bg-amber-400/10 p-3 text-xs text-amber-100">{pick.riskFlags.map((flag) => <p key={flag}>• {flag}</p>)}</div> : null}
               </article>
@@ -1386,6 +1655,38 @@ setIndicators(importedIndicators);
             ))}
           </div>
         </section>
+
+  {hasMinimumData && antiCasaAlerts.length > 0 ? (
+          <section className="mb-5 rounded-3xl border border-orange-300/30 bg-orange-400/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-bold">🧨 Detector Anti-Casa</h2>
+                <p className="text-xs text-orange-100/80">Detecta líneas estrechas, trampas visuales y value real antes de meterlas en parlay.</p>
+              </div>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {antiCasaAlerts.map((pick) => (
+                <div key={pick.key} className={`rounded-2xl border p-4 ${pick.trapLevel === "valor_real" ? "border-emerald-300/30 bg-emerald-400/10" : pick.trapLevel === "linea_comoda" ? "border-sky-300/30 bg-sky-400/10" : pick.trapLevel === "trampa_probable" ? "border-rose-300/30 bg-rose-400/10" : "border-amber-300/30 bg-amber-400/10"}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-widest text-slate-300">{pick.trapLabel}</p>
+                      <h3 className="mt-1 font-black">{pick.label}</h3>
+                      <p className="text-xs text-slate-300">Margen vs línea: {typeof pick.margin === "number" ? pick.margin.toFixed(1) : "—"} · Modelo {formatScore(pick.modelScore)}</p>
+                    </div>
+                    <span className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black">{pick.odd ? pick.odd.toFixed(2) : "Sin cuota"}</span>
+                  </div>
+                  {pick.riskFlags.length > 0 ? (
+                    <div className="mt-3 space-y-1 text-xs text-orange-50">
+                      {pick.riskFlags.slice(0, 3).map((flag) => <p key={flag}>• {flag}</p>)}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+
         {analysis ? (
           <section className="mb-5 overflow-hidden rounded-[2rem] border border-yellow-300/40 bg-gradient-to-br from-yellow-300/15 via-slate-900/80 to-violet-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
             <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
