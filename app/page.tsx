@@ -659,11 +659,13 @@ function getLineTrapAssessment(
   const comfortLimit = group === "goals" ? 0.9 : group === "corners" ? 2.4 : 1.4;
 
   if (absMargin <= tightLimit) {
-    level = "linea_estrecha";
-    label = "🟡 Línea estrecha";
-    adjustment -= group === "corners" ? 22 : group === "cards" ? 16 : 18;
-    flags.push(`Línea estrecha: proyección ${expected.toFixed(1)} vs línea ${lineNumber.toFixed(1)}. No usar fuerte en parlay.`);
-  }
+  level = "linea_estrecha";
+  label = "🚫 Zona prohibida";
+
+  adjustment -= group === "corners" ? 35 : group === "cards" ? 22 : 25;
+
+  flags.push(`🚫 ZONA PROHIBIDA: proyección ${expected.toFixed(1)} vs línea ${lineNumber.toFixed(1)}. NO jugar.`);
+}
 
   if (group === "corners" && direction === "under" && lineNumber <= 11.5 && absMargin <= 2.0) {
     level = "trampa_probable";
@@ -1082,6 +1084,7 @@ export default function Page() {
         if (mode === "conservador" && isUnderGoalMarket(pick.marketValue) && matchProfile.blockUnderGoals) continue;
         if (mode === "conservador" && isUnderCornerMarket(pick.marketValue) && projection.expectedCorners >= 10.8) continue;
         if (mode === "riesgoso" && !(isGoalMarket(pick.marketValue) || pick.marketValue === "ganador" || pick.marketValue === "empate" || isCornerMarket(pick.marketValue))) continue;
+         pick.riskFlags.some(flag => flag.includes("ZONA PROHIBIDA"))
 
         const family = familyOf(pick.marketValue);
         if (usedFamilies.has(family)) continue;
