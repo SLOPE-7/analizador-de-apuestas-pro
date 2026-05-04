@@ -60,6 +60,28 @@ type HouseMarket = {
   cardsUnderOdd: string;
 };
 
+type BetStatus = "pending" | "won" | "lost" | "void";
+type BetSource = "app" | "manual";
+
+type BankBet = {
+  id: string;
+  date: string;
+  matchName: string;
+  pick: string;
+  market: string;
+  stake: string;
+  odd: string;
+  status: BetStatus;
+  source: BetSource;
+  notes: string;
+};
+
+type BankrollState = {
+  initialBank: string;
+  bets: BankBet[];
+};
+
+
 type ResultPick = {
   key: string;
   label: string;
@@ -106,6 +128,7 @@ type ExportShape = {
 };
 
 const STORAGE_KEY = "analizador_pro_h2h_casa_v4";
+const BANKROLL_STORAGE_KEY = "bankroll_tracker_h2h_v1";
 
 const MARKET_OPTIONS = [
   { label: "Sin derrotas", value: "sin_derrotas", line: "" },
@@ -162,7 +185,7 @@ const PERIOD_OPTIONS: { label: string; value: IndicatorPeriod }[] = [
 const NUMBER_OPTIONS = (max: number) => Array.from({ length: max + 1 }, (_, index) => String(index));
 const GOAL_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"];
 const CORNER_OVER_LINES = ["4.5", "5.5", "6.5", "7.5", "8.5", "9.5", "10.5"];
-const CORNER_UNDER_LINES = ["14.5", "13.5", "12.5", "11.5", "10.5", "9.5", "8.5", "7.5", "6.5", "5.5"];
+const CORNER_UNDER_LINES = ["16.5", "15.5", "14.5", "13.5", "12.5", "11.5", "10.5", "9.5", "8.5", "7.5", "6.5", "5.5"];
 const CARD_LINES = ["1.5", "2.5", "3.5", "4.5", "5.5", "6.5"];
 const TEAM_COLOR_PRESETS = [
   { label: "Man City", local1: "#6CABDD", local2: "#ffffff", visit1: "#6CABDD", visit2: "#ffffff" },
@@ -214,6 +237,111 @@ function emptyHouseMarkets(): HouseMarket {
     cardsOverOdd: "",
     cardsUnderLine: "4.5",
     cardsUnderOdd: "",
+  };
+}
+
+function emptyBankroll(): BankrollState {
+  return {
+    initialBank: "",
+    bets: [],
+  };
+}
+
+function emptyBankBet(): Omit<BankBet, "id"> {
+  return {
+    date: new Date().toISOString().slice(0, 10),
+    matchName: "",
+    pick: "",
+    market: "",
+    stake: "",
+    odd: "",
+    status: "pending",
+    source: "app",
+    notes: "",
+  };
+}
+
+function betProfit(bet: BankBet) {
+  const stake = toNumber(bet.stake);
+  const odd = toNumber(bet.odd);
+  if (bet.status === "won") return odd > 1 ? stake * (odd - 1) : 0;
+  if (bet.status === "lost") return -stake;
+  return 0;
+}
+
+function formatMoney(value: number) {
+  if (!Number.isFinite(value)) return "0.00";
+  return value.toFixed(2);
+}
+
+function buildBankrollStats(bankroll: BankrollState) {
+  const initialBank = toNumber(bankroll.initialBank);
+  const settled = bankroll.bets.filter((bet) => bet.status === "won" || bet.status === "lost" || bet.status === "void");
+  const decided = bankroll.bets.filter((bet) => bet.status === "won" || bet.status === "lost");
+  const wins = bankroll.bets.filter((bet) => bet.status === "won").length;
+  const losses = bankroll.bets.filter((bet) => bet.status === "lost").length;
+  const pending = bankroll.bets.filter((bet) => bet.status === "pending");
+  const totalStake = decided.reduce((sum, bet) => sum + toNumber(bet.stake), 0);
+  const pendingStake = pending.reduce((sum, bet) => sum + toNumber(bet.stake), 0);
+  const profit = bankroll.bets.reduce((sum, bet) => sum + betProfit(bet), 0);
+  const roi = totalStake > 0 ? (profit / totalStake) * 100 : 0;
+  const winrate = decided.length > 0 ? (wins / decided.length) * 100 : 0;
+  const currentBank = initialBank + profit;
+
+  const sourceStats = (["app", "manual"] as BetSource[]).map((source) => {
+    const sourceBets = bankroll.bets.filter((bet) => bet.source === source && (bet.status === "won" || bet.status === "lost"));
+    const sourceStake = sourceBets.reduce((sum, bet) => sum + toNumber(bet.stake), 0);
+    const sourceProfit = sourceBets.reduce((sum, bet) => sum + betProfit(bet), 0);
+    return {
+      source,
+      total: sourceBets.length,
+      wins: sourceBets.filter((bet) => bet.status === "won").length,
+      stake: sourceStake,
+      profit: sourceProfit,
+      roi: sourceStake > 0 ? (sourceProfit / sourceStake) * 100 : 0,
+    };
+  });
+
+  const byMarket = Object.values(
+    bankroll.bets.reduce<Record<string, { market: string; total: number; profit: number; stake: number }>>((acc, bet) => {
+      const key = bet.market || "Sin mercado";
+      if (!acc[key]) acc[key] = { market: key, total: 0, profit: 0, stake: 0 };
+      if (bet.status === "won" || bet.status === "lost") {
+        acc[key].total += 1;
+        acc[key].profit += betProfit(bet);
+        acc[key].stake += toNumber(bet.stake);
+      }
+      return acc;
+    }, {})
+  )
+    .filter((item) => item.total > 0)
+    .sort((a, b) => b.profit - a.profit)
+    .slice(0, 5);
+
+  const equityPoints = bankroll.bets
+    .filter((bet) => bet.status === "won" || bet.status === "lost" || bet.status === "void")
+    .reduce<number[]>((points, bet) => {
+      const last = points.length ? points[points.length - 1] : initialBank;
+      points.push(last + betProfit(bet));
+      return points;
+    }, []);
+
+  return {
+    initialBank,
+    currentBank,
+    profit,
+    roi,
+    winrate,
+    wins,
+    losses,
+    pending: pending.length,
+    pendingStake,
+    totalStake,
+    settled: settled.length,
+    decided: decided.length,
+    sourceStats,
+    byMarket,
+    equityPoints: [initialBank, ...equityPoints],
   };
 }
 
@@ -746,6 +874,7 @@ function marketTrapInput(marketValue: string, line: string, projection: ReturnTy
 
 export default function Page() {
   const importRef = useRef<HTMLInputElement | null>(null);
+  const bankrollImportRef = useRef<HTMLInputElement | null>(null);
 
   const [match, setMatch] = useState<Match>({
     local: "",
@@ -765,6 +894,84 @@ export default function Page() {
   const [localRecent, setLocalRecent] = useState<RecentRow[]>(createRecentRows());
   const [visitRecent, setVisitRecent] = useState<RecentRow[]>(createRecentRows());
   const [houseMarkets, setHouseMarkets] = useState<HouseMarket>(emptyHouseMarkets());
+  const [bankroll, setBankroll] = useState<BankrollState>(emptyBankroll());
+  const [bankBetDraft, setBankBetDraft] = useState<Omit<BankBet, "id">>(emptyBankBet());
+
+  const bankrollStats = useMemo(() => buildBankrollStats(bankroll), [bankroll]);
+
+  const addBankBet = () => {
+    if (!bankBetDraft.matchName.trim() || !bankBetDraft.pick.trim() || toNumber(bankBetDraft.stake) <= 0 || toNumber(bankBetDraft.odd) <= 1) {
+      alert("Completa partido, pick, monto apostado y cuota mayor a 1.00");
+      return;
+    }
+    const nextBet: BankBet = { ...bankBetDraft, id: makeId() };
+    setBankroll((prev) => ({ ...prev, bets: [nextBet, ...prev.bets] }));
+    setBankBetDraft(emptyBankBet());
+  };
+
+  const updateBankBetStatus = (id: string, status: BetStatus) => {
+    setBankroll((prev) => ({
+      ...prev,
+      bets: prev.bets.map((bet) => (bet.id === id ? { ...bet, status } : bet)),
+    }));
+  };
+
+  const deleteBankBet = (id: string) => {
+    if (!confirm("¿Eliminar este registro del historial?")) return;
+    setBankroll((prev) => ({ ...prev, bets: prev.bets.filter((bet) => bet.id !== id) }));
+  };
+
+  const resetBankroll = () => {
+    if (!confirm("Esto borra SOLO el historial de bankroll. ¿Continuar?")) return;
+    if (typeof window !== "undefined") localStorage.removeItem(BANKROLL_STORAGE_KEY);
+    setBankroll(emptyBankroll());
+    setBankBetDraft(emptyBankBet());
+  };
+
+  const exportBankroll = () => {
+    const data = { version: 1, exportedAt: new Date().toISOString(), bankroll };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `bankroll_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const importBankroll = (file: File | null) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result)) as ({ bankroll?: Partial<BankrollState> } & Partial<BankrollState>);
+        const incoming: Partial<BankrollState> = data.bankroll || data;
+        setBankroll({
+          initialBank: typeof incoming.initialBank === "string" ? incoming.initialBank : "",
+          bets: Array.isArray(incoming.bets)
+            ? incoming.bets.map((bet) => ({
+                id: bet.id || makeId(),
+                date: bet.date || new Date().toISOString().slice(0, 10),
+                matchName: bet.matchName || "",
+                pick: bet.pick || "",
+                market: bet.market || "",
+                stake: bet.stake || "",
+                odd: bet.odd || "",
+                status: (bet.status as BetStatus) || "pending",
+                source: (bet.source as BetSource) || "app",
+                notes: bet.notes || "",
+              }))
+            : [],
+        });
+        alert("📨 Bankroll importado");
+      } catch {
+        alert("❌ No pude importar ese bankroll. Usa un JSON exportado por la app.");
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const addIndicator = () => {
     setIndicators((prev) => [
@@ -773,8 +980,76 @@ export default function Page() {
     ]);
   };
 
+  const getHouseFieldsForIndicator = (marketInput: string, lineInput: string) => {
+    const marketValue = getMarketValue(marketInput);
+    const line = String(lineInput || "").trim();
+    if (!marketValue || !line) return null;
+
+    if (marketValue.startsWith("over_") && !marketValue.includes("corners") && !marketValue.includes("cards")) {
+      return { lineField: "goalsOverLine" as const, oddField: "goalsOverOdd" as const };
+    }
+    if (marketValue.startsWith("under_") && !marketValue.includes("corners") && !marketValue.includes("cards")) {
+      return { lineField: "goalsUnderLine" as const, oddField: "goalsUnderOdd" as const };
+    }
+    if (marketValue.includes("corners") && marketValue.includes("over")) {
+      return { lineField: "cornersOverLine" as const, oddField: "cornersOverOdd" as const };
+    }
+    if (marketValue.includes("corners") && marketValue.includes("under")) {
+      return { lineField: "cornersUnderLine" as const, oddField: "cornersUnderOdd" as const };
+    }
+    if (marketValue.includes("cards") && marketValue.includes("over")) {
+      return { lineField: "cardsOverLine" as const, oddField: "cardsOverOdd" as const };
+    }
+    if (marketValue.includes("cards") && marketValue.includes("under")) {
+      return { lineField: "cardsUnderLine" as const, oddField: "cardsUnderOdd" as const };
+    }
+    return null;
+  };
+
+  const findHouseOddForIndicator = (marketInput: string, lineInput: string) => {
+    const fields = getHouseFieldsForIndicator(marketInput, lineInput);
+    const line = String(lineInput || "").trim();
+    if (!fields || !line) return "";
+    return line === String(houseMarkets[fields.lineField] || "").trim() ? String(houseMarkets[fields.oddField] || "") : "";
+  };
+
   const updateIndicator = (id: string, field: keyof Indicator, value: string) => {
-    setIndicators((prev) => prev.map((indicator) => (indicator.id === id ? { ...indicator, [field]: value } : indicator)));
+    setIndicators((prev) =>
+      prev.map((indicator) => {
+        if (indicator.id !== id) return indicator;
+
+        const next: Indicator = { ...indicator, [field]: value };
+        if (field === "market") {
+          const selected = MARKET_OPTIONS.find((option) => option.value === value || option.label === value);
+          next.market = selected?.value || value;
+          next.line = selected?.line || next.line;
+        }
+
+        if (field === "market" || field === "line") {
+          const autoOdd = findHouseOddForIndicator(next.market, next.line);
+          if (autoOdd) next.houseOdd = autoOdd;
+        }
+
+        return next;
+      })
+    );
+  };
+
+  const updateIndicatorMarket = (id: string, marketValue: string) => {
+    const selected = MARKET_OPTIONS.find((option) => option.value === marketValue);
+    setIndicators((prev) =>
+      prev.map((indicator) => {
+        if (indicator.id !== id) return indicator;
+        const next: Indicator = {
+          ...indicator,
+          market: selected?.value || "",
+          line: selected?.line || "",
+        };
+        const autoOdd = findHouseOddForIndicator(next.market, next.line);
+        if (autoOdd) next.houseOdd = autoOdd;
+        return next;
+      })
+    );
   };
 
   const removeIndicator = (id: string) => {
@@ -1042,6 +1317,17 @@ export default function Page() {
     return { best, decision, detail };
   }, [results, housePicks, contradictionAlerts, matchProfile, hasMinimumData]);
 
+  const quickFillBankBet = () => {
+    setBankBetDraft((prev) => ({
+      ...prev,
+      matchName: `${match.local || "Local"} vs ${match.visitante || "Visitante"}`,
+      pick: analysis?.best ? `${analysis.best.label}${analysis.best.line ? ` · ${analysis.best.line}` : ""}` : prev.pick,
+      market: analysis?.best?.label || prev.market,
+      odd: analysis?.best?.implied ? (100 / analysis.best.implied).toFixed(2) : prev.odd,
+      source: "app",
+    }));
+  };
+
   const parlaySuggestions = useMemo(() => {
     if (!hasMinimumData) {
       return { conservador: [], riesgoso: [] };
@@ -1084,7 +1370,7 @@ export default function Page() {
         if (mode === "conservador" && isUnderGoalMarket(pick.marketValue) && matchProfile.blockUnderGoals) continue;
         if (mode === "conservador" && isUnderCornerMarket(pick.marketValue) && projection.expectedCorners >= 10.8) continue;
         if (mode === "riesgoso" && !(isGoalMarket(pick.marketValue) || pick.marketValue === "ganador" || pick.marketValue === "empate" || isCornerMarket(pick.marketValue))) continue;
-         pick.riskFlags.some(flag => flag.includes("ZONA PROHIBIDA"))
+        if (pick.riskFlags.some((flag) => flag.includes("ZONA PROHIBIDA"))) continue;
 
         const family = familyOf(pick.marketValue);
         if (usedFamilies.has(family)) continue;
@@ -1100,6 +1386,127 @@ export default function Page() {
       riesgoso: build("riesgoso"),
     };
   }, [results, housePicks, matchProfile, projection.expectedCorners, hasMinimumData]);
+
+
+  const finalReading = useMemo(() => {
+    if (!hasMinimumData) return null;
+
+    const localStats = projection.local;
+    const visitStats = projection.visit;
+    const oddLocalImp = impliedProb(toNumber(match.oddLocal));
+    const oddDrawImp = impliedProb(toNumber(match.oddDraw));
+    const oddVisitImp = impliedProb(toNumber(match.oddVisit));
+    const totalImp = oddLocalImp + oddDrawImp + oddVisitImp;
+
+    const marketLocal = totalImp > 0 ? (oddLocalImp / totalImp) * 100 : 0;
+    const marketDraw = totalImp > 0 ? (oddDrawImp / totalImp) * 100 : 0;
+    const marketVisit = totalImp > 0 ? (oddVisitImp / totalImp) * 100 : 0;
+
+    const recentLocal = clamp(localStats.winPct * 0.55 + visitStats.noWinPct * 0.25 + localStats.noLosePct * 0.2, 0, 100);
+    const recentVisit = clamp(visitStats.winPct * 0.55 + localStats.noWinPct * 0.25 + visitStats.noLosePct * 0.2, 0, 100);
+    const recentDraw = clamp(average([localStats.drawPct, visitStats.drawPct]) || 24, 5, 55);
+
+    const rawLocal = marketLocal ? marketLocal * 0.58 + recentLocal * 0.42 : recentLocal;
+    const rawDraw = marketDraw ? marketDraw * 0.58 + recentDraw * 0.42 : recentDraw;
+    const rawVisit = marketVisit ? marketVisit * 0.58 + recentVisit * 0.42 : recentVisit;
+    const totalRaw = Math.max(rawLocal + rawDraw + rawVisit, 1);
+
+    const pLocal = clamp((rawLocal / totalRaw) * 100, 1, 98);
+    const pDraw = clamp((rawDraw / totalRaw) * 100, 1, 98);
+    const pVisit = clamp((rawVisit / totalRaw) * 100, 1, 98);
+
+    const winnerOptions = [
+      { label: match.local || "Local", pct: pLocal, key: "1" },
+      { label: "Empate", pct: pDraw, key: "X" },
+      { label: match.visitante || "Visitante", pct: pVisit, key: "2" },
+    ].sort((a, b) => b.pct - a.pct);
+
+    const doubleChanceOptions = [
+      { label: `${match.local || "Local"} o empate`, pct: clamp(pLocal + pDraw, 0, 99), key: "1X" },
+      { label: `${match.visitante || "Visitante"} o empate`, pct: clamp(pVisit + pDraw, 0, 99), key: "X2" },
+      { label: `${match.local || "Local"} o ${match.visitante || "Visitante"}`, pct: clamp(pLocal + pVisit, 0, 99), key: "12" },
+    ].sort((a, b) => b.pct - a.pct);
+
+    const lineReading = (group: MarketGroup, expected: number, overLine: string, underLine: string) => {
+      const fallbackLine = group === "goals" ? "2.5" : group === "corners" ? "9.5" : "4.5";
+      const over = overLine || fallbackLine;
+      const under = underLine || fallbackLine;
+      const scale = group === "goals" ? 2.1 : group === "corners" ? 5.2 : 3.4;
+      const overPct = probabilityByLine(expected, toNumber(over), "over", scale);
+      const underPct = probabilityByLine(expected, toNumber(under), "under", scale);
+      const groupLabel = group === "goals" ? "goles" : group === "corners" ? "corners" : "tarjetas";
+      const isOver = overPct >= underPct;
+      return {
+        label: `${isOver ? "Más" : "Menos"} de ${isOver ? over : under} ${groupLabel}`,
+        pct: clamp(isOver ? overPct : underPct, 0, 99),
+        expected,
+        line: isOver ? over : under,
+        direction: isOver ? "over" : "under",
+      };
+    };
+
+    const goals = lineReading("goals", projection.expectedGoals, houseMarkets.goalsOverLine, houseMarkets.goalsUnderLine);
+    const corners = lineReading("corners", projection.expectedCorners, houseMarkets.cornersOverLine, houseMarkets.cornersUnderLine);
+    const cards = lineReading("cards", projection.expectedCards, houseMarkets.cardsOverLine, houseMarkets.cardsUnderLine);
+
+    const warnings: string[] = [];
+    const tightCorners = Math.min(
+      Math.abs(projection.expectedCorners - toNumber(houseMarkets.cornersOverLine || "0")) || 99,
+      Math.abs(projection.expectedCorners - toNumber(houseMarkets.cornersUnderLine || "0")) || 99
+    );
+    const tightGoals = Math.min(
+      Math.abs(projection.expectedGoals - toNumber(houseMarkets.goalsOverLine || "0")) || 99,
+      Math.abs(projection.expectedGoals - toNumber(houseMarkets.goalsUnderLine || "0")) || 99
+    );
+    const tightCards = Math.min(
+      Math.abs(projection.expectedCards - toNumber(houseMarkets.cardsOverLine || "0")) || 99,
+      Math.abs(projection.expectedCards - toNumber(houseMarkets.cardsUnderLine || "0")) || 99
+    );
+
+    if (tightCorners <= 1.5) warnings.push("Corners cerca de la línea: no lo uses como base fuerte de parlay.");
+    if (tightGoals <= 0.35) warnings.push("Goles cerca de la línea: buscar línea más protegida.");
+    if (tightCards <= 0.8) warnings.push("Tarjetas cerca de la línea: depende mucho del árbitro/contexto.");
+    if (winnerOptions[0].pct < 48) warnings.push("1X2 parejo: mejor doble oportunidad o handicap positivo.");
+    if (matchProfile.type === "trampa") warnings.push("Perfil trampa: evita combinar demasiados mercados del mismo partido.");
+
+    const message = warnings.length
+      ? warnings.join(" ")
+      : matchProfile.type === "abierto"
+        ? "Lectura abierta: prioriza goles protegidos y evita unders agresivos."
+        : matchProfile.type === "cerrado"
+          ? "Lectura cerrada: prioriza líneas con colchón y doble oportunidad."
+          : "Lectura equilibrada: mejor proteger con doble oportunidad/handicap y solo combinar líneas cómodas.";
+
+    return {
+      winner: winnerOptions[0],
+      doubleChance: doubleChanceOptions[0],
+      goals,
+      corners,
+      cards,
+      message,
+      profile: matchProfile.type,
+    };
+  }, [hasMinimumData, projection, match, houseMarkets, matchProfile]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(BANKROLL_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as BankrollState;
+      setBankroll({
+        initialBank: saved.initialBank || "",
+        bets: Array.isArray(saved.bets) ? saved.bets : [],
+      });
+    } catch {
+      setBankroll(emptyBankroll());
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(BANKROLL_STORAGE_KEY, JSON.stringify(bankroll));
+  }, [bankroll]);
 
   useEffect(() => {
     const saved = safeReadStorage();
@@ -1154,6 +1561,35 @@ export default function Page() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets }));
   }, [match, indicators, localRecent, visitRecent, houseMarkets]);
+
+  useEffect(() => {
+    setIndicators((prev) =>
+      prev.map((indicator) => {
+        const autoOdd = findHouseOddForIndicator(indicator.market, indicator.line);
+        if (!autoOdd || indicator.houseOdd) return indicator;
+        return { ...indicator, houseOdd: autoOdd };
+      })
+    );
+  }, [houseMarkets]);
+
+  useEffect(() => {
+    setHouseMarkets((prev) => {
+      let next = prev;
+
+      indicators.forEach((indicator) => {
+        const fields = getHouseFieldsForIndicator(indicator.market, indicator.line);
+        const line = String(indicator.line || "").trim();
+        const odd = String(indicator.houseOdd || "").trim();
+        if (!fields || !line || toNumber(odd) <= 1) return;
+        if (String(prev[fields.lineField] || "").trim() !== line) return;
+        if (String(prev[fields.oddField] || "").trim()) return;
+
+        next = { ...next, [fields.oddField]: odd };
+      });
+
+      return next;
+    });
+  }, [indicators]);
 
   const clearAll = () => {
     if (!confirm("¿Seguro que quieres borrar todo el partido actual?")) return;
@@ -1410,6 +1846,122 @@ setIndicators(importedIndicators);
           <p className="mt-1 text-sm text-slate-300">Rachas + registros reales + líneas de la casa + detector anti-casa</p>
         </header>
 
+        <section className="mb-5 overflow-hidden rounded-[2rem] border border-emerald-300/20 bg-gradient-to-br from-emerald-400/15 via-slate-900/75 to-sky-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
+          <div className="rounded-[1.8rem] bg-slate-950/50 p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.35em] text-emerald-200/80">Control real de dinero</p>
+                <h2 className="mt-1 text-3xl font-black">💼 Bankroll tracker</h2>
+                <p className="mt-1 text-sm text-slate-300">Este bloque NO se borra con Limpiar. Solo con Reset bankroll.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={exportBankroll} className="rounded-2xl bg-emerald-400 px-4 py-3 font-black text-emerald-950">🗃️ Exportar bank</button>
+                <button onClick={() => bankrollImportRef.current?.click()} className="rounded-2xl bg-sky-400 px-4 py-3 font-black text-sky-950">📨 Importar bank</button>
+                <button onClick={resetBankroll} className="rounded-2xl bg-rose-500 px-4 py-3 font-black text-white">🧨 Reset bankroll</button>
+                <input ref={bankrollImportRef} type="file" accept="application/json" className="hidden" onChange={(event) => importBankroll(event.target.files?.[0] || null)} />
+              </div>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-5">
+              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                <p className="text-xs text-slate-400">Bank inicial</p>
+                <input className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xl font-black text-white outline-none" inputMode="decimal" placeholder="0.00" value={bankroll.initialBank} onChange={(event) => setBankroll((prev) => ({ ...prev, initialBank: event.target.value }))} />
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                <p className="text-xs text-slate-400">Bank actual</p>
+                <p className="mt-2 text-3xl font-black text-emerald-100">{formatMoney(bankrollStats.currentBank)}</p>
+              </div>
+              <div className={`rounded-2xl border border-white/10 bg-white/10 p-4 ${bankrollStats.profit >= 0 ? "text-emerald-100" : "text-rose-100"}`}>
+                <p className="text-xs text-slate-400">Ganancia / pérdida</p>
+                <p className="mt-2 text-3xl font-black">{bankrollStats.profit >= 0 ? "+" : ""}{formatMoney(bankrollStats.profit)}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                <p className="text-xs text-slate-400">ROI</p>
+                <p className="mt-2 text-3xl font-black text-sky-100">{bankrollStats.roi.toFixed(1)}%</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                <p className="text-xs text-slate-400">Acierto</p>
+                <p className="mt-2 text-3xl font-black text-violet-100">{bankrollStats.winrate.toFixed(1)}%</p>
+                <p className="text-xs text-slate-400">{bankrollStats.wins}G / {bankrollStats.losses}P · Pend: {bankrollStats.pending}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 lg:grid-cols-3">
+              <div className="rounded-3xl border border-white/10 bg-slate-950/45 p-4 lg:col-span-2">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-xl font-black">📈 Curva del bank</h3>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold">Stake total: {formatMoney(bankrollStats.totalStake)}</span>
+                </div>
+                <svg viewBox="0 0 600 180" className="h-48 w-full overflow-visible rounded-2xl bg-white/5 p-3">
+                  <defs>
+                    <linearGradient id="bankLine" x1="0" x2="1" y1="0" y2="0">
+                      <stop offset="0%" stopColor="#34d399" />
+                      <stop offset="100%" stopColor="#38bdf8" />
+                    </linearGradient>
+                  </defs>
+                  {(() => {
+                    const points = bankrollStats.equityPoints.length >= 2 ? bankrollStats.equityPoints : [bankrollStats.initialBank || 0, bankrollStats.currentBank || 0];
+                    const min = Math.min(...points, bankrollStats.initialBank || 0);
+                    const max = Math.max(...points, bankrollStats.initialBank || 0, min + 1);
+                    const coords = points.map((value, index) => {
+                      const x = points.length === 1 ? 20 : 20 + (index * 560) / (points.length - 1);
+                      const y = 150 - ((value - min) / Math.max(1, max - min)) * 120;
+                      return `${x},${y}`;
+                    }).join(" ");
+                    return <polyline points={coords} fill="none" stroke="url(#bankLine)" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />;
+                  })()}
+                  <line x1="20" y1="150" x2="580" y2="150" stroke="rgba(255,255,255,.15)" strokeWidth="2" />
+                </svg>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-slate-950/45 p-4">
+                <h3 className="text-xl font-black">🧠 App vs Manual</h3>
+                <div className="mt-4 space-y-4">
+                  {bankrollStats.sourceStats.map((item) => (
+                    <div key={item.source}>
+                      <div className="mb-1 flex justify-between text-sm">
+                        <span className="font-bold">{item.source === "app" ? "🤖 Picks app" : "🧍 Picks manuales"}</span>
+                        <span className={item.profit >= 0 ? "text-emerald-200" : "text-rose-200"}>{item.profit >= 0 ? "+" : ""}{formatMoney(item.profit)} · ROI {item.roi.toFixed(1)}%</span>
+                      </div>
+                      <div className="h-3 overflow-hidden rounded-full bg-white/10">
+                        <div className={`h-full ${item.profit >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} style={{ width: `${clamp(Math.abs(item.roi), 4, 100)}%` }} />
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400">{item.total} apuestas · {item.wins} ganadas</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-3xl border border-white/10 bg-slate-950/45 p-4">
+              <h3 className="text-xl font-black">📜 Historial rápido</h3>
+              <div className="mt-3 space-y-2">
+                {bankroll.bets.length === 0 ? <p className="text-sm text-slate-300">Sin apuestas registradas todavía.</p> : null}
+                {bankroll.bets.slice(0, 8).map((bet) => {
+                  const profit = betProfit(bet);
+                  return (
+                    <div key={bet.id} className="grid gap-3 rounded-2xl border border-white/10 bg-white/5 p-3 lg:grid-cols-[1fr_auto]">
+                      <div>
+                        <p className="text-xs text-slate-400">{bet.date} · {bet.source === "app" ? "🤖 App" : "🧍 Manual"} · {bet.market || "Sin mercado"}</p>
+                        <p className="font-black">{bet.matchName}</p>
+                        <p className="text-sm text-slate-300">{bet.pick} · Stake {bet.stake} · Cuota {bet.odd}</p>
+                        {bet.notes ? <p className="mt-1 text-xs text-slate-400">Nota: {bet.notes}</p> : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                        <span className={`rounded-xl px-3 py-2 text-sm font-black ${bet.status === "won" ? "bg-emerald-400/20 text-emerald-100" : bet.status === "lost" ? "bg-rose-400/20 text-rose-100" : bet.status === "void" ? "bg-slate-400/20 text-slate-100" : "bg-amber-400/20 text-amber-100"}`}>{bet.status === "won" ? `+${formatMoney(profit)}` : bet.status === "lost" ? formatMoney(profit) : bet.status === "void" ? "Nula" : "Pendiente"}</span>
+                        <button onClick={() => updateBankBetStatus(bet.id, "won")} className="rounded-lg bg-emerald-500/20 px-2 py-1 text-xs font-bold text-emerald-100">✅</button>
+                        <button onClick={() => updateBankBetStatus(bet.id, "lost")} className="rounded-lg bg-rose-500/20 px-2 py-1 text-xs font-bold text-rose-100">❌</button>
+                        <button onClick={() => updateBankBetStatus(bet.id, "void")} className="rounded-lg bg-slate-500/20 px-2 py-1 text-xs font-bold text-slate-100">↩️</button>
+                        <button onClick={() => deleteBankBet(bet.id)} className="rounded-lg bg-white/10 px-2 py-1 text-xs font-bold text-white">🗑️</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="mb-4 flex flex-wrap gap-3">
             <button onClick={saveManual} className="rounded-2xl bg-emerald-500 px-4 py-3 font-bold text-emerald-950 shadow-lg shadow-emerald-500/20">💾 Guardar</button>
@@ -1557,7 +2109,7 @@ setIndicators(importedIndicators);
           <div className="space-y-3">
             {indicators.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-white/15 p-5 text-sm text-slate-300">
-                Ejemplo: Ambos marcan 5/5, Más de 2.5 goles 8/10, Menos de 10.5 corners 6/7. Agrega cuota casa si la tienes.
+                Ejemplo: Ambos marcan 5/5, Más de 2.5 goles 8/10, Menos de 10.5 corners 6/7. Si ya llenaste Líneas reales de la casa, la cuota se carga sola al elegir el mismo mercado y línea.
               </div>
             ) : null}
 
@@ -1572,11 +2124,7 @@ setIndicators(importedIndicators);
                   </select>
                   <select
                     value={getMarketValue(indicator.market)}
-                    onChange={(event) => {
-                      const selected = MARKET_OPTIONS.find((option) => option.value === event.target.value);
-                      updateIndicator(indicator.id, "market", selected?.value || "");
-                      updateIndicator(indicator.id, "line", selected?.line || "");
-                    }}
+                    onChange={(event) => updateIndicatorMarket(indicator.id, event.target.value)}
                     className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-2"
                   >
                     <option value="">Seleccionar mercado</option>
@@ -1756,6 +2304,117 @@ setIndicators(importedIndicators);
           </div>
           
         </section>
+
+        {finalReading ? (
+          <section className="relative overflow-hidden rounded-3xl border border-sky-300/20 bg-slate-950/45 p-4 shadow-2xl shadow-sky-950/40 backdrop-blur-xl">
+            <div className="pointer-events-none absolute inset-0 opacity-70" style={{ background: `radial-gradient(circle at top left, ${match.localColor1}33, transparent 35%), radial-gradient(circle at bottom right, ${match.visitColor1}33, transparent 35%)` }} />
+            <div className="relative z-10">
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.35em] text-sky-200">Lectura para comparar después</p>
+                  <h2 className="mt-1 text-2xl font-black text-white">🔮 Resumen de lectura 90’</h2>
+                  <p className="mt-1 text-xs text-slate-300">No es apuesta segura. Sirve para revisar qué tan cerca estuvo la app al finalizar el partido.</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-right">
+                  <p className="text-xs text-slate-400">Perfil del partido</p>
+                  <p className="text-lg font-black">{finalReading.profile === "abierto" ? "🔥 Abierto" : finalReading.profile === "cerrado" ? "🧊 Cerrado" : finalReading.profile === "trampa" ? "⚠️ Trampa" : "⚖️ Equilibrado"}</p>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Ganador probable</p>
+                  <p className="mt-2 text-xl font-black text-white">{finalReading.winner.label}</p>
+                  <div className="mt-3 h-2 rounded-full bg-white/10"><div className="h-2 rounded-full bg-emerald-400" style={{ width: `${finalReading.winner.pct}%` }} /></div>
+                  <p className="mt-2 text-2xl font-black text-emerald-100">{finalReading.winner.pct.toFixed(1)}%</p>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Doble oportunidad</p>
+                  <p className="mt-2 text-xl font-black text-white">{finalReading.doubleChance.label}</p>
+                  <div className="mt-3 h-2 rounded-full bg-white/10"><div className="h-2 rounded-full bg-sky-400" style={{ width: `${finalReading.doubleChance.pct}%` }} /></div>
+                  <p className="mt-2 text-2xl font-black text-sky-100">{finalReading.doubleChance.pct.toFixed(1)}%</p>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Total de goles</p>
+                  <p className="mt-2 text-lg font-black text-white">{finalReading.goals.label}</p>
+                  <p className="mt-1 text-xs text-slate-300">Esperado: {finalReading.goals.expected.toFixed(1)}</p>
+                  <p className="mt-2 text-2xl font-black text-violet-100">{finalReading.goals.pct.toFixed(1)}%</p>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Total de corners</p>
+                  <p className="mt-2 text-lg font-black text-white">{finalReading.corners.label}</p>
+                  <p className="mt-1 text-xs text-slate-300">Esperado: {finalReading.corners.expected.toFixed(1)}</p>
+                  <p className="mt-2 text-2xl font-black text-amber-100">{finalReading.corners.pct.toFixed(1)}%</p>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Total de tarjetas</p>
+                  <p className="mt-2 text-lg font-black text-white">{finalReading.cards.label}</p>
+                  <p className="mt-1 text-xs text-slate-300">Esperado: {finalReading.cards.expected.toFixed(1)}</p>
+                  <p className="mt-2 text-2xl font-black text-rose-100">{finalReading.cards.pct.toFixed(1)}%</p>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4">
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-200">Mensaje de sugerencia</p>
+                <p className="mt-2 text-sm font-semibold text-cyan-50">{finalReading.message}</p>
+              </div>
+            </div>
+          </section>
+        ) : null}
+        
+<div className="mt-4 grid gap-4 lg:grid-cols-3">
+              <div className="rounded-3xl border border-white/10 bg-white/10 p-4 lg:col-span-2">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-xl font-black">➕ Registrar apuesta</h3>
+                  <button onClick={quickFillBankBet} className="rounded-xl bg-amber-300 px-3 py-2 text-sm font-black text-amber-950">⚡ Usar mejor lectura</button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <input className={inputClass} type="date" value={bankBetDraft.date} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, date: event.target.value }))} />
+                  <input className={inputClass} placeholder="Partido" value={bankBetDraft.matchName} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, matchName: event.target.value }))} />
+                  <input className={inputClass} placeholder="Pick / selección" value={bankBetDraft.pick} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, pick: event.target.value }))} />
+                  <select className={selectClass} value={bankBetDraft.market} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, market: event.target.value }))}>
+                    <option value="">Mercado</option>
+                    <option value="Ganador / doble oportunidad">Ganador / doble oportunidad</option>
+                    <option value="Goles">Goles</option>
+                    <option value="Corners">Corners</option>
+                    <option value="Tarjetas">Tarjetas</option>
+                    <option value="Handicap">Handicap</option>
+                    <option value="Parlay">Parlay</option>
+                  </select>
+                  <input className={inputClass} inputMode="decimal" placeholder="Monto apostado" value={bankBetDraft.stake} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, stake: event.target.value }))} />
+                  <input className={inputClass} inputMode="decimal" placeholder="Cuota total" value={bankBetDraft.odd} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, odd: event.target.value }))} />
+                  <select className={selectClass} value={bankBetDraft.source} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, source: event.target.value as BetSource }))}>
+                    <option value="app">🤖 App</option>
+                    <option value="manual">🧍 Manual</option>
+                  </select>
+                  <select className={selectClass} value={bankBetDraft.status} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, status: event.target.value as BetStatus }))}>
+                    <option value="pending">Pendiente</option>
+                    <option value="won">Ganada</option>
+                    <option value="lost">Perdida</option>
+                    <option value="void">Nula</option>
+                  </select>
+                  <input className={`${inputClass} sm:col-span-2 lg:col-span-3`} placeholder="Nota corta: por qué la jugaste / qué aprendiste" value={bankBetDraft.notes} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, notes: event.target.value }))} />
+                  <button onClick={addBankBet} className="rounded-2xl bg-emerald-400 px-4 py-3 font-black text-emerald-950 shadow-lg shadow-emerald-400/20">Guardar apuesta</button>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-white/10 p-4">
+                <h3 className="text-xl font-black">🏆 Mercados</h3>
+                <div className="mt-3 space-y-2">
+                  {bankrollStats.byMarket.length === 0 ? <p className="text-sm text-slate-300">Aún no hay mercados cerrados.</p> : null}
+                  {bankrollStats.byMarket.map((item) => (
+                    <div key={item.market} className="rounded-2xl bg-slate-950/45 p-3">
+                      <div className="flex justify-between gap-2 text-sm"><span className="font-bold">{item.market}</span><span className={item.profit >= 0 ? "text-emerald-200" : "text-rose-200"}>{item.profit >= 0 ? "+" : ""}{formatMoney(item.profit)}</span></div>
+                      <p className="text-xs text-slate-400">{item.total} cerradas · ROI {item.stake > 0 ? ((item.profit / item.stake) * 100).toFixed(1) : "0.0"}%</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
         
         {match.local && match.visitante ? (
           <section
