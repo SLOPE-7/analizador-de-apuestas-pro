@@ -58,6 +58,13 @@ type HouseMarket = {
   cardsOverOdd: string;
   cardsUnderLine: string;
   cardsUnderOdd: string;
+  dcLocalDrawOdd: string;
+  dcDrawVisitOdd: string;
+  dcLocalVisitOdd: string;
+  handicapLocalLine: string;
+  handicapLocalOdd: string;
+  handicapVisitLine: string;
+  handicapVisitOdd: string;
 };
 
 type BetStatus = "pending" | "won" | "lost" | "void";
@@ -81,6 +88,41 @@ type BankrollState = {
   bets: BankBet[];
 };
 
+type DailyPick = {
+  id: string;
+  createdAt: string;
+  matchName: string;
+  label: string;
+  line: string;
+  marketValue: string;
+  odd: number;
+  score: number;
+  tier: string;
+  grade: Grade;
+  source: "SofaScore" | "Casa";
+  riskFlags: string[];
+  uniqueKey: string;
+};
+
+type DayPlanGroup = {
+  title: string;
+  subtitle: string;
+  picks: DailyPick[];
+  tone: "safe" | "reasonable" | "risky" | "discard";
+};
+
+type ParlayPickForDay = {
+  key: string;
+  label: string;
+  marketValue: string;
+  line: string;
+  score: number;
+  odd: number;
+  tier: string;
+  grade: Grade;
+  riskFlags: string[];
+  source: "SofaScore" | "Casa";
+};
 
 type ResultPick = {
   key: string;
@@ -117,6 +159,11 @@ type HousePick = {
   margin?: number;
 };
 
+
+type HouseFieldMap =
+  | { lineField: keyof HouseMarket; oddField: keyof HouseMarket }
+  | { oddField: keyof HouseMarket };
+
 type ExportShape = {
   version: number;
   exportedAt: string;
@@ -129,6 +176,7 @@ type ExportShape = {
 
 const STORAGE_KEY = "analizador_pro_h2h_casa_v4";
 const BANKROLL_STORAGE_KEY = "bankroll_tracker_h2h_v1";
+const DAILY_PICKS_STORAGE_KEY = "apuestas_del_dia_h2h_v1";
 
 const MARKET_OPTIONS = [
   { label: "Sin derrotas", value: "sin_derrotas", line: "" },
@@ -187,6 +235,7 @@ const GOAL_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"];
 const CORNER_OVER_LINES = ["4.5", "5.5", "6.5", "7.5", "8.5", "9.5", "10.5"];
 const CORNER_UNDER_LINES = ["16.5", "15.5", "14.5", "13.5", "12.5", "11.5", "10.5", "9.5", "8.5", "7.5", "6.5", "5.5"];
 const CARD_LINES = ["1.5", "2.5", "3.5", "4.5", "5.5", "6.5"];
+const HANDICAP_LINES = ["+0.5", "+1.5", "+2.5", "+3.5", "-0.5", "-1.5", "-2.5", "-3.5"];
 const TEAM_COLOR_PRESETS = [
   { label: "Man City", local1: "#6CABDD", local2: "#ffffff", visit1: "#6CABDD", visit2: "#ffffff" },
   { label: "Barcelona", local1: "#A50044", local2: "#004D98", visit1: "#A50044", visit2: "#004D98" },
@@ -237,6 +286,13 @@ function emptyHouseMarkets(): HouseMarket {
     cardsOverOdd: "",
     cardsUnderLine: "4.5",
     cardsUnderOdd: "",
+    dcLocalDrawOdd: "",
+    dcDrawVisitOdd: "",
+    dcLocalVisitOdd: "",
+    handicapLocalLine: "+1.5",
+    handicapLocalOdd: "",
+    handicapVisitLine: "+1.5",
+    handicapVisitOdd: "",
   };
 }
 
@@ -272,6 +328,72 @@ function betProfit(bet: BankBet) {
 function formatMoney(value: number) {
   if (!Number.isFinite(value)) return "0.00";
   return value.toFixed(2);
+}
+
+function formatOdd(value: number) {
+  if (!Number.isFinite(value) || value <= 1) return "Sin cuota";
+  return value.toFixed(2);
+}
+
+function dailyFamily(marketValue: string) {
+  if (marketValue.includes("corners")) return "corners";
+  if (marketValue.includes("cards")) return "cards";
+  if (["over_1_5", "over_2_5", "under_2_5", "under_4_5", "btts", "no_clean"].includes(marketValue)) return "goals";
+  if (marketValue.includes("handicap") || marketValue.includes("plus") || marketValue.includes("minus")) return "handicap";
+  if (["ganador", "empate", "local_o_empate", "visitante_o_empate", "local_o_visitante", "sin_derrotas", "sin_victorias", "victorias"].includes(marketValue)) return "result";
+  return marketValue || "other";
+}
+
+function hasDangerFlag(flags: string[]) {
+  return flags.some((flag) => {
+    const text = flag.toLowerCase();
+    return text.includes("zona prohibida") || text.includes("trampa") || text.includes("bloqueado") || text.includes("sin value") || text.includes("contradicción") || text.includes("freno");
+  });
+}
+
+function buildDailyPlan(picks: DailyPick[]): DayPlanGroup[] {
+  const sorted = [...picks].sort((a, b) => b.score - a.score);
+  const descartados = sorted.filter((pick) => hasDangerFlag(pick.riskFlags) || pick.grade === "risky" || pick.score < 62);
+  const vivos = sorted.filter((pick) => !descartados.some((bad) => bad.id === pick.id));
+
+  const simples = vivos.filter((pick) => {
+    const family = dailyFamily(pick.marketValue);
+    return pick.score >= 74 && (pick.odd >= 1.55 || family === "corners" || family === "cards" || pick.grade === "reasonable");
+  }).slice(0, 5);
+
+  const usedFamilies = new Set<string>();
+  const usedMatches = new Set<string>();
+  const conservador: DailyPick[] = [];
+  for (const pick of vivos) {
+    const family = dailyFamily(pick.marketValue);
+    if (conservador.length >= 3) break;
+    if (family === "cards") continue;
+    if (family === "corners" && pick.score < 88) continue;
+    if (pick.score < 82) continue;
+    if (usedFamilies.has(family)) continue;
+    if (usedMatches.has(pick.matchName)) continue;
+    conservador.push(pick);
+    usedFamilies.add(family);
+    usedMatches.add(pick.matchName);
+  }
+
+  const riesgoso = vivos
+    .filter((pick) => !conservador.some((item) => item.id === pick.id) && !simples.some((item) => item.id === pick.id))
+    .filter((pick) => pick.score >= 68)
+    .slice(0, 4);
+
+  return [
+    { title: "🟢 Simples recomendadas", subtitle: "Picks buenos para jugar solos o con stake controlado.", picks: simples, tone: "safe" },
+    { title: "🧊 Parlay conservador", subtitle: "Máximo 2–3 selecciones, familias diferentes y sin zonas trampa.", picks: conservador, tone: "reasonable" },
+    { title: "🔥 Parlay riesgoso", subtitle: "Solo si quieres cuota. No mezclar con el conservador.", picks: riesgoso, tone: "risky" },
+    { title: "⛔ Descartar / no combinar", subtitle: "Picks con señales peligrosas, trampa o poco margen.", picks: descartados, tone: "discard" },
+  ];
+}
+
+function combinedOdds(picks: DailyPick[]) {
+  const valid = picks.map((pick) => pick.odd).filter((odd) => odd > 1);
+  if (!valid.length) return 0;
+  return valid.reduce((acc, odd) => acc * odd, 1);
 }
 
 function buildBankrollStats(bankroll: BankrollState) {
@@ -740,6 +862,11 @@ function hasHouseOdd(houseMarkets: HouseMarket) {
     houseMarkets.cornersUnderOdd,
     houseMarkets.cardsOverOdd,
     houseMarkets.cardsUnderOdd,
+    houseMarkets.dcLocalDrawOdd,
+    houseMarkets.dcDrawVisitOdd,
+    houseMarkets.dcLocalVisitOdd,
+    houseMarkets.handicapLocalOdd,
+    houseMarkets.handicapVisitOdd,
   ].some((odd) => toNumber(odd) > 1);
 }
 
@@ -748,6 +875,26 @@ function marketValueFromGroup(group: MarketGroup, direction: "over" | "under", l
   if (group === "goals") return `${direction}_${safeLine}`;
   if (group === "corners") return `${direction}_${safeLine}_corners`;
   return `${direction}_${safeLine}_cards`;
+}
+
+function marketValueFromHandicap(side: "local" | "visit", line: string) {
+  const n = toNumber(line);
+  const safe = Math.abs(n).toString().replace(".", "_");
+  const sign = n >= 0 ? "plus" : "minus";
+  return side === "local" ? `local_${sign}_${safe}` : `visit_${sign}_${safe}`;
+}
+
+function labelFromHandicap(side: "local" | "visit", line: string, match: Match) {
+  const team = side === "local" ? match.local || "Local" : match.visitante || "Visitante";
+  return `${team} ${line} handicap`;
+}
+
+function scoreHandicapMarket(side: "local" | "visit", line: string, localRows: RecentRow[], visitRows: RecentRow[]) {
+  const handicap = toNumber(line);
+  if (side === "local") {
+    return average([handicapPct(localRows, handicap), 100 - handicapPct(visitRows, -handicap)].filter((n) => n >= 0));
+  }
+  return average([handicapPct(visitRows, handicap), 100 - handicapPct(localRows, -handicap)].filter((n) => n >= 0));
 }
 
 function labelFromHouse(group: MarketGroup, direction: "over" | "under", line: string) {
@@ -875,6 +1022,7 @@ function marketTrapInput(marketValue: string, line: string, projection: ReturnTy
 export default function Page() {
   const importRef = useRef<HTMLInputElement | null>(null);
   const bankrollImportRef = useRef<HTMLInputElement | null>(null);
+  const dailyPicksImportRef = useRef<HTMLInputElement | null>(null);
 
   const [match, setMatch] = useState<Match>({
     local: "",
@@ -896,8 +1044,99 @@ export default function Page() {
   const [houseMarkets, setHouseMarkets] = useState<HouseMarket>(emptyHouseMarkets());
   const [bankroll, setBankroll] = useState<BankrollState>(emptyBankroll());
   const [bankBetDraft, setBankBetDraft] = useState<Omit<BankBet, "id">>(emptyBankBet());
+  const [dailyPicks, setDailyPicks] = useState<DailyPick[]>([]);
+  const [dailyPlanGenerated, setDailyPlanGenerated] = useState(false);
 
   const bankrollStats = useMemo(() => buildBankrollStats(bankroll), [bankroll]);
+  const dailyPlan = useMemo(() => buildDailyPlan(dailyPicks), [dailyPicks]);
+
+  const isPickInDaily = (pick: ParlayPickForDay) => {
+    const matchName = `${match.local || "Local"} vs ${match.visitante || "Visitante"}`;
+    const uniqueKey = `${matchName}__${pick.key}`;
+    return dailyPicks.some((item) => item.uniqueKey === uniqueKey);
+  };
+
+  const addPickToDaily = (pick: ParlayPickForDay) => {
+    const matchName = `${match.local || "Local"} vs ${match.visitante || "Visitante"}`;
+    const uniqueKey = `${matchName}__${pick.key}`;
+    if (dailyPicks.some((item) => item.uniqueKey === uniqueKey)) {
+      alert("Ese pick ya está en apuestas del día.");
+      return;
+    }
+    const nextPick: DailyPick = {
+      id: makeId(),
+      createdAt: new Date().toISOString(),
+      matchName,
+      label: pick.label,
+      line: pick.line || "",
+      marketValue: pick.marketValue || "",
+      odd: Number.isFinite(pick.odd) ? pick.odd : 0,
+      score: pick.score || 0,
+      tier: pick.tier || "",
+      grade: pick.grade || "reasonable",
+      source: pick.source,
+      riskFlags: Array.isArray(pick.riskFlags) ? pick.riskFlags : [],
+      uniqueKey,
+    };
+    setDailyPicks((prev) => [nextPick, ...prev]);
+    setDailyPlanGenerated(false);
+  };
+
+  const removeDailyPick = (id: string) => {
+    setDailyPicks((prev) => prev.filter((pick) => pick.id !== id));
+    setDailyPlanGenerated(false);
+  };
+
+  const clearDailyPicks = () => {
+    if (!confirm("¿Limpiar solo las apuestas del día?")) return;
+    setDailyPicks([]);
+    setDailyPlanGenerated(false);
+    if (typeof window !== "undefined") localStorage.removeItem(DAILY_PICKS_STORAGE_KEY);
+  };
+
+  const exportDailyPicks = () => {
+    const data = { version: 1, exportedAt: new Date().toISOString(), dailyPicks };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `apuestas_del_dia_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const importDailyPicks = (file: File | null) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result)) as ({ dailyPicks?: DailyPick[] } | DailyPick[]);
+        const incoming = Array.isArray(data) ? data : Array.isArray(data.dailyPicks) ? data.dailyPicks : [];
+        setDailyPicks(incoming.map((pick) => ({
+          id: pick.id || makeId(),
+          createdAt: pick.createdAt || new Date().toISOString(),
+          matchName: pick.matchName || "Partido",
+          label: pick.label || "Pick",
+          line: pick.line || "",
+          marketValue: pick.marketValue || "",
+          odd: Number.isFinite(Number(pick.odd)) ? Number(pick.odd) : 0,
+          score: Number.isFinite(Number(pick.score)) ? Number(pick.score) : 0,
+          tier: pick.tier || "",
+          grade: (pick.grade as Grade) || "reasonable",
+          source: (pick.source as "SofaScore" | "Casa") || "Casa",
+          riskFlags: Array.isArray(pick.riskFlags) ? pick.riskFlags : [],
+          uniqueKey: pick.uniqueKey || `${pick.matchName || "Partido"}__${pick.label || "Pick"}_${pick.line || ""}`,
+        })));
+        setDailyPlanGenerated(false);
+        alert("📨 Apuestas del día importadas");
+      } catch {
+        alert("❌ No pude importar ese archivo. Usa un JSON exportado por la app.");
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const addBankBet = () => {
     if (!bankBetDraft.matchName.trim() || !bankBetDraft.pick.trim() || toNumber(bankBetDraft.stake) <= 0 || toNumber(bankBetDraft.odd) <= 1) {
@@ -980,10 +1219,29 @@ export default function Page() {
     ]);
   };
 
-  const getHouseFieldsForIndicator = (marketInput: string, lineInput: string) => {
+  const getHouseFieldsForIndicator = (marketInput: string, lineInput: string): HouseFieldMap | null => {
     const marketValue = getMarketValue(marketInput);
     const line = String(lineInput || "").trim();
-    if (!marketValue || !line) return null;
+    if (!marketValue) return null;
+
+    if (marketValue === "local_o_empate") {
+      return { oddField: "dcLocalDrawOdd" as const };
+    }
+    if (marketValue === "visitante_o_empate") {
+      return { oddField: "dcDrawVisitOdd" as const };
+    }
+    if (marketValue === "local_o_visitante") {
+      return { oddField: "dcLocalVisitOdd" as const };
+    }
+
+    if (marketValue.startsWith("local_plus_") || marketValue.startsWith("local_minus_")) {
+      return { lineField: "handicapLocalLine" as const, oddField: "handicapLocalOdd" as const };
+    }
+    if (marketValue.startsWith("visit_plus_") || marketValue.startsWith("visit_minus_")) {
+      return { lineField: "handicapVisitLine" as const, oddField: "handicapVisitOdd" as const };
+    }
+
+    if (!line) return null;
 
     if (marketValue.startsWith("over_") && !marketValue.includes("corners") && !marketValue.includes("cards")) {
       return { lineField: "goalsOverLine" as const, oddField: "goalsOverOdd" as const };
@@ -1009,7 +1267,9 @@ export default function Page() {
   const findHouseOddForIndicator = (marketInput: string, lineInput: string) => {
     const fields = getHouseFieldsForIndicator(marketInput, lineInput);
     const line = String(lineInput || "").trim();
-    if (!fields || !line) return "";
+    if (!fields) return "";
+    if (!("lineField" in fields)) return String(houseMarkets[fields.oddField] || "");
+    if (!line) return "";
     return line === String(houseMarkets[fields.lineField] || "").trim() ? String(houseMarkets[fields.oddField] || "") : "";
   };
 
@@ -1146,17 +1406,18 @@ export default function Page() {
       });
 
     const strength = recordStrength(totalRecords);
+    const selectedLocalHandicapLine = houseMarkets.handicapLocalLine || "+1.5";
+    const selectedVisitHandicapLine = houseMarkets.handicapVisitLine || "+1.5";
+
     const resultCandidates: Array<{ label: string; marketValue: string; line: string; score: number; odd: number }> = [
       { label: `${match.local || "Local"} gana`, marketValue: "ganador", line: "1", score: clamp((local.winPct * 0.6 + visit.noWinPct * 0.4) * strength, 0, 100), odd: toNumber(match.oddLocal) },
       { label: `${match.visitante || "Visitante"} gana`, marketValue: "ganador", line: "2", score: clamp((visit.winPct * 0.6 + local.noWinPct * 0.4) * strength, 0, 100), odd: toNumber(match.oddVisit) },
       { label: "Empate", marketValue: "empate", line: "X", score: clamp(average([local.drawPct, visit.drawPct]) * strength, 0, 100), odd: toNumber(match.oddDraw) },
-      { label: `${match.local || "Local"} o empate`, marketValue: "local_o_empate", line: "1X", score: clamp((local.noLosePct * 0.65 + visit.noWinPct * 0.35) * strength, 0, 100), odd: 0 },
-      { label: `${match.visitante || "Visitante"} o empate`, marketValue: "visitante_o_empate", line: "X2", score: clamp((visit.noLosePct * 0.65 + local.noWinPct * 0.35) * strength, 0, 100), odd: 0 },
-      { label: "Local o visitante", marketValue: "local_o_visitante", line: "12", score: clamp((100 - average([local.drawPct, visit.drawPct])) * strength, 0, 100), odd: 0 },
-      { label: `${match.local || "Local"} +1.5 handicap`, marketValue: "local_plus_1_5", line: "+1.5", score: clamp(average([handicapPct(localRecent, 1.5), 100 - handicapPct(visitRecent, -1.5)]) * strength, 0, 100), odd: 0 },
-      { label: `${match.visitante || "Visitante"} +1.5 handicap`, marketValue: "visit_plus_1_5", line: "+1.5", score: clamp(average([handicapPct(visitRecent, 1.5), 100 - handicapPct(localRecent, -1.5)]) * strength, 0, 100), odd: 0 },
-      { label: `${match.local || "Local"} -1.5 handicap`, marketValue: "local_minus_1_5", line: "-1.5", score: clamp(handicapPct(localRecent, -1.5) * strength, 0, 100), odd: 0 },
-      { label: `${match.visitante || "Visitante"} -1.5 handicap`, marketValue: "visit_minus_1_5", line: "-1.5", score: clamp(handicapPct(visitRecent, -1.5) * strength, 0, 100), odd: 0 },
+      { label: `${match.local || "Local"} o empate`, marketValue: "local_o_empate", line: "1X", score: clamp((local.noLosePct * 0.65 + visit.noWinPct * 0.35) * strength, 0, 100), odd: toNumber(houseMarkets.dcLocalDrawOdd) },
+      { label: `Empate o ${match.visitante || "Visitante"}`, marketValue: "visitante_o_empate", line: "X2", score: clamp((visit.noLosePct * 0.65 + local.noWinPct * 0.35) * strength, 0, 100), odd: toNumber(houseMarkets.dcDrawVisitOdd) },
+      { label: `${match.local || "Local"} o ${match.visitante || "Visitante"}`, marketValue: "local_o_visitante", line: "12", score: clamp((100 - average([local.drawPct, visit.drawPct])) * strength, 0, 100), odd: toNumber(houseMarkets.dcLocalVisitOdd) },
+      { label: labelFromHandicap("local", selectedLocalHandicapLine, match), marketValue: marketValueFromHandicap("local", selectedLocalHandicapLine), line: selectedLocalHandicapLine, score: clamp(scoreHandicapMarket("local", selectedLocalHandicapLine, localRecent, visitRecent) * strength, 0, 100), odd: toNumber(houseMarkets.handicapLocalOdd) },
+      { label: labelFromHandicap("visit", selectedVisitHandicapLine, match), marketValue: marketValueFromHandicap("visit", selectedVisitHandicapLine), line: selectedVisitHandicapLine, score: clamp(scoreHandicapMarket("visit", selectedVisitHandicapLine, localRecent, visitRecent) * strength, 0, 100), odd: toNumber(houseMarkets.handicapVisitOdd) },
     ];
 
     const resultPicks: HousePick[] = resultCandidates
@@ -1509,6 +1770,23 @@ export default function Page() {
   }, [bankroll]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(DAILY_PICKS_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as DailyPick[];
+      setDailyPicks(Array.isArray(saved) ? saved : []);
+    } catch {
+      setDailyPicks([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(DAILY_PICKS_STORAGE_KEY, JSON.stringify(dailyPicks));
+  }, [dailyPicks]);
+
+  useEffect(() => {
     const saved = safeReadStorage();
     if (!saved) return;
 
@@ -1580,8 +1858,11 @@ export default function Page() {
         const fields = getHouseFieldsForIndicator(indicator.market, indicator.line);
         const line = String(indicator.line || "").trim();
         const odd = String(indicator.houseOdd || "").trim();
-        if (!fields || !line || toNumber(odd) <= 1) return;
-        if (String(prev[fields.lineField] || "").trim() !== line) return;
+        if (!fields || toNumber(odd) <= 1) return;
+        if ("lineField" in fields) {
+          if (!line) return;
+          if (String(prev[fields.lineField] || "").trim() !== line) return;
+        }
         if (String(prev[fields.oddField] || "").trim()) return;
 
         next = { ...next, [fields.oddField]: odd };
@@ -1767,6 +2048,20 @@ setIndicators(importedIndicators);
     </div>
   );
 
+  const getHouseRangeStatus = (groupLabel: string, overLine: string, underLine: string) => {
+    const over = toNumber(overLine);
+    const under = toNumber(underLine);
+    if (!over || !under) return null;
+    const gap = Math.abs(under - over);
+    const isCorners = groupLabel.toLowerCase().includes("corner");
+    const isGoals = groupLabel.toLowerCase().includes("gol");
+    const tight = isCorners ? gap <= 3 : isGoals ? gap <= 1 : gap <= 1;
+    const comfy = isCorners ? gap >= 5 : isGoals ? gap >= 2 : gap >= 2;
+    if (tight) return { tone: "tight", text: `⚠️ Línea justa: la casa está encerrando el mercado entre ${overLine} y ${underLine}. Mejor no usar fuerte en parlay.` };
+    if (comfy) return { tone: "comfort", text: `🟢 Rango cómodo: hay más separación entre over/under (${overLine} ↔ ${underLine}).` };
+    return { tone: "neutral", text: `🟡 Rango medio: revisar value y registros antes de combinar.` };
+  };
+
   const updateHouse = (field: keyof HouseMarket, value: string) => {
     setHouseMarkets((prev) => ({ ...prev, [field]: value }));
   };
@@ -1798,6 +2093,59 @@ setIndicators(importedIndicators);
           </div>
         </div>
       </div>
+      {(() => {
+        const status = getHouseRangeStatus(title, String(houseMarkets[overLineField]), String(houseMarkets[underLineField]));
+        return status ? (
+          <div className={`mt-3 rounded-2xl border px-3 py-2 text-xs font-bold ${status.tone === "tight" ? "border-amber-300/30 bg-amber-400/10 text-amber-100" : status.tone === "comfort" ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100" : "border-sky-300/30 bg-sky-400/10 text-sky-100"}`}>
+            {status.text}
+          </div>
+        ) : null;
+      })()}
+    </div>
+  );
+
+
+  const renderResultHouseMarket = () => (
+    <div className="rounded-3xl border border-white/10 bg-slate-950/35 p-4">
+      <h3 className="mb-3 text-lg font-black">🛡️ Resultado protegido</h3>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-3">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-sky-100">Local o empate 1X</p>
+          <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.dcLocalDrawOdd} onChange={(event) => updateHouse("dcLocalDrawOdd", event.target.value)} />
+        </div>
+        <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-3">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-sky-100">Empate o visitante X2</p>
+          <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.dcDrawVisitOdd} onChange={(event) => updateHouse("dcDrawVisitOdd", event.target.value)} />
+        </div>
+        <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-3">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-sky-100">Local o visitante 12</p>
+          <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.dcLocalVisitOdd} onChange={(event) => updateHouse("dcLocalVisitOdd", event.target.value)} />
+        </div>
+      </div>
+      <p className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">Estas cuotas alimentan picks de doble oportunidad y evitan depender solo de las cuotas 1X2.</p>
+    </div>
+  );
+
+  const renderHandicapHouseMarket = () => (
+    <div className="rounded-3xl border border-white/10 bg-slate-950/35 p-4">
+      <h3 className="mb-3 text-lg font-black">🧱 Handicap casa</h3>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-3">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-violet-100">Handicap local</p>
+          <div className="grid grid-cols-2 gap-2">
+            <LineSelect value={houseMarkets.handicapLocalLine} options={HANDICAP_LINES} onChange={(value) => updateHouse("handicapLocalLine", value)} />
+            <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.handicapLocalOdd} onChange={(event) => updateHouse("handicapLocalOdd", event.target.value)} />
+          </div>
+        </div>
+        <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-3">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-violet-100">Handicap visitante</p>
+          <div className="grid grid-cols-2 gap-2">
+            <LineSelect value={houseMarkets.handicapVisitLine} options={HANDICAP_LINES} onChange={(value) => updateHouse("handicapVisitLine", value)} />
+            <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.handicapVisitOdd} onChange={(event) => updateHouse("handicapVisitOdd", event.target.value)} />
+          </div>
+        </div>
+      </div>
+      <p className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">Puedes escoger desde +0.5 hasta +3.5 y desde -0.5 hasta -3.5. El motor toma esa línea y su cuota para value/probabilidad.</p>
     </div>
   );
 
@@ -2153,6 +2501,10 @@ setIndicators(importedIndicators);
             {renderHouseMarket("🚩 Corners", "cornersOverLine", "cornersOverOdd", "cornersUnderLine", "cornersUnderOdd", CORNER_OVER_LINES, CORNER_UNDER_LINES)}
             {renderHouseMarket("🟨 Tarjetas", "cardsOverLine", "cardsOverOdd", "cardsUnderLine", "cardsUnderOdd", CARD_LINES, [...CARD_LINES].reverse())}
           </div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            {renderResultHouseMarket()}
+            {renderHandicapHouseMarket()}
+          </div>
         </section>
 
         <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
@@ -2282,7 +2634,16 @@ setIndicators(importedIndicators);
                 {parlaySuggestions.conservador.map((pick, index) => (
                   <div key={pick.key} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
                     <div><p className="text-xs text-slate-400">Selección {index + 1} · {pick.source}</p><p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p><p className="text-xs text-slate-300">{pick.tier} · Score {formatScore(pick.score)}</p></div>
-                    <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">{pick.odd ? pick.odd.toFixed(2) : "Sin cuota"}</span>
+                    <div className="flex flex-col items-end gap-2">
+                      <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">{pick.odd ? pick.odd.toFixed(2) : "Sin cuota"}</span>
+                      <button
+                        onClick={() => addPickToDaily(pick)}
+                        disabled={isPickInDaily(pick)}
+                        className={`rounded-xl px-3 py-2 text-xs font-black shadow-lg transition ${isPickInDaily(pick) ? "bg-emerald-400/20 text-emerald-100" : "bg-cyan-300 text-cyan-950 hover:bg-cyan-200"}`}
+                      >
+                        {isPickInDaily(pick) ? "✔ Añadido" : "📤 Agregar al día"}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2295,7 +2656,16 @@ setIndicators(importedIndicators);
                 {parlaySuggestions.riesgoso.map((pick, index) => (
                   <div key={pick.key} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
                     <div><p className="text-xs text-slate-400">Selección {index + 1} · {pick.source}</p><p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p><p className="text-xs text-slate-300">{pick.tier} · Score {formatScore(pick.score)}</p></div>
-                    <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">{pick.odd ? pick.odd.toFixed(2) : "Sin cuota"}</span>
+                    <div className="flex flex-col items-end gap-2">
+                      <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">{pick.odd ? pick.odd.toFixed(2) : "Sin cuota"}</span>
+                      <button
+                        onClick={() => addPickToDaily(pick)}
+                        disabled={isPickInDaily(pick)}
+                        className={`rounded-xl px-3 py-2 text-xs font-black shadow-lg transition ${isPickInDaily(pick) ? "bg-emerald-400/20 text-emerald-100" : "bg-cyan-300 text-cyan-950 hover:bg-cyan-200"}`}
+                      >
+                        {isPickInDaily(pick) ? "✔ Añadido" : "📤 Agregar al día"}
+                      </button>
+                    </div>
                   </div>
                 ))}
                 
@@ -2303,6 +2673,98 @@ setIndicators(importedIndicators);
             </div>
           </div>
           
+        </section>
+
+        <section className="mt-5 overflow-hidden rounded-[2rem] border border-cyan-300/25 bg-gradient-to-br from-cyan-400/15 via-slate-950/70 to-violet-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
+          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200/80">Planificador del día</p>
+                <h2 className="mt-1 text-3xl font-black">📤 Parlays o simples del día</h2>
+                <p className="mt-1 text-sm text-slate-300">Selecciona picks desde el bloque de parlay. Este bloque NO se borra con Limpiar partido.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={exportDailyPicks} className="rounded-2xl bg-cyan-400 px-4 py-3 font-black text-cyan-950">🗃️ Exportar día</button>
+                <button onClick={() => dailyPicksImportRef.current?.click()} className="rounded-2xl bg-violet-400 px-4 py-3 font-black text-violet-950">📨 Importar día</button>
+                <button onClick={clearDailyPicks} className="rounded-2xl bg-rose-500 px-4 py-3 font-black text-white">🧹 Limpiar día</button>
+                <input ref={dailyPicksImportRef} type="file" accept="application/json" className="hidden" onChange={(event) => importDailyPicks(event.target.files?.[0] || null)} />
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                <p className="text-xs text-slate-400">Picks seleccionados</p>
+                <p className="mt-1 text-3xl font-black text-cyan-100">{dailyPicks.length}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                <p className="text-xs text-slate-400">Cuota total si combinaras todo</p>
+                <p className="mt-1 text-3xl font-black text-amber-100">{combinedOdds(dailyPicks) ? combinedOdds(dailyPicks).toFixed(2) : "—"}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/10 p-4 md:col-span-2">
+                <p className="text-xs text-slate-400">Regla de disciplina</p>
+                <p className="mt-1 text-sm font-semibold text-slate-200">No agregues mercados manuales encima. Primero genera el plan y respeta qué va simple, qué va parlay y qué se descarta.</p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {dailyPicks.length === 0 ? (
+                <div className="rounded-3xl border border-white/10 bg-slate-950/45 p-5 text-sm text-slate-300">
+                  Todavía no seleccionaste picks. Usa el botón <b>📤 Agregar al día</b> en Parlay conservador o riesgoso.
+                </div>
+              ) : null}
+              {dailyPicks.map((pick) => (
+                <div key={pick.id} className="grid gap-3 rounded-3xl border border-white/10 bg-slate-950/45 p-4 lg:grid-cols-[1fr_auto]">
+                  <div>
+                    <p className="text-xs text-slate-400">{pick.matchName} · {pick.source}</p>
+                    <p className="text-lg font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
+                    <p className="text-xs text-slate-300">{pick.tier} · Score {formatScore(pick.score)} · {formatOdd(pick.odd)}</p>
+                    {pick.riskFlags.length ? <p className="mt-1 text-xs text-amber-100">⚠️ {pick.riskFlags[0]}</p> : null}
+                  </div>
+                  <button onClick={() => removeDailyPick(pick.id)} className="rounded-2xl bg-rose-500/90 px-4 py-2 text-sm font-black text-white">Quitar</button>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-white/10 bg-white/10 p-4">
+              <div>
+                <h3 className="text-xl font-black">🤖 Generador de estrategia</h3>
+                <p className="text-sm text-slate-300">La app separa simples, parlay conservador, riesgoso y descartes para evitar sabotear el sistema.</p>
+              </div>
+              <button onClick={() => setDailyPlanGenerated(true)} disabled={dailyPicks.length === 0} className="rounded-2xl bg-emerald-400 px-5 py-3 font-black text-emerald-950 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300">Generar Parlay o Simples del día</button>
+            </div>
+
+            {dailyPlanGenerated ? (
+              <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                {dailyPlan.map((group) => (
+                  <div key={group.title} className={`rounded-3xl border p-4 ${group.tone === "safe" ? "border-emerald-300/25 bg-emerald-400/10" : group.tone === "reasonable" ? "border-cyan-300/25 bg-cyan-400/10" : group.tone === "risky" ? "border-rose-300/25 bg-rose-400/10" : "border-slate-300/20 bg-slate-400/10"}`}>
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-xl font-black">{group.title}</h3>
+                        <p className="text-xs text-slate-300">{group.subtitle}</p>
+                      </div>
+                      <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black">{group.picks.length} picks</span>
+                    </div>
+                    {group.title.includes("Parlay") && group.picks.length ? (
+                      <p className="mb-3 rounded-2xl bg-slate-950/40 px-3 py-2 text-sm font-black text-amber-100">Cuota combinada aprox: {combinedOdds(group.picks).toFixed(2)}</p>
+                    ) : null}
+                    <div className="space-y-2">
+                      {group.picks.length === 0 ? <p className="text-sm text-slate-300">Sin picks para esta categoría.</p> : null}
+                      {group.picks.map((pick, index) => (
+                        <div key={pick.id} className="rounded-2xl border border-white/10 bg-slate-950/45 p-3">
+                          <p className="text-xs text-slate-400">Selección {index + 1} · {pick.matchName}</p>
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
+                            <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-black">{formatOdd(pick.odd)}</span>
+                          </div>
+                          <p className="text-xs text-slate-300">{pick.tier} · Score {formatScore(pick.score)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </section>
 
         {finalReading ? (
