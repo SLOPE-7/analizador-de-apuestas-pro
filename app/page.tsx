@@ -179,42 +179,56 @@ const BANKROLL_STORAGE_KEY = "bankroll_tracker_h2h_v1";
 const DAILY_PICKS_STORAGE_KEY = "apuestas_del_dia_h2h_v1";
 
 const MARKET_OPTIONS = [
-  { label: "Sin derrotas", value: "sin_derrotas", line: "" },
-  { label: "Sin victorias", value: "sin_victorias", line: "" },
-  { label: "Victorias", value: "victorias", line: "" },
-  { label: "Más de 2.5 goles", value: "over_2_5", line: "2.5" },
-  { label: "Más de 1.5 goles", value: "over_1_5", line: "1.5" },
-  { label: "Menos de 2.5 goles", value: "under_2_5", line: "2.5" },
-  { label: "Menos de 4.5 goles", value: "under_4_5", line: "4.5" },
-  { label: "Más de 5.5 corners", value: "over_5_5_corners", line: "5.5" },
-  { label: "Más de 6.5 corners", value: "over_6_5_corners", line: "6.5" },
-  { label: "Más de 8.5 corners", value: "over_8_5_corners", line: "8.5" },
-  { label: "Más de 9.5 corners", value: "over_9_5_corners", line: "9.5" },
-  { label: "Más de 10.5 corners", value: "over_10_5_corners", line: "10.5" },
-  { label: "Menos de 10.5 corners", value: "under_10_5_corners", line: "10.5" },
-  { label: "Menos de 14.5 corners", value: "under_14_5_corners", line: "14.5" },
-  { label: "Ambos marcan", value: "btts", line: "Sí" },
-  { label: "Más de 2.5 tarjetas", value: "over_2_5_cards", line: "2.5" },
-  { label: "Más de 4.5 tarjetas", value: "over_4_5_cards", line: "4.5" },
-  { label: "Menos de 4.5 tarjetas", value: "under_4_5_cards", line: "4.5" },
-  { label: "Menos de 6.5 tarjetas", value: "under_6_5_cards", line: "6.5" },
-  { label: "Ninguna portería a cero", value: "no_clean", line: "Sí" },
-  { label: "Ganador", value: "ganador", line: "" },
-  { label: "Ganador del primer tiempo", value: "first_half_winner", line: "1T" },
-  { label: "Gana cualquier mitad", value: "wins_any_half", line: "Any" },
-  { label: "Empate", value: "empate", line: "" },
-  { label: "Local o empate", value: "local_o_empate", line: "1X" },
-  { label: "Visitante o empate", value: "visitante_o_empate", line: "X2" },
-  { label: "Local o visitante", value: "local_o_visitante", line: "12" },
-  { label: "Local +1.5 handicap", value: "local_plus_1_5", line: "+1.5" },
-  { label: "Local +0.5 handicap", value: "local_plus_0_5", line: "+0.5" },
-  { label: "Local -0.5 handicap", value: "local_minus_0_5", line: "-0.5" },
-  { label: "Local -1.5 handicap", value: "local_minus_1_5", line: "-1.5" },
-  { label: "Visitante +1.5 handicap", value: "visit_plus_1_5", line: "+1.5" },
-  { label: "Visitante +0.5 handicap", value: "visit_plus_0_5", line: "+0.5" },
-  { label: "Visitante -0.5 handicap", value: "visit_minus_0_5", line: "-0.5" },
-  { label: "Visitante -1.5 handicap", value: "visit_minus_1_5", line: "-1.5" },
+  // Rachas rápidas: no piden línea ni cuota. Solo registro X/Total.
+  { label: "Victorias", value: "victorias", line: "", kind: "streak" },
+  { label: "Sin victorias", value: "sin_victorias", line: "", kind: "streak" },
+  { label: "Derrotas", value: "derrotas", line: "", kind: "streak" },
+  { label: "Sin derrotas", value: "sin_derrotas", line: "", kind: "streak" },
+  { label: "Ninguna portería a cero", value: "no_clean", line: "Sí", kind: "streak" },
+  { label: "Sin goles recibidos", value: "clean_sheet", line: "", kind: "streak" },
+  { label: "El primero en marcar", value: "first_score", line: "", kind: "streak" },
+  { label: "El primero en encajar", value: "first_concede", line: "", kind: "streak" },
+  { label: "Primer tiempo perdedor", value: "first_half_loser", line: "1T", kind: "streak" },
+
+  // Mercados apostables: mantienen línea, registro X/Total y cuota de casa.
+  { label: "Menos de 2.5 goles", value: "under_2_5", line: "2.5", kind: "bet" },
+  { label: "Más de 2.5 goles", value: "over_2_5", line: "2.5", kind: "bet" },
+  { label: "Más de 4.5 tarjetas", value: "over_4_5_cards", line: "4.5", kind: "bet" },
+  { label: "Menos de 4.5 tarjetas", value: "under_4_5_cards", line: "4.5", kind: "bet" },
+  { label: "Más de 10.5 corners", value: "over_10_5_corners", line: "10.5", kind: "bet" },
+  { label: "Menos de 10.5 corners", value: "under_10_5_corners", line: "10.5", kind: "bet" },
+  { label: "Ambos equipos marcarán", value: "btts", line: "Sí", kind: "bet" },
+  { label: "Ganador del primer tiempo", value: "first_half_winner", line: "1T", kind: "bet" },
 ];
+
+
+
+const STREAK_MARKETS = new Set(["victorias", "sin_victorias", "derrotas", "sin_derrotas", "no_clean", "clean_sheet", "first_score", "first_concede", "first_half_loser"]);
+const NO_ODD_MARKETS = new Set(["victorias", "sin_victorias", "derrotas", "sin_derrotas", "no_clean", "clean_sheet", "first_score", "first_concede", "first_half_loser"]);
+const RECORD_NUMBER_OPTIONS = Array.from({ length: 16 }, (_, index) => String(index));
+
+function isStreakIndicatorMarket(marketValue: string) {
+  return STREAK_MARKETS.has(getMarketValue(marketValue));
+}
+
+function shouldShowIndicatorOdd(marketValue: string) {
+  return Boolean(getMarketValue(marketValue)) && !NO_ODD_MARKETS.has(getMarketValue(marketValue));
+}
+
+function shouldShowIndicatorLine(marketValue: string) {
+  return Boolean(getMarketValue(marketValue)) && !STREAK_MARKETS.has(getMarketValue(marketValue));
+}
+
+function splitRecordValue(record: string) {
+  const clean = String(record || "").trim().replace(/\s+/g, "");
+  const [hits, total] = clean.split("/");
+  return { hits: hits || "", total: total || "" };
+}
+
+function joinRecordValue(hits: string, total: string) {
+  if (hits === "" && total === "") return "";
+  return `${hits || "0"}/${total || "0"}`;
+}
 
 const TEAM_OPTIONS: { label: string; value: TeamSide }[] = [
   { label: "🏠 Local", value: "local" },
@@ -340,7 +354,7 @@ function dailyFamily(marketValue: string) {
   if (marketValue.includes("cards")) return "cards";
   if (["over_1_5", "over_2_5", "under_2_5", "under_4_5", "btts", "no_clean"].includes(marketValue)) return "goals";
   if (marketValue.includes("handicap") || marketValue.includes("plus") || marketValue.includes("minus")) return "handicap";
-  if (["ganador", "empate", "local_o_empate", "visitante_o_empate", "local_o_visitante", "sin_derrotas", "sin_victorias", "victorias"].includes(marketValue)) return "result";
+  if (["ganador", "empate", "local_o_empate", "visitante_o_empate", "local_o_visitante", "sin_derrotas", "sin_victorias", "derrotas", "victorias", "clean_sheet", "first_score", "first_concede", "first_half_winner", "first_half_loser"].includes(marketValue)) return "result";
   return marketValue || "other";
 }
 
@@ -390,7 +404,7 @@ function buildDailyPlan(picks: DailyPick[]): DayPlanGroup[] {
   ];
 }
 
-function combinedOdds(picks: DailyPick[]) {
+function combinedOdds(picks: Array<{ odd: number }>) {
   const valid = picks.map((pick) => pick.odd).filter((odd) => odd > 1);
   if (!valid.length) return 0;
   return valid.reduce((acc, odd) => acc * odd, 1);
@@ -789,7 +803,10 @@ function scoreMarketFromRecent(marketValue: string, line: string, localRows: Rec
   }
   if (marketValue === "sin_derrotas") return Math.max(local.noLosePct, visit.noLosePct);
   if (marketValue === "sin_victorias") return Math.max(local.noWinPct, visit.noWinPct);
+  if (marketValue === "derrotas") return Math.max(100 - local.noLosePct, 100 - visit.noLosePct);
   if (marketValue === "victorias") return Math.max(local.winPct, visit.winPct);
+  if (marketValue === "clean_sheet") return Math.max(100 - local.noCleanPct, 100 - visit.noCleanPct);
+  if (marketValue === "first_score" || marketValue === "first_concede" || marketValue === "first_half_loser") return 0;
   if (marketValue === "ganador") return Math.max(local.winPct, visit.winPct);
   if (marketValue === "first_half_winner") return clamp(Math.max(local.winPct, visit.winPct) * 0.9, 0, 100);
   if (marketValue === "wins_any_half") return clamp(Math.max(local.winPct, visit.winPct) * 0.95, 0, 100);
@@ -1282,12 +1299,18 @@ export default function Page() {
         if (field === "market") {
           const selected = MARKET_OPTIONS.find((option) => option.value === value || option.label === value);
           next.market = selected?.value || value;
-          next.line = selected?.line || next.line;
+          next.line = selected?.line || "";
+          if (isStreakIndicatorMarket(next.market)) next.houseOdd = "";
         }
 
         if (field === "market" || field === "line") {
-          const autoOdd = findHouseOddForIndicator(next.market, next.line);
-          if (autoOdd) next.houseOdd = autoOdd;
+          if (isStreakIndicatorMarket(next.market)) {
+            next.line = "";
+            next.houseOdd = "";
+          } else {
+            const autoOdd = findHouseOddForIndicator(next.market, next.line);
+            if (autoOdd) next.houseOdd = autoOdd;
+          }
         }
 
         return next;
@@ -1304,9 +1327,15 @@ export default function Page() {
           ...indicator,
           market: selected?.value || "",
           line: selected?.line || "",
+          houseOdd: isStreakIndicatorMarket(selected?.value || "") ? "" : indicator.houseOdd,
         };
-        const autoOdd = findHouseOddForIndicator(next.market, next.line);
-        if (autoOdd) next.houseOdd = autoOdd;
+        if (isStreakIndicatorMarket(next.market)) {
+          next.line = "";
+          next.houseOdd = "";
+        } else {
+          const autoOdd = findHouseOddForIndicator(next.market, next.line);
+          if (autoOdd) next.houseOdd = autoOdd;
+        }
         return next;
       })
     );
@@ -1598,7 +1627,7 @@ export default function Page() {
       if (isCardMarket(market)) return "cards";
       if (market.includes("corners")) return "corners";
       if (isGoalMarket(market)) return "goals";
-      if (["ganador", "empate", "sin_derrotas", "sin_victorias", "victorias", "first_half_winner", "wins_any_half", "local_o_empate", "visitante_o_empate", "local_o_visitante", "local_plus_1_5", "local_plus_0_5", "local_minus_0_5", "local_minus_1_5", "visit_plus_1_5", "visit_plus_0_5", "visit_minus_0_5", "visit_minus_1_5"].includes(market)) return "result";
+      if (["ganador", "empate", "sin_derrotas", "sin_victorias", "derrotas", "victorias", "clean_sheet", "first_score", "first_concede", "first_half_winner", "first_half_loser", "wins_any_half", "local_o_empate", "visitante_o_empate", "local_o_visitante", "local_plus_1_5", "local_plus_0_5", "local_minus_0_5", "local_minus_1_5", "visit_plus_1_5", "visit_plus_0_5", "visit_minus_0_5", "visit_minus_1_5"].includes(market)) return "result";
       return market;
     };
 
@@ -1647,6 +1676,140 @@ export default function Page() {
       riesgoso: build("riesgoso"),
     };
   }, [results, housePicks, matchProfile, projection.expectedCorners, hasMinimumData]);
+
+
+  const proMode = useMemo(() => {
+    if (!hasMinimumData) return null;
+
+    const rawPicks: ParlayPickForDay[] = [
+      ...results.map((pick) => ({
+        key: pick.key,
+        label: pick.label,
+        marketValue: pick.marketValue,
+        line: pick.line,
+        score: pick.blendedScore,
+        odd: pick.avgOdd,
+        tier: pick.tier,
+        grade: pick.grade,
+        riskFlags: pick.riskFlags,
+        source: "SofaScore" as const,
+      })),
+      ...housePicks.map((pick) => ({
+        key: pick.key,
+        label: pick.label,
+        marketValue: pick.marketValue,
+        line: pick.line,
+        score: pick.modelScore,
+        odd: pick.odd,
+        tier: pick.tier,
+        grade: pick.grade,
+        riskFlags: pick.riskFlags,
+        source: "Casa" as const,
+      })),
+    ];
+
+    const evaluated = rawPicks
+      .map((pick) => {
+        const family = dailyFamily(pick.marketValue);
+        const danger = hasDangerFlag(pick.riskFlags);
+        const isResultRisk = pick.marketValue === "ganador" || pick.marketValue.includes("minus") || pick.marketValue === "first_half_winner";
+        const isAggressiveGoal = pick.marketValue === "btts" || pick.marketValue === "over_2_5" || pick.marketValue === "under_2_5";
+        let realConfidence = pick.score;
+        const reasons: string[] = [];
+
+        if (danger) {
+          realConfidence -= 24;
+          reasons.push("Tiene alerta de trampa/value/freno: no forzar.");
+        }
+        if (matchProfile.type === "trampa") {
+          realConfidence -= 14;
+          reasons.push("Perfil trampa: bajar exposición.");
+        }
+        if (matchProfile.type === "equilibrado" && isResultRisk) {
+          realConfidence -= 10;
+          reasons.push("Partido equilibrado: evitar ganador/handicap negativo como base.");
+        }
+        if (pick.marketValue === "ganador" && pick.score < 64) {
+          realConfidence -= 18;
+          reasons.push("Ganador directo bajo 64%: mejor doble oportunidad/handicap protegido.");
+        }
+        if (family === "corners" && pick.score < 88) {
+          realConfidence -= 9;
+          reasons.push("Corners requiere colchón alto; si está cerca de línea, no parlay fuerte.");
+        }
+        if (family === "cards" && pick.score < 82) {
+          realConfidence -= 10;
+          reasons.push("Tarjetas dependen de árbitro/contexto.");
+        }
+        if (pick.odd > 2.05) {
+          realConfidence -= 8;
+          reasons.push("Cuota alta: revisar por qué la casa paga tanto.");
+        }
+        if (pick.grade === "safe") realConfidence += 3;
+        if (pick.grade === "risky") realConfidence -= 16;
+        if (pick.riskFlags.some((flag) => flag.toLowerCase().includes("sin value"))) realConfidence -= 12;
+        if (pick.riskFlags.some((flag) => flag.toLowerCase().includes("zona prohibida"))) realConfidence -= 35;
+
+        realConfidence = clamp(realConfidence, 0, 99);
+
+        const hardBlock =
+          danger ||
+          pick.grade === "risky" ||
+          realConfidence < 62 ||
+          (pick.marketValue === "ganador" && pick.score < 64) ||
+          (family === "corners" && pick.riskFlags.some((flag) => flag.toLowerCase().includes("zona prohibida") || flag.toLowerCase().includes("trampa"))) ||
+          (matchProfile.type === "trampa" && isResultRisk);
+
+        const parlayAllowed =
+          !hardBlock &&
+          realConfidence >= 84 &&
+          family !== "cards" &&
+          pick.marketValue !== "ganador" &&
+          !isAggressiveGoal &&
+          !pick.marketValue.includes("minus");
+
+        const simpleAllowed = !hardBlock && realConfidence >= 72;
+
+        return { ...pick, family, realConfidence, reasons, hardBlock, parlayAllowed, simpleAllowed };
+      })
+      .sort((a, b) => b.realConfidence - a.realConfidence);
+
+    const usedFamilies = new Set<string>();
+    const proParlay = evaluated.filter((pick) => {
+      if (!pick.parlayAllowed) return false;
+      if (usedFamilies.has(pick.family)) return false;
+      usedFamilies.add(pick.family);
+      return true;
+    }).slice(0, 2);
+
+    const proSimples = evaluated
+      .filter((pick) => pick.simpleAllowed && !proParlay.some((item) => item.key === pick.key))
+      .slice(0, 4);
+
+    const bloqueados = evaluated.filter((pick) => pick.hardBlock).slice(0, 5);
+    const top = evaluated[0];
+
+    let title = "⚠️ Esperar";
+    let message = "No hay una ventaja suficientemente limpia. Mejor no forzar el partido.";
+    let tone: "green" | "yellow" | "red" = "yellow";
+
+    if (proParlay.length >= 2) {
+      title = "🟢 Modo PRO activo";
+      message = "Hay base para parlay corto. Máximo 2 selecciones y sin agregar mercados manuales.";
+      tone = "green";
+    } else if (proSimples.length >= 1) {
+      title = "🟡 Mejor simple/controlado";
+      message = "Hay lectura jugable, pero no suficientemente limpia para parlay fuerte.";
+      tone = "yellow";
+    }
+    if (!top || (top.realConfidence < 62 && proSimples.length === 0)) {
+      title = "🔴 No tocar";
+      message = "La app no encuentra lectura rentable. El mejor movimiento es no apostar.";
+      tone = "red";
+    }
+
+    return { title, message, tone, top, proParlay, proSimples, bloqueados };
+  }, [results, housePicks, matchProfile, hasMinimumData]);
 
 
   const finalReading = useMemo(() => {
@@ -2461,33 +2624,75 @@ setIndicators(importedIndicators);
               </div>
             ) : null}
 
-            {indicators.map((indicator) => (
-              <div key={indicator.id} className="rounded-2xl border border-white/10 bg-slate-950/45 p-3 shadow-lg">
-                <div className="grid gap-2 sm:grid-cols-7">
-                  <select value={indicator.team} onChange={(event) => updateIndicator(indicator.id, "team", event.target.value)} className={selectClass}>
-                    {TEAM_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                  <select value={indicator.period || "full"} onChange={(event) => updateIndicator(indicator.id, "period", event.target.value)} className={selectClass}>
-                    {PERIOD_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                  <select
-                    value={getMarketValue(indicator.market)}
-                    onChange={(event) => updateIndicatorMarket(indicator.id, event.target.value)}
-                    className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-2"
-                  >
-                    <option value="">Seleccionar mercado</option>
-                    {MARKET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                  <input className={selectClass} placeholder="Línea" value={indicator.line} onChange={(event) => updateIndicator(indicator.id, "line", event.target.value)} />
-                  <input className={selectClass} inputMode="text" placeholder="Registro X/X" value={indicator.record} onChange={(event) => updateIndicator(indicator.id, "record", event.target.value)} />
-                  <input className={selectClass} inputMode="decimal" placeholder="Cuota casa" value={indicator.houseOdd} onChange={(event) => updateIndicator(indicator.id, "houseOdd", event.target.value)} />
+            {indicators.map((indicator) => {
+              const marketValue = getMarketValue(indicator.market);
+              const showLine = shouldShowIndicatorLine(marketValue);
+              const showOdd = shouldShowIndicatorOdd(marketValue);
+              const recordParts = splitRecordValue(indicator.record);
+              const cardTone = isStreakIndicatorMarket(marketValue) ? "border-emerald-300/20 bg-emerald-500/10" : "border-sky-300/20 bg-sky-500/10";
+
+              return (
+                <div key={indicator.id} className={`rounded-2xl border ${cardTone} p-3 shadow-lg`}>
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-black uppercase tracking-widest text-slate-300">
+                    <span className="rounded-full bg-white/10 px-3 py-1">{isStreakIndicatorMarket(marketValue) ? "📌 Racha rápida" : "💰 Mercado apostable"}</span>
+                    <span className="rounded-full bg-white/10 px-3 py-1">{getPeriodLabel(indicator.period)}</span>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-12">
+                    <select value={indicator.team} onChange={(event) => updateIndicator(indicator.id, "team", event.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-2">
+                      {TEAM_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                    <select value={indicator.period || "full"} onChange={(event) => updateIndicator(indicator.id, "period", event.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-2">
+                      {PERIOD_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                    <select
+                      value={marketValue}
+                      onChange={(event) => updateIndicatorMarket(indicator.id, event.target.value)}
+                      className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-3"
+                    >
+                      <option value="">Seleccionar mercado</option>
+                      <optgroup label="📌 Rachas sin línea/cuota">
+                        {MARKET_OPTIONS.filter((option) => option.kind === "streak").map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </optgroup>
+                      <optgroup label="💰 Mercados con línea/cuota">
+                        {MARKET_OPTIONS.filter((option) => option.kind === "bet").map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </optgroup>
+                    </select>
+
+                    {showLine ? (
+                      <input className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-1" placeholder="Línea" value={indicator.line} onChange={(event) => updateIndicator(indicator.id, "line", event.target.value)} />
+                    ) : null}
+
+                    <div className={`${showLine ? "sm:col-span-2" : "sm:col-span-3"} grid grid-cols-2 gap-2`}>
+                      <select
+                        value={recordParts.hits}
+                        onChange={(event) => updateIndicator(indicator.id, "record", joinRecordValue(event.target.value, recordParts.total))}
+                        className={selectClass}
+                      >
+                        <option value="">Veces</option>
+                        {RECORD_NUMBER_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                      <select
+                        value={recordParts.total}
+                        onChange={(event) => updateIndicator(indicator.id, "record", joinRecordValue(recordParts.hits, event.target.value))}
+                        className={selectClass}
+                      >
+                        <option value="">De</option>
+                        {RECORD_NUMBER_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                    </div>
+
+                    {showOdd ? (
+                      <input className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-2" inputMode="decimal" placeholder="Cuota casa" value={indicator.houseOdd} onChange={(event) => updateIndicator(indicator.id, "houseOdd", event.target.value)} />
+                    ) : null}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-300">
+                    <span>{getTeamLabel(indicator.team, match)} · {getPeriodLabel(indicator.period)} · {getMarketLabel(indicator.market)}{indicator.line ? ` · ${indicator.line}` : ""}{indicator.record ? ` · ${indicator.record}` : ""}</span>
+                    <button onClick={() => removeIndicator(indicator.id)} className="rounded-xl bg-rose-500 px-4 py-2 font-bold text-white">✖</button>
+                  </div>
                 </div>
-                <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-300">
-                  <span>{getTeamLabel(indicator.team, match)} · {getPeriodLabel(indicator.period)} · {getMarketLabel(indicator.market)}{indicator.line ? ` · ${indicator.line}` : ""}</span>
-                  <button onClick={() => removeIndicator(indicator.id)} className="rounded-xl bg-rose-500 px-4 py-2 font-bold text-white">✖</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
@@ -2619,6 +2824,92 @@ setIndicators(importedIndicators);
                   <p className="text-xs text-slate-400">{matchProfile.type === "abierto" ? "🔥 Abierto" : matchProfile.type === "cerrado" ? "🧊 Cerrado" : matchProfile.type === "trampa" ? "⚠️ Trampa" : "⚖️ Equilibrado"}</p>
                 </div>
               </div>
+            </div>
+          </section>
+        ) : null}
+
+
+        {proMode ? (
+          <section className={`mb-5 overflow-hidden rounded-[2rem] border p-1 shadow-2xl shadow-black/50 backdrop-blur-xl ${proMode.tone === "green" ? "border-emerald-300/40 bg-emerald-400/10" : proMode.tone === "red" ? "border-rose-300/40 bg-rose-400/10" : "border-amber-300/40 bg-amber-400/10"}`}>
+            <div className="rounded-[1.8rem] bg-slate-950/60 p-5">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200/80">Modo PRO rentable</p>
+                  <h2 className="mt-1 text-3xl font-black">🤖 {proMode.title}</h2>
+                  <p className="mt-1 max-w-3xl text-sm text-slate-300">{proMode.message}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-right">
+                  <p className="text-xs text-slate-400">Mejor confianza real</p>
+                  <p className="text-3xl font-black text-emerald-100">{proMode.top ? `${proMode.top.realConfidence.toFixed(1)}/100` : "—"}</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4 lg:col-span-2">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-xl font-black text-emerald-100">🧊 Parlay PRO corto</h3>
+                      <p className="text-xs text-emerald-50/80">Solo 2 selecciones, familias distintas y sin zonas trampa.</p>
+                    </div>
+                    <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-black">Cuota: {formatOdd(combinedOdds(proMode.proParlay))}</span>
+                  </div>
+                  <div className="space-y-3">
+                    {proMode.proParlay.length === 0 ? <p className="text-sm text-slate-300">Sin parlay PRO limpio. No fuerces combinación.</p> : null}
+                    {proMode.proParlay.map((pick, index) => (
+                      <div key={pick.key} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+                        <div>
+                          <p className="text-xs text-slate-400">Selección {index + 1} · {pick.source}</p>
+                          <p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
+                          <p className="text-xs text-emerald-100">Confianza real {pick.realConfidence.toFixed(1)} · Score {formatScore(pick.score)}</p>
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">{formatOdd(pick.odd)}</span>
+                          <button onClick={() => addPickToDaily(pick)} disabled={isPickInDaily(pick)} className={`rounded-xl px-3 py-2 text-xs font-black shadow-lg transition ${isPickInDaily(pick) ? "bg-emerald-400/20 text-emerald-100" : "bg-cyan-300 text-cyan-950 hover:bg-cyan-200"}`}>
+                            {isPickInDaily(pick) ? "✔ Añadido" : "📤 Agregar"}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-4">
+                  <h3 className="text-xl font-black text-sky-100">🎯 Simples PRO</h3>
+                  <p className="text-xs text-sky-50/80">Mejor para stake controlado si no hay parlay limpio.</p>
+                  <div className="mt-3 space-y-3">
+                    {proMode.proSimples.length === 0 ? <p className="text-sm text-slate-300">Sin simple clara.</p> : null}
+                    {proMode.proSimples.map((pick) => (
+                      <div key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/45 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
+                            <p className="text-xs text-sky-100">Confianza real {pick.realConfidence.toFixed(1)} · {pick.source}</p>
+                          </div>
+                          <span className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black">{formatOdd(pick.odd)}</span>
+                        </div>
+                        <button onClick={() => addPickToDaily(pick)} disabled={isPickInDaily(pick)} className={`mt-3 w-full rounded-xl px-3 py-2 text-xs font-black ${isPickInDaily(pick) ? "bg-emerald-400/20 text-emerald-100" : "bg-cyan-300 text-cyan-950"}`}>
+                          {isPickInDaily(pick) ? "✔ Añadido al día" : "📤 Agregar al día"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {proMode.bloqueados.length > 0 ? (
+                <div className="mt-4 rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4">
+                  <h3 className="font-black text-rose-100">⛔ Detector de sabotaje / no combinar</h3>
+                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                    {proMode.bloqueados.map((pick) => (
+                      <div key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/45 p-3">
+                        <p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
+                        <p className="text-xs text-rose-100">Confianza real {pick.realConfidence.toFixed(1)} · No forzar</p>
+                        {pick.reasons.length > 0 ? <p className="mt-1 text-xs text-slate-300">• {pick.reasons[0]}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
