@@ -10,6 +10,9 @@ type MatchProfileType = "abierto" | "cerrado" | "trampa" | "equilibrado";
 type MarketGroup = "goals" | "corners" | "cards";
 type BackgroundMode = "team" | "stadium" | "neon" | "dark";
 type TrapLevel = "valor_real" | "linea_comoda" | "linea_estrecha" | "linea_sospechosa" | "trampa_probable" | "neutral";
+type EliminationLeg = "none" | "first" | "second";
+type EliminationSide = "none" | "local" | "visitante";
+type RefereeStrictness = "none" | "low" | "medium" | "high";
 
 type Indicator = {
   id: string;
@@ -86,6 +89,20 @@ type BankBet = {
 type BankrollState = {
   initialBank: string;
   bets: BankBet[];
+};
+
+type EliminationContext = {
+  enabled: boolean;
+  leg: EliminationLeg;
+  advantageTeam: EliminationSide;
+  leadGoals: string;
+  pressureTeam: EliminationSide;
+};
+
+type RefereeContext = {
+  yellowAvg: string;
+  redAvg: string;
+  strictness: RefereeStrictness;
 };
 
 type DailyPick = {
@@ -172,6 +189,8 @@ type ExportShape = {
   localRecent: RecentRow[];
   visitRecent: RecentRow[];
   houseMarkets: HouseMarket;
+  eliminationContext?: EliminationContext;
+  refereeContext?: RefereeContext;
 };
 
 const STORAGE_KEY = "analizador_pro_h2h_casa_v4";
@@ -245,6 +264,16 @@ const PERIOD_OPTIONS: { label: string; value: IndicatorPeriod }[] = [
 ];
 
 const NUMBER_OPTIONS = (max: number) => Array.from({ length: max + 1 }, (_, index) => String(index));
+const LEAD_GOAL_OPTIONS = ["0", "1", "2", "3", "4", "5", "6"];
+const INDICATOR_BULK_OPTIONS = Array.from({ length: 20 }, (_, index) => String(index + 1));
+const AVG_YELLOW_OPTIONS = Array.from({ length: 181 }, (_, index) => (index * 0.05).toFixed(2));
+const AVG_RED_OPTIONS = Array.from({ length: 61 }, (_, index) => (index * 0.05).toFixed(2));
+const REFEREE_STRICTNESS_OPTIONS: { label: string; value: RefereeStrictness }[] = [
+  { label: "Sin dato", value: "none" },
+  { label: "Bajo", value: "low" },
+  { label: "Medio", value: "medium" },
+  { label: "Alto", value: "high" },
+];
 const GOAL_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"];
 const CORNER_OVER_LINES = ["4.5", "5.5", "6.5", "7.5", "8.5", "9.5", "10.5"];
 const CORNER_UNDER_LINES = ["16.5", "15.5", "14.5", "13.5", "12.5", "11.5", "10.5", "9.5", "8.5", "7.5", "6.5", "5.5"];
@@ -308,6 +337,80 @@ function emptyHouseMarkets(): HouseMarket {
     handicapVisitLine: "+1.5",
     handicapVisitOdd: "",
   };
+}
+
+function emptyEliminationContext(): EliminationContext {
+  return {
+    enabled: false,
+    leg: "none",
+    advantageTeam: "none",
+    leadGoals: "0",
+    pressureTeam: "none",
+  };
+}
+
+function emptyRefereeContext(): RefereeContext {
+  return {
+    yellowAvg: "",
+    redAvg: "",
+    strictness: "none",
+  };
+}
+
+function getRefereeCardAdjustment(referee: RefereeContext) {
+  const yellow = toNumber(referee.yellowAvg);
+  const red = toNumber(referee.redAvg);
+  let score = 0;
+  let expectedBoost = 0;
+  const notes: string[] = [];
+
+  if (yellow >= 5.2) {
+    score += 10;
+    expectedBoost += 0.8;
+    notes.push("Árbitro tarjetero: sube over tarjetas y baja under corto.");
+  } else if (yellow >= 4.4) {
+    score += 6;
+    expectedBoost += 0.45;
+    notes.push("Árbitro medio/alto en amarillas: tarjetas con apoyo extra.");
+  } else if (yellow > 0 && yellow <= 3.2) {
+    score -= 8;
+    expectedBoost -= 0.45;
+    notes.push("Árbitro permisivo: cuidado con over de tarjetas.");
+  }
+
+  if (red >= 0.30) {
+    score += 4;
+    expectedBoost += 0.35;
+    notes.push("Promedio de rojas alto: sube el riesgo disciplinario del partido.");
+  } else if (red > 0 && red <= 0.10) {
+    expectedBoost -= 0.1;
+  }
+
+  if (referee.strictness === "high") {
+    score += 6;
+    expectedBoost += 0.4;
+    notes.push("Rigor alto seleccionado: el motor eleva tarjetas.");
+  } else if (referee.strictness === "low") {
+    score -= 6;
+    expectedBoost -= 0.35;
+    notes.push("Rigor bajo seleccionado: el motor baja tarjetas.");
+  }
+
+  return {
+    scoreAdjustment: clamp(score, -12, 16),
+    expectedBoost: clamp(expectedBoost, -0.8, 1.4),
+    notes,
+  };
+}
+
+function getSideName(side: EliminationSide, match: Match) {
+  if (side === "local") return match.local || "Local";
+  if (side === "visitante") return match.visitante || "Visitante";
+  return "Ninguno";
+}
+
+function isSecondLegWithLead(context: EliminationContext) {
+  return Boolean(context.enabled && context.leg === "second" && context.advantageTeam !== "none" && toNumber(context.leadGoals) > 0);
 }
 
 function emptyBankroll(): BankrollState {
@@ -1059,6 +1162,9 @@ export default function Page() {
   const [localRecent, setLocalRecent] = useState<RecentRow[]>(createRecentRows());
   const [visitRecent, setVisitRecent] = useState<RecentRow[]>(createRecentRows());
   const [houseMarkets, setHouseMarkets] = useState<HouseMarket>(emptyHouseMarkets());
+  const [eliminationContext, setEliminationContext] = useState<EliminationContext>(emptyEliminationContext());
+  const [refereeContext, setRefereeContext] = useState<RefereeContext>(emptyRefereeContext());
+  const [indicatorBulkCount, setIndicatorBulkCount] = useState("1");
   const [bankroll, setBankroll] = useState<BankrollState>(emptyBankroll());
   const [bankBetDraft, setBankBetDraft] = useState<Omit<BankBet, "id">>(emptyBankBet());
   const [dailyPicks, setDailyPicks] = useState<DailyPick[]>([]);
@@ -1229,11 +1335,15 @@ export default function Page() {
     reader.readAsText(file);
   };
 
+  const createEmptyIndicator = (): Indicator => ({ id: makeId(), team: "ambos", period: "full", market: "", line: "", record: "", houseOdd: "" });
+
   const addIndicator = () => {
-    setIndicators((prev) => [
-      ...prev,
-      { id: makeId(), team: "ambos", period: "full", market: "", line: "", record: "", houseOdd: "" },
-    ]);
+    setIndicators((prev) => [...prev, createEmptyIndicator()]);
+  };
+
+  const addMultipleIndicators = () => {
+    const count = clamp(Number(indicatorBulkCount) || 1, 1, 20);
+    setIndicators((prev) => [...prev, ...Array.from({ length: count }, () => createEmptyIndicator())]);
   };
 
   const getHouseFieldsForIndicator = (marketInput: string, lineInput: string): HouseFieldMap | null => {
@@ -1356,6 +1466,8 @@ export default function Page() {
   };
 
   const projection = useMemo(() => buildProjection(localRecent, visitRecent), [localRecent, visitRecent]);
+  const refereeCardAdjustment = useMemo(() => getRefereeCardAdjustment(refereeContext), [refereeContext]);
+  const adjustedCardsExpected = useMemo(() => clamp(projection.expectedCards + refereeCardAdjustment.expectedBoost, 0, 12), [projection.expectedCards, refereeCardAdjustment.expectedBoost]);
   const matchProfile = useMemo(() => buildMatchProfile(indicators, localRecent, visitRecent), [indicators, localRecent, visitRecent]);
   const totalRecentCount = useMemo(() => countValidRows(localRecent).length + countValidRows(visitRecent).length, [localRecent, visitRecent]);
   const hasMinimumData = useMemo(() => {
@@ -1391,6 +1503,34 @@ export default function Page() {
         const marketValue = marketValueFromGroup(candidate.group, candidate.direction, candidate.line);
         const riskFlags: string[] = [];
 
+        if (isSecondLegWithLead(eliminationContext)) {
+          const lead = toNumber(eliminationContext.leadGoals);
+          if (candidate.group === "goals" && candidate.direction === "over" && toNumber(candidate.line) >= 2.5) {
+            modelScore = clamp(modelScore - (lead >= 2 ? 18 : 12), 0, 100);
+            riskFlags.push("Contexto de vuelta: hay ventaja global. El over agresivo baja porque el equipo con ventaja puede administrar.");
+          }
+          if (candidate.group === "goals" && candidate.direction === "under" && toNumber(candidate.line) >= 4.5) {
+            modelScore = clamp(modelScore + 8, 0, 100);
+            riskFlags.push("Contexto de vuelta: under amplio gana valor por gestión del resultado global.");
+          }
+          if (candidate.group === "cards" && candidate.direction === "over" && toNumber(candidate.line) <= 4.5) {
+            modelScore = clamp(modelScore + 7, 0, 100);
+            riskFlags.push("Contexto de eliminación: presión alta puede subir tarjetas.");
+          }
+          if (candidate.group === "cards" && candidate.direction === "under" && toNumber(candidate.line) <= 4.5) {
+            modelScore = clamp(modelScore - 6, 0, 100);
+            riskFlags.push("Contexto de eliminación: cuidado con under de tarjetas corto.");
+          }
+        }
+
+        if (candidate.group === "cards") {
+          const refBoost = refereeCardAdjustment.scoreAdjustment;
+          if (refBoost !== 0) {
+            modelScore = clamp(modelScore + (candidate.direction === "over" ? refBoost : -refBoost * 0.65), 0, 100);
+            riskFlags.push(...refereeCardAdjustment.notes);
+          }
+        }
+
         if (candidate.group === "corners" && candidate.direction === "under" && toNumber(candidate.line) <= 10.5 && projection.expectedCorners >= 10.8) {
           modelScore = clamp(modelScore - 22, 0, 100);
           riskFlags.push(`Freno under corners: registros proyectan ${projection.expectedCorners.toFixed(1)} corners.`);
@@ -1407,7 +1547,7 @@ export default function Page() {
           riskFlags.push("Tarjetas dependen de árbitro/contexto: bajar stake.");
         }
 
-        const expectedForTrap = candidate.group === "goals" ? projection.expectedGoals : candidate.group === "corners" ? projection.expectedCorners : projection.expectedCards;
+        const expectedForTrap = candidate.group === "goals" ? projection.expectedGoals : candidate.group === "corners" ? projection.expectedCorners : adjustedCardsExpected;
         const trap = getLineTrapAssessment(candidate.group, candidate.direction, candidate.line, expectedForTrap, odd, modelScore);
         modelScore = clamp(modelScore + trap.adjustment, 0, 100);
         riskFlags.push(...trap.flags);
@@ -1456,6 +1596,12 @@ export default function Page() {
         const value = implied > 0 ? candidate.score - implied : 0;
         const riskFlags: string[] = [];
         if ((local.count || 0) + (visit.count || 0) < 6) riskFlags.push("Pocos registros: lectura secundaria.");
+        if (isSecondLegWithLead(eliminationContext)) {
+          if (candidate.marketValue === "ganador") riskFlags.push("Vuelta con ventaja global: ganador directo puede engañar, prioriza doble oportunidad/handicap.");
+          if (candidate.marketValue === "local_o_empate" && eliminationContext.advantageTeam === "local") candidate.score = clamp(candidate.score + 6, 0, 100);
+          if (candidate.marketValue === "visitante_o_empate" && eliminationContext.advantageTeam === "visitante") candidate.score = clamp(candidate.score + 6, 0, 100);
+          if (candidate.marketValue.includes("plus")) candidate.score = clamp(candidate.score + 4, 0, 100);
+        }
         if ((candidate.marketValue === "ganador" || candidate.marketValue.includes("minus")) && candidate.score < 72) riskFlags.push("Ganador/handicap negativo requiere margen: riesgo medio.");
         if (implied > 0 && value < 0) riskFlags.push("La cuota no acompaña: sin value claro.");
         const grade = getGrade(candidate.score, riskFlags);
@@ -1463,7 +1609,7 @@ export default function Page() {
       });
 
     return [...marketLinePicks, ...resultPicks].sort((a, b) => b.modelScore - a.modelScore);
-  }, [houseMarkets, localRecent, visitRecent, matchProfile, projection, match, hasMinimumData]);
+  }, [houseMarkets, localRecent, visitRecent, matchProfile, projection, match, eliminationContext, refereeCardAdjustment, adjustedCardsExpected, hasMinimumData]);
 
   const antiCasaAlerts = useMemo(() => {
     // Anti-Casa solo debe aparecer cuando hay datos reales:
@@ -1535,8 +1681,10 @@ export default function Page() {
 
         if (isCardMarket(marketValue)) {
           const cardPenalty = rows.length >= 2 ? 6 : 12;
-          blendedScore = clamp(blendedScore - cardPenalty, 0, 100);
+          const refBoost = refereeCardAdjustment.scoreAdjustment;
+          blendedScore = clamp(blendedScore - cardPenalty + (marketValue.includes("over") ? refBoost : -refBoost * 0.65), 0, 100);
           riskFlags.push("Tarjetas bajan prioridad: mercado dependiente de árbitro/contexto.");
+          if (refereeCardAdjustment.notes.length) riskFlags.push(...refereeCardAdjustment.notes);
         }
 
         if (rows.length === 1 && confidence >= 85) riskFlags.push("Solo 1 señal: confirmar antes de jugar fuerte.");
@@ -1571,7 +1719,7 @@ export default function Page() {
         const bRank = b.blendedScore - marketSortPenalty(b.marketValue, b.blendedScore, b.count);
         return bRank - aRank;
       });
-  }, [indicators, localRecent, visitRecent, matchProfile, projection.expectedCorners]);
+  }, [indicators, localRecent, visitRecent, matchProfile, projection.expectedCorners, refereeCardAdjustment]);
 
   const contradictionAlerts = useMemo(() => detectContradictions(results), [results]);
 
@@ -1725,6 +1873,20 @@ export default function Page() {
           realConfidence -= 14;
           reasons.push("Perfil trampa: bajar exposición.");
         }
+        if (isSecondLegWithLead(eliminationContext)) {
+          const lead = toNumber(eliminationContext.leadGoals);
+          if (pick.marketValue === "over_2_5" || pick.marketValue === "btts") {
+            realConfidence -= lead >= 2 ? 16 : 10;
+            reasons.push("Vuelta con ventaja global: el equipo que va arriba puede enfriar el partido.");
+          }
+          if (pick.marketValue === "ganador" || pick.marketValue.includes("minus")) {
+            realConfidence -= 10;
+            reasons.push("Vuelta: evita ganador/handicap negativo si el global permite administrar.");
+          }
+          if (pick.marketValue.includes("plus") || pick.marketValue.includes("_o_empate")) {
+            realConfidence += 4;
+          }
+        }
         if (matchProfile.type === "equilibrado" && isResultRisk) {
           realConfidence -= 10;
           reasons.push("Partido equilibrado: evitar ganador/handicap negativo como base.");
@@ -1809,7 +1971,7 @@ export default function Page() {
     }
 
     return { title, message, tone, top, proParlay, proSimples, bloqueados };
-  }, [results, housePicks, matchProfile, hasMinimumData]);
+  }, [results, housePicks, matchProfile, eliminationContext, hasMinimumData]);
 
 
   const finalReading = useMemo(() => {
@@ -1869,9 +2031,19 @@ export default function Page() {
       };
     };
 
-    const goals = lineReading("goals", projection.expectedGoals, houseMarkets.goalsOverLine, houseMarkets.goalsUnderLine);
-    const corners = lineReading("corners", projection.expectedCorners, houseMarkets.cornersOverLine, houseMarkets.cornersUnderLine);
-    const cards = lineReading("cards", projection.expectedCards, houseMarkets.cardsOverLine, houseMarkets.cardsUnderLine);
+    const adjustedGoalsExpected = isSecondLegWithLead(eliminationContext)
+      ? clamp(projection.expectedGoals - (toNumber(eliminationContext.leadGoals) >= 2 ? 0.65 : 0.4), 0.2, 8)
+      : projection.expectedGoals;
+    const adjustedCornersExpected = isSecondLegWithLead(eliminationContext) && eliminationContext.pressureTeam !== "none"
+      ? projection.expectedCorners + 0.35
+      : projection.expectedCorners;
+    const adjustedCardsExpected90 = isSecondLegWithLead(eliminationContext)
+      ? adjustedCardsExpected + 0.65
+      : adjustedCardsExpected;
+
+    const goals = lineReading("goals", adjustedGoalsExpected, houseMarkets.goalsOverLine, houseMarkets.goalsUnderLine);
+    const corners = lineReading("corners", adjustedCornersExpected, houseMarkets.cornersOverLine, houseMarkets.cornersUnderLine);
+    const cards = lineReading("cards", adjustedCardsExpected90, houseMarkets.cardsOverLine, houseMarkets.cardsUnderLine);
 
     const warnings: string[] = [];
     const tightCorners = Math.min(
@@ -1883,8 +2055,8 @@ export default function Page() {
       Math.abs(projection.expectedGoals - toNumber(houseMarkets.goalsUnderLine || "0")) || 99
     );
     const tightCards = Math.min(
-      Math.abs(projection.expectedCards - toNumber(houseMarkets.cardsOverLine || "0")) || 99,
-      Math.abs(projection.expectedCards - toNumber(houseMarkets.cardsUnderLine || "0")) || 99
+      Math.abs(adjustedCardsExpected - toNumber(houseMarkets.cardsOverLine || "0")) || 99,
+      Math.abs(adjustedCardsExpected - toNumber(houseMarkets.cardsUnderLine || "0")) || 99
     );
 
     if (tightCorners <= 1.5) warnings.push("Corners cerca de la línea: no lo uses como base fuerte de parlay.");
@@ -1892,6 +2064,8 @@ export default function Page() {
     if (tightCards <= 0.8) warnings.push("Tarjetas cerca de la línea: depende mucho del árbitro/contexto.");
     if (winnerOptions[0].pct < 48) warnings.push("1X2 parejo: mejor doble oportunidad o handicap positivo.");
     if (matchProfile.type === "trampa") warnings.push("Perfil trampa: evita combinar demasiados mercados del mismo partido.");
+    if (isSecondLegWithLead(eliminationContext)) warnings.push(`Contexto de vuelta: ${getSideName(eliminationContext.advantageTeam, match)} llega con ventaja de ${eliminationContext.leadGoals}. Evita over agresivo y ganador directo; prioriza doble oportunidad/handicap/under amplio.`);
+    if (refereeCardAdjustment.notes.length) warnings.push(refereeCardAdjustment.notes[0]);
 
     const message = warnings.length
       ? warnings.join(" ")
@@ -1910,7 +2084,7 @@ export default function Page() {
       message,
       profile: matchProfile.type,
     };
-  }, [hasMinimumData, projection, match, houseMarkets, matchProfile]);
+  }, [hasMinimumData, projection, match, houseMarkets, matchProfile, eliminationContext, adjustedCardsExpected, refereeCardAdjustment]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1997,11 +2171,13 @@ export default function Page() {
     setLocalRecent(migrateRecent(saved.localRecent));
     setVisitRecent(migrateRecent(saved.visitRecent));
     if (saved.houseMarkets) setHouseMarkets({ ...emptyHouseMarkets(), ...saved.houseMarkets });
+    if (saved.eliminationContext) setEliminationContext({ ...emptyEliminationContext(), ...saved.eliminationContext });
+    if (saved.refereeContext) setRefereeContext({ ...emptyRefereeContext(), ...saved.refereeContext });
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets }));
-  }, [match, indicators, localRecent, visitRecent, houseMarkets]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext }));
+  }, [match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext]);
 
   useEffect(() => {
     setIndicators((prev) =>
@@ -2050,10 +2226,12 @@ export default function Page() {
     setLocalRecent(createRecentRows());
     setVisitRecent(createRecentRows());
     setHouseMarkets(emptyHouseMarkets());
+    setEliminationContext(emptyEliminationContext());
+    setRefereeContext(emptyRefereeContext());
   };
 
   const saveManual = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext }));
     alert("✅ Partido guardado");
   };
 
@@ -2062,13 +2240,15 @@ export default function Page() {
       .replace(/[^a-zA-Z0-9_-]+/g, "_")
       .toLowerCase();
     const data: ExportShape = {
-      version: 4,
+      version: 5,
       exportedAt: new Date().toISOString(),
       match,
       indicators,
       localRecent,
       visitRecent,
       houseMarkets,
+      eliminationContext,
+      refereeContext,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json;charset=utf-8",
@@ -2121,6 +2301,8 @@ setIndicators(importedIndicators);
         setLocalRecent(Array.isArray(data.localRecent) ? data.localRecent.map((row) => ({ ...emptyRecentRow(), ...row, id: row.id || makeId() })) : createRecentRows());
         setVisitRecent(Array.isArray(data.visitRecent) ? data.visitRecent.map((row) => ({ ...emptyRecentRow(), ...row, id: row.id || makeId() })) : createRecentRows());
         setHouseMarkets({ ...emptyHouseMarkets(), ...(data.houseMarkets || {}) });
+        setEliminationContext({ ...emptyEliminationContext(), ...(data.eliminationContext || {}) });
+        setRefereeContext({ ...emptyRefereeContext(), ...(data.refereeContext || {}) });
 
         alert("📨 Partido importado");
       } catch {
@@ -2354,7 +2536,7 @@ setIndicators(importedIndicators);
       <div className="relative z-10 mx-auto max-w-6xl px-4 py-6 pb-24">
         <header className="mb-6">
           <h1 className="text-3xl font-black tracking-tight sm:text-4xl">🔥ANALIZADOR RAPIDO H2H KAL🔥</h1>
-          <p className="mt-1 text-sm text-slate-300">Rachas + registros reales + líneas de la casa + detector anti-casa</p>
+          <p className="mt-1 text-sm text-slate-300">Rachas + registros reales + líneas de la casa + árbitro + detector anti-casa</p>
         </header>
 
         <section className="mb-5 overflow-hidden rounded-[2rem] border border-emerald-300/20 bg-gradient-to-br from-emerald-400/15 via-slate-900/75 to-sky-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
@@ -2580,6 +2762,144 @@ setIndicators(importedIndicators);
           </div>
         </section>
 
+    <section className="mb-5 rounded-3xl border border-amber-300/25 bg-gradient-to-br from-amber-400/10 via-slate-900/45 to-violet-500/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.35em] text-amber-200/80">Contexto especial</p>
+              <h2 className="text-2xl font-black">🏆 Eliminatoria ida/vuelta</h2>
+              <p className="text-xs text-slate-300">Todo es con selects. Si es partido de vuelta, el motor baja overs agresivos y protege doble oportunidad/handicap.</p>
+            </div>
+            {isSecondLegWithLead(eliminationContext) ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 px-4 py-3 text-sm font-black text-amber-100">
+                ⚠️ Ventaja global: {getSideName(eliminationContext.advantageTeam, match)} +{eliminationContext.leadGoals}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-5">
+            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
+              ¿Es eliminatoria?
+              <select
+                className={`${selectClass} mt-2`}
+                value={eliminationContext.enabled ? "yes" : "no"}
+                onChange={(event) => {
+                  const enabled = event.target.value === "yes";
+                  setEliminationContext(enabled ? { ...eliminationContext, enabled, leg: eliminationContext.leg === "none" ? "second" : eliminationContext.leg } : emptyEliminationContext());
+                }}
+              >
+                <option value="no">No</option>
+                <option value="yes">Sí</option>
+              </select>
+            </label>
+
+            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
+              Partido
+              <select
+                className={`${selectClass} mt-2`}
+                value={eliminationContext.leg}
+                disabled={!eliminationContext.enabled}
+                onChange={(event) => setEliminationContext({ ...eliminationContext, leg: event.target.value as EliminationLeg })}
+              >
+                <option value="none">Normal</option>
+                <option value="first">Ida</option>
+                <option value="second">Vuelta</option>
+              </select>
+            </label>
+
+            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
+              Equipo con ventaja
+              <select
+                className={`${selectClass} mt-2`}
+                value={eliminationContext.advantageTeam}
+                disabled={!eliminationContext.enabled || eliminationContext.leg !== "second"}
+                onChange={(event) => setEliminationContext({ ...eliminationContext, advantageTeam: event.target.value as EliminationSide })}
+              >
+                <option value="none">Ninguno / Empate global</option>
+                <option value="local">{match.local || "Local"}</option>
+                <option value="visitante">{match.visitante || "Visitante"}</option>
+              </select>
+            </label>
+
+            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
+              Ventaja global
+              <select
+                className={`${selectClass} mt-2`}
+                value={eliminationContext.leadGoals}
+                disabled={!eliminationContext.enabled || eliminationContext.leg !== "second"}
+                onChange={(event) => setEliminationContext({ ...eliminationContext, leadGoals: event.target.value })}
+              >
+                {LEAD_GOAL_OPTIONS.map((option) => <option key={option} value={option}>{option} gol{option === "1" ? "" : "es"}</option>)}
+              </select>
+            </label>
+
+            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
+              Obligado a remontar
+              <select
+                className={`${selectClass} mt-2`}
+                value={eliminationContext.pressureTeam}
+                disabled={!eliminationContext.enabled || eliminationContext.leg !== "second"}
+                onChange={(event) => setEliminationContext({ ...eliminationContext, pressureTeam: event.target.value as EliminationSide })}
+              >
+                <option value="none">Ninguno</option>
+                <option value="local">{match.local || "Local"}</option>
+                <option value="visitante">{match.visitante || "Visitante"}</option>
+              </select>
+            </label>
+          </div>
+
+          {eliminationContext.enabled ? (
+            <div className="mt-4 rounded-2xl border border-amber-200/20 bg-slate-950/45 p-4 text-sm text-amber-50">
+              {eliminationContext.leg === "second" ? (
+                <p>
+                  🧠 Modo vuelta activo: si hay ventaja global, la app castiga over 2.5/BTTS, baja ganador directo y favorece doble oportunidad, handicap positivo, under amplio y tarjetas por presión.
+                </p>
+              ) : (
+                <p>🧠 Modo ida: el motor no castiga fuerte, pero marca el partido como contexto especial para no sobreexponer parlays grandes.</p>
+              )}
+            </div>
+          ) : null}
+        </section>
+
+    <section className="mb-5 rounded-3xl border border-rose-300/25 bg-gradient-to-br from-rose-400/10 via-slate-900/45 to-orange-500/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.35em] text-rose-200/80">Factor disciplinario</p>
+              <h2 className="text-2xl font-black">👨‍⚖️ Árbitro del partido</h2>
+              <p className="text-xs text-slate-300">Opcional. Si lo llenas, el motor ajusta tarjetas sin romper la lectura principal.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/45 px-4 py-3 text-sm font-black text-rose-50">
+              Tarjetas ajustadas: {adjustedCardsExpected ? adjustedCardsExpected.toFixed(1) : "—"}
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
+              Prom. amarillas
+              <select className={`${selectClass} mt-2`} value={refereeContext.yellowAvg} onChange={(event) => setRefereeContext({ ...refereeContext, yellowAvg: event.target.value })}>
+                <option value="">Sin dato</option>
+                {AVG_YELLOW_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
+              Prom. rojas
+              <select className={`${selectClass} mt-2`} value={refereeContext.redAvg} onChange={(event) => setRefereeContext({ ...refereeContext, redAvg: event.target.value })}>
+                <option value="">Sin dato</option>
+                {AVG_RED_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
+            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
+              Rigor manual
+              <select className={`${selectClass} mt-2`} value={refereeContext.strictness} onChange={(event) => setRefereeContext({ ...refereeContext, strictness: event.target.value as RefereeStrictness })}>
+                {REFEREE_STRICTNESS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+          </div>
+          {refereeCardAdjustment.notes.length > 0 ? (
+            <div className="mt-4 rounded-2xl border border-rose-200/20 bg-slate-950/45 p-3 text-sm text-rose-50">
+              {refereeCardAdjustment.notes.map((note) => <p key={note}>• {note}</p>)}
+            </div>
+          ) : null}
+        </section>
+
     <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="mb-4">
             <h2 className="text-2xl font-bold">🧪 Últimos registros</h2>
@@ -2597,7 +2917,7 @@ setIndicators(importedIndicators);
             <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Tipo</p><p className="text-lg font-black">{matchProfile.type === "abierto" ? "🔥 Abierto" : matchProfile.type === "cerrado" ? "🧊 Cerrado" : matchProfile.type === "trampa" ? "⚠️ Trampa" : "⚖️ Equilibrado"}</p></div>
             <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Prom. goles</p><p className="text-lg font-black">{matchProfile.avgGoals ? matchProfile.avgGoals.toFixed(2) : "—"}</p></div>
             <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Corners esperados</p><p className="text-lg font-black">{projection.expectedCorners ? projection.expectedCorners.toFixed(1) : "—"}</p></div>
-            <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Tarjetas esperadas</p><p className="text-lg font-black">{projection.expectedCards ? projection.expectedCards.toFixed(1) : "—"}</p></div>
+            <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Tarjetas esperadas</p><p className="text-lg font-black">{adjustedCardsExpected ? adjustedCardsExpected.toFixed(1) : "—"}</p></div>
             <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Bloqueo under</p><p className="text-lg font-black">{matchProfile.blockUnderGoals || matchProfile.blockUnderCorners ? "Activo" : "No"}</p></div>
           </div>
           {matchProfile.notes.length > 0 ? (
@@ -2609,12 +2929,17 @@ setIndicators(importedIndicators);
 
     
     <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-2xl font-bold">Indicadores SofaScore🧾</h2>
               <p className="text-xs text-slate-300">Carga 3 a 6 señales fuertes. Evita llenar mercados débiles.</p>
             </div>
-            <button onClick={addIndicator} className="rounded-2xl bg-gradient-to-r from-sky-300 to-blue-500 px-4 py-3 font-bold text-slate-950 shadow-lg shadow-sky-500/20">+ Agregar indicador</button>
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/35 p-2">
+              <select className="rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300" value={indicatorBulkCount} onChange={(event) => setIndicatorBulkCount(event.target.value)}>
+                {INDICATOR_BULK_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+              <button onClick={addMultipleIndicators} className="rounded-2xl bg-gradient-to-r from-sky-300 to-blue-500 px-4 py-3 font-bold text-slate-950 shadow-lg shadow-sky-500/20">+ Agregar indicadores</button>
+            </div>
           </div>
 
           <div className="space-y-3">
