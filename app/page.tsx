@@ -105,6 +105,45 @@ type RefereeContext = {
   strictness: RefereeStrictness;
 };
 
+type DominanceContext = {
+  goalsOverLine: string;
+  goalsOverOdd: string;
+  goalsUnderLine: string;
+  goalsUnderOdd: string;
+  localGoalsOverLine: string;
+  localGoalsOverOdd: string;
+  localGoalsUnderLine: string;
+  localGoalsUnderOdd: string;
+  visitGoalsOverLine: string;
+  visitGoalsOverOdd: string;
+  visitGoalsUnderLine: string;
+  visitGoalsUnderOdd: string;
+  cornersOverLine: string;
+  cornersOverOdd: string;
+  cornersUnderLine: string;
+  cornersUnderOdd: string;
+  localCornersOverLine: string;
+  localCornersOverOdd: string;
+  localCornersUnderLine: string;
+  localCornersUnderOdd: string;
+  visitCornersOverLine: string;
+  visitCornersOverOdd: string;
+  visitCornersUnderLine: string;
+  visitCornersUnderOdd: string;
+  cardsOverLine: string;
+  cardsOverOdd: string;
+  cardsUnderLine: string;
+  cardsUnderOdd: string;
+  localCardsOverLine: string;
+  localCardsOverOdd: string;
+  localCardsUnderLine: string;
+  localCardsUnderOdd: string;
+  visitCardsOverLine: string;
+  visitCardsOverOdd: string;
+  visitCardsUnderLine: string;
+  visitCardsUnderOdd: string;
+};
+
 type DailyPick = {
   id: string;
   createdAt: string;
@@ -191,6 +230,7 @@ type ExportShape = {
   houseMarkets: HouseMarket;
   eliminationContext?: EliminationContext;
   refereeContext?: RefereeContext;
+  dominanceContext?: DominanceContext;
 };
 
 const STORAGE_KEY = "analizador_pro_h2h_casa_v4";
@@ -278,6 +318,9 @@ const GOAL_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"];
 const CORNER_OVER_LINES = ["4.5", "5.5", "6.5", "7.5", "8.5", "9.5", "10.5"];
 const CORNER_UNDER_LINES = ["16.5", "15.5", "14.5", "13.5", "12.5", "11.5", "10.5", "9.5", "8.5", "7.5", "6.5", "5.5"];
 const CARD_LINES = ["1.5", "2.5", "3.5", "4.5", "5.5", "6.5"];
+const TEAM_GOAL_LINES = ["0.5", "1.5", "2.5", "3.5"];
+const TEAM_CORNER_LINES = ["1.5", "2.5", "3.5", "4.5", "5.5", "6.5", "7.5"];
+const TEAM_CARD_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"];
 const HANDICAP_LINES = ["+0.5", "+1.5", "+2.5", "+3.5", "-0.5", "-1.5", "-2.5", "-3.5"];
 const TEAM_COLOR_PRESETS = [
   { label: "Man City", local1: "#6CABDD", local2: "#ffffff", visit1: "#6CABDD", visit2: "#ffffff" },
@@ -354,6 +397,150 @@ function emptyRefereeContext(): RefereeContext {
     yellowAvg: "",
     redAvg: "",
     strictness: "none",
+  };
+}
+
+function emptyDominanceContext(): DominanceContext {
+  return {
+    goalsOverLine: "1.5",
+    goalsOverOdd: "",
+    goalsUnderLine: "4.5",
+    goalsUnderOdd: "",
+    localGoalsOverLine: "0.5",
+    localGoalsOverOdd: "",
+    localGoalsUnderLine: "2.5",
+    localGoalsUnderOdd: "",
+    visitGoalsOverLine: "0.5",
+    visitGoalsOverOdd: "",
+    visitGoalsUnderLine: "2.5",
+    visitGoalsUnderOdd: "",
+    cornersOverLine: "6.5",
+    cornersOverOdd: "",
+    cornersUnderLine: "11.5",
+    cornersUnderOdd: "",
+    localCornersOverLine: "2.5",
+    localCornersOverOdd: "",
+    localCornersUnderLine: "6.5",
+    localCornersUnderOdd: "",
+    visitCornersOverLine: "2.5",
+    visitCornersOverOdd: "",
+    visitCornersUnderLine: "6.5",
+    visitCornersUnderOdd: "",
+    cardsOverLine: "2.5",
+    cardsOverOdd: "",
+    cardsUnderLine: "5.5",
+    cardsUnderOdd: "",
+    localCardsOverLine: "0.5",
+    localCardsOverOdd: "",
+    localCardsUnderLine: "3.5",
+    localCardsUnderOdd: "",
+    visitCardsOverLine: "0.5",
+    visitCardsOverOdd: "",
+    visitCardsUnderLine: "3.5",
+    visitCardsUnderOdd: "",
+  };
+}
+
+type DominancePick = {
+  key: string;
+  label: string;
+  score: number;
+  odd: number;
+  grade: Grade;
+  reason: string;
+  risk: string;
+};
+
+function getDependencyLabel(localValue: number, visitValue: number) {
+  const total = localValue + visitValue;
+  if (total <= 0) return { label: "Sin datos", tone: "neutral", share: 0 };
+  const share = Math.max(localValue, visitValue) / total;
+  if (share >= 0.76) return { label: "🔴 Mercado dependiente de un solo equipo", tone: "danger", share };
+  if (share >= 0.64) return { label: "🟡 Dominancia marcada", tone: "warning", share };
+  return { label: "🟢 Mercado equilibrado", tone: "safe", share };
+}
+
+function sideExpectedValues(projection: ReturnType<typeof buildProjection>, adjustedCardsExpected: number) {
+  const localGoals = average([projection.local.goalsForAvg, projection.visit.goalsAgainstAvg].filter((n) => n > 0));
+  const visitGoals = average([projection.visit.goalsForAvg, projection.local.goalsAgainstAvg].filter((n) => n > 0));
+  const rawCardsTotal = projection.localCardsExpected + projection.visitCardsExpected;
+  const localCardShare = rawCardsTotal > 0 ? projection.localCardsExpected / rawCardsTotal : 0.5;
+  const visitCardShare = 1 - localCardShare;
+  return {
+    localGoals,
+    visitGoals,
+    totalGoals: localGoals + visitGoals,
+    localCorners: projection.localCornersExpected,
+    visitCorners: projection.visitCornersExpected,
+    totalCorners: projection.expectedCorners,
+    localCards: adjustedCardsExpected * localCardShare,
+    visitCards: adjustedCardsExpected * visitCardShare,
+    totalCards: adjustedCardsExpected,
+  };
+}
+
+function buildDominanceAnalysis(
+  dominance: DominanceContext,
+  projection: ReturnType<typeof buildProjection>,
+  adjustedCardsExpected: number,
+  match: Match,
+  hasMinimumData: boolean
+) {
+  const values = sideExpectedValues(projection, adjustedCardsExpected);
+  const goalsDependency = getDependencyLabel(values.localGoals, values.visitGoals);
+  const cornersDependency = getDependencyLabel(values.localCorners, values.visitCorners);
+  const cardsDependency = getDependencyLabel(values.localCards, values.visitCards);
+  const picks: DominancePick[] = [];
+
+  const addPick = (key: string, label: string, expected: number, line: string, direction: "over" | "under", oddRaw: string, scale: number, dependencyShare: number, reason: string) => {
+    const odd = toNumber(oddRaw);
+    const base = probabilityByLine(expected, toNumber(line), direction, scale);
+    const dependencyPenalty = direction === "over" && dependencyShare >= 0.72 ? 13 : direction === "over" && dependencyShare >= 0.64 ? 7 : 0;
+    const score = clamp(base - dependencyPenalty, 0, 100);
+    const flags: string[] = [];
+    if (dependencyPenalty >= 10) flags.push("Depende demasiado de un solo equipo.");
+    if (Math.abs(expected - toNumber(line)) <= (scale <= 2.2 ? 0.35 : scale <= 3.6 ? 0.8 : 1.4)) flags.push("Línea estrecha: no combinar fuerte.");
+    if (odd > 1 && score - impliedProb(odd) < 0) flags.push("La cuota no acompaña del todo.");
+    const grade = getGrade(score, flags);
+    if (score >= 58) picks.push({ key, label, score, odd, grade, reason, risk: flags.length ? flags.join(" ") : "Lectura limpia." });
+  };
+
+  if (hasMinimumData) {
+    addPick("dom_goals_over", `Más de ${dominance.goalsOverLine} goles`, values.totalGoals, dominance.goalsOverLine, "over", dominance.goalsOverOdd, 2.1, goalsDependency.share, "Total de goles sostenido por ambos ataques/defensas recientes.");
+    addPick("dom_goals_under", `Menos de ${dominance.goalsUnderLine} goles`, values.totalGoals, dominance.goalsUnderLine, "under", dominance.goalsUnderOdd, 2.1, goalsDependency.share, "Under validado contra producción esperada total.");
+    addPick("dom_local_goals_over", `${match.local || "Local"} más de ${dominance.localGoalsOverLine} goles`, values.localGoals, dominance.localGoalsOverLine, "over", dominance.localGoalsOverOdd, 1.5, 0.5, "Producción ofensiva local vs goles concedidos del visitante.");
+    addPick("dom_visit_goals_over", `${match.visitante || "Visitante"} más de ${dominance.visitGoalsOverLine} goles`, values.visitGoals, dominance.visitGoalsOverLine, "over", dominance.visitGoalsOverOdd, 1.5, 0.5, "Producción ofensiva visitante vs goles concedidos del local.");
+    addPick("dom_local_goals_under", `${match.local || "Local"} menos de ${dominance.localGoalsUnderLine} goles`, values.localGoals, dominance.localGoalsUnderLine, "under", dominance.localGoalsUnderOdd, 1.5, 0.5, "Techo goleador del local.");
+    addPick("dom_visit_goals_under", `${match.visitante || "Visitante"} menos de ${dominance.visitGoalsUnderLine} goles`, values.visitGoals, dominance.visitGoalsUnderLine, "under", dominance.visitGoalsUnderOdd, 1.5, 0.5, "Techo goleador del visitante.");
+
+    addPick("dom_corners_over", `Más de ${dominance.cornersOverLine} corners`, values.totalCorners, dominance.cornersOverLine, "over", dominance.cornersOverOdd, 5.2, cornersDependency.share, "Total de corners comparando generación propia y corners concedidos.");
+    addPick("dom_corners_under", `Menos de ${dominance.cornersUnderLine} corners`, values.totalCorners, dominance.cornersUnderLine, "under", dominance.cornersUnderOdd, 5.2, cornersDependency.share, "Under de corners validado por total esperado.");
+    addPick("dom_local_corners_over", `${match.local || "Local"} más de ${dominance.localCornersOverLine} corners`, values.localCorners, dominance.localCornersOverLine, "over", dominance.localCornersOverOdd, 3.2, 0.5, "Corners esperados del local.");
+    addPick("dom_visit_corners_over", `${match.visitante || "Visitante"} más de ${dominance.visitCornersOverLine} corners`, values.visitCorners, dominance.visitCornersOverLine, "over", dominance.visitCornersOverOdd, 3.2, 0.5, "Corners esperados del visitante.");
+    addPick("dom_local_corners_under", `${match.local || "Local"} menos de ${dominance.localCornersUnderLine} corners`, values.localCorners, dominance.localCornersUnderLine, "under", dominance.localCornersUnderOdd, 3.2, 0.5, "Techo de corners del local.");
+    addPick("dom_visit_corners_under", `${match.visitante || "Visitante"} menos de ${dominance.visitCornersUnderLine} corners`, values.visitCorners, dominance.visitCornersUnderLine, "under", dominance.visitCornersUnderOdd, 3.2, 0.5, "Techo de corners del visitante.");
+
+    addPick("dom_cards_over", `Más de ${dominance.cardsOverLine} tarjetas`, values.totalCards, dominance.cardsOverLine, "over", dominance.cardsOverOdd, 3.4, cardsDependency.share, "Tarjetas totales incluyendo árbitro y registros.");
+    addPick("dom_cards_under", `Menos de ${dominance.cardsUnderLine} tarjetas`, values.totalCards, dominance.cardsUnderLine, "under", dominance.cardsUnderOdd, 3.4, cardsDependency.share, "Under tarjetas contra promedio ajustado por árbitro.");
+    addPick("dom_local_cards_over", `${match.local || "Local"} más de ${dominance.localCardsOverLine} tarjetas`, values.localCards, dominance.localCardsOverLine, "over", dominance.localCardsOverOdd, 2.2, 0.5, "Tarjetas esperadas del local.");
+    addPick("dom_visit_cards_over", `${match.visitante || "Visitante"} más de ${dominance.visitCardsOverLine} tarjetas`, values.visitCards, dominance.visitCardsOverLine, "over", dominance.visitCardsOverOdd, 2.2, 0.5, "Tarjetas esperadas del visitante.");
+    addPick("dom_local_cards_under", `${match.local || "Local"} menos de ${dominance.localCardsUnderLine} tarjetas`, values.localCards, dominance.localCardsUnderLine, "under", dominance.localCardsUnderOdd, 2.2, 0.5, "Techo de tarjetas del local.");
+    addPick("dom_visit_cards_under", `${match.visitante || "Visitante"} menos de ${dominance.visitCardsUnderLine} tarjetas`, values.visitCards, dominance.visitCardsUnderLine, "under", dominance.visitCardsUnderOdd, 2.2, 0.5, "Techo de tarjetas del visitante.");
+  }
+
+  const dominators: string[] = [];
+  if (values.localCorners - values.visitCorners >= 2) dominators.push(`${match.local || "Local"} domina corners (${values.localCorners.toFixed(1)} vs ${values.visitCorners.toFixed(1)}).`);
+  if (values.visitCorners - values.localCorners >= 2) dominators.push(`${match.visitante || "Visitante"} domina corners (${values.visitCorners.toFixed(1)} vs ${values.localCorners.toFixed(1)}).`);
+  if (values.localGoals - values.visitGoals >= 0.7) dominators.push(`${match.local || "Local"} domina gol esperado (${values.localGoals.toFixed(1)} vs ${values.visitGoals.toFixed(1)}).`);
+  if (values.visitGoals - values.localGoals >= 0.7) dominators.push(`${match.visitante || "Visitante"} domina gol esperado (${values.visitGoals.toFixed(1)} vs ${values.localGoals.toFixed(1)}).`);
+  if (values.localCards - values.visitCards >= 0.8) dominators.push(`${match.local || "Local"} carga más riesgo de tarjetas (${values.localCards.toFixed(1)} vs ${values.visitCards.toFixed(1)}).`);
+  if (values.visitCards - values.localCards >= 0.8) dominators.push(`${match.visitante || "Visitante"} carga más riesgo de tarjetas (${values.visitCards.toFixed(1)} vs ${values.localCards.toFixed(1)}).`);
+
+  return {
+    values,
+    dependencies: { goals: goalsDependency, corners: cornersDependency, cards: cardsDependency },
+    dominators,
+    picks: picks.sort((a, b) => b.score - a.score).slice(0, 10),
   };
 }
 
@@ -1164,6 +1351,7 @@ export default function Page() {
   const [houseMarkets, setHouseMarkets] = useState<HouseMarket>(emptyHouseMarkets());
   const [eliminationContext, setEliminationContext] = useState<EliminationContext>(emptyEliminationContext());
   const [refereeContext, setRefereeContext] = useState<RefereeContext>(emptyRefereeContext());
+  const [dominanceContext, setDominanceContext] = useState<DominanceContext>(emptyDominanceContext());
   const [indicatorBulkCount, setIndicatorBulkCount] = useState("1");
   const [bankroll, setBankroll] = useState<BankrollState>(emptyBankroll());
   const [bankBetDraft, setBankBetDraft] = useState<Omit<BankBet, "id">>(emptyBankBet());
@@ -1475,6 +1663,7 @@ export default function Page() {
     const hasSignals = hasIndicatorSignal(indicators) || totalRecentCount >= 2 || hasHouseOdd(houseMarkets);
     return hasTeams && hasSignals;
   }, [match.local, match.visitante, indicators, totalRecentCount, houseMarkets]);
+  const dominanceAnalysis = useMemo(() => buildDominanceAnalysis(dominanceContext, projection, adjustedCardsExpected, match, hasMinimumData), [dominanceContext, projection, adjustedCardsExpected, match, hasMinimumData]);
 
   const housePicks = useMemo<HousePick[]>(() => {
     const candidates: Array<{ group: MarketGroup; direction: "over" | "under"; line: string; odd: string }> = [
@@ -2173,11 +2362,12 @@ export default function Page() {
     if (saved.houseMarkets) setHouseMarkets({ ...emptyHouseMarkets(), ...saved.houseMarkets });
     if (saved.eliminationContext) setEliminationContext({ ...emptyEliminationContext(), ...saved.eliminationContext });
     if (saved.refereeContext) setRefereeContext({ ...emptyRefereeContext(), ...saved.refereeContext });
+    if (saved.dominanceContext) setDominanceContext({ ...emptyDominanceContext(), ...saved.dominanceContext });
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext }));
-  }, [match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext }));
+  }, [match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext]);
 
   useEffect(() => {
     setIndicators((prev) =>
@@ -2188,6 +2378,39 @@ export default function Page() {
       })
     );
   }, [houseMarkets]);
+
+  // Unifica Líneas reales de la casa con Dominador por etiqueta:
+  // los mercados totales de goles/corners/tarjetas se llenan una sola vez y alimentan ambos motores.
+  useEffect(() => {
+    setDominanceContext((prev) => ({
+      ...prev,
+      goalsOverLine: houseMarkets.goalsOverLine,
+      goalsOverOdd: houseMarkets.goalsOverOdd,
+      goalsUnderLine: houseMarkets.goalsUnderLine,
+      goalsUnderOdd: houseMarkets.goalsUnderOdd,
+      cornersOverLine: houseMarkets.cornersOverLine,
+      cornersOverOdd: houseMarkets.cornersOverOdd,
+      cornersUnderLine: houseMarkets.cornersUnderLine,
+      cornersUnderOdd: houseMarkets.cornersUnderOdd,
+      cardsOverLine: houseMarkets.cardsOverLine,
+      cardsOverOdd: houseMarkets.cardsOverOdd,
+      cardsUnderLine: houseMarkets.cardsUnderLine,
+      cardsUnderOdd: houseMarkets.cardsUnderOdd,
+    }));
+  }, [
+    houseMarkets.goalsOverLine,
+    houseMarkets.goalsOverOdd,
+    houseMarkets.goalsUnderLine,
+    houseMarkets.goalsUnderOdd,
+    houseMarkets.cornersOverLine,
+    houseMarkets.cornersOverOdd,
+    houseMarkets.cornersUnderLine,
+    houseMarkets.cornersUnderOdd,
+    houseMarkets.cardsOverLine,
+    houseMarkets.cardsOverOdd,
+    houseMarkets.cardsUnderLine,
+    houseMarkets.cardsUnderOdd,
+  ]);
 
   useEffect(() => {
     setHouseMarkets((prev) => {
@@ -2228,10 +2451,11 @@ export default function Page() {
     setHouseMarkets(emptyHouseMarkets());
     setEliminationContext(emptyEliminationContext());
     setRefereeContext(emptyRefereeContext());
+    setDominanceContext(emptyDominanceContext());
   };
 
   const saveManual = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext }));
     alert("✅ Partido guardado");
   };
 
@@ -2249,6 +2473,7 @@ export default function Page() {
       houseMarkets,
       eliminationContext,
       refereeContext,
+      dominanceContext,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json;charset=utf-8",
@@ -2303,6 +2528,7 @@ setIndicators(importedIndicators);
         setHouseMarkets({ ...emptyHouseMarkets(), ...(data.houseMarkets || {}) });
         setEliminationContext({ ...emptyEliminationContext(), ...(data.eliminationContext || {}) });
         setRefereeContext({ ...emptyRefereeContext(), ...(data.refereeContext || {}) });
+        setDominanceContext({ ...emptyDominanceContext(), ...(data.dominanceContext || {}) });
 
         alert("📨 Partido importado");
       } catch {
@@ -2312,11 +2538,43 @@ setIndicators(importedIndicators);
     reader.readAsText(file);
   };
 
+
+
   const inputClass =
     "w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-white outline-none backdrop-blur placeholder:text-slate-300 focus:border-sky-300 focus:ring-2 focus:ring-sky-400/30";
   const selectClass =
     "w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300";
 
+
+  const renderDominancePair = (
+    title: string,
+    overLineField: keyof DominanceContext,
+    overOddField: keyof DominanceContext,
+    underLineField: keyof DominanceContext,
+    underOddField: keyof DominanceContext,
+    overLines: string[],
+    underLines: string[]
+  ) => (
+    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+      <h3 className="mb-3 font-black">{title}</h3>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <p className="text-xs text-slate-400">Over</p>
+          <select className={`${selectClass} mt-1`} value={String(dominanceContext[overLineField] || "")} onChange={(event) => setDominanceContext({ ...dominanceContext, [overLineField]: event.target.value })}>
+            {overLines.map((line) => <option key={line} value={line}>+{line}</option>)}
+          </select>
+          <input className={`${inputClass} mt-2`} inputMode="decimal" placeholder="Cuota over" value={String(dominanceContext[overOddField] || "")} onChange={(event) => setDominanceContext({ ...dominanceContext, [overOddField]: event.target.value })} />
+        </div>
+        <div>
+          <p className="text-xs text-slate-400">Under</p>
+          <select className={`${selectClass} mt-1`} value={String(dominanceContext[underLineField] || "")} onChange={(event) => setDominanceContext({ ...dominanceContext, [underLineField]: event.target.value })}>
+            {underLines.map((line) => <option key={line} value={line}>-{line}</option>)}
+          </select>
+          <input className={`${inputClass} mt-2`} inputMode="decimal" placeholder="Cuota under" value={String(dominanceContext[underOddField] || "")} onChange={(event) => setDominanceContext({ ...dominanceContext, [underOddField]: event.target.value })} />
+        </div>
+      </div>
+    </div>
+  );
   const SelectNumber = ({ value, max, onChange, placeholder }: { value: string; max: number; onChange: (value: string) => void; placeholder: string }) => (
     <select className={selectClass} value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">{placeholder}</option>
@@ -2945,7 +3203,7 @@ setIndicators(importedIndicators);
           <div className="space-y-3">
             {indicators.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-white/15 p-5 text-sm text-slate-300">
-                Ejemplo: Ambos marcan 5/5, Más de 2.5 goles 8/10, Menos de 10.5 corners 6/7. Si ya llenaste Líneas reales de la casa, la cuota se carga sola al elegir el mismo mercado y línea.
+                Ejemplo: Ambos marcan 5/5, Más de 2.5 goles 8/10, Menos de 10.5 corners 6/7. Si ya llenaste Dominador + líneas reales, la cuota se carga sola al elegir el mismo mercado y línea.
               </div>
             ) : null}
 
@@ -3021,19 +3279,102 @@ setIndicators(importedIndicators);
           </div>
         </section>
 
-        <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4">
-            <h2 className="text-2xl font-bold">🏦 Líneas reales de la casa</h2>
-            <p className="text-xs text-slate-300">Selecciona la línea disponible y su cuota. El motor compara la línea contra registros reales.</p>
+        <section className="mb-5 rounded-3xl border border-cyan-300/20 bg-cyan-400/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200/80">Motor de presión real + casa</p>
+              <h2 className="text-2xl font-black">🏷️ Dominador + líneas reales</h2>
+              <p className="mt-1 text-xs text-slate-300">Llena aquí una sola vez las líneas de la casa. El motor cruza cuotas, registros, dominancia por equipo, árbitro y contexto.</p>
+            </div>
+            <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm">
+              <b>Total esperado:</b> {dominanceAnalysis.values.totalGoals.toFixed(1)} goles · {dominanceAnalysis.values.totalCorners.toFixed(1)} corners · {dominanceAnalysis.values.totalCards.toFixed(1)} tarjetas
+            </div>
           </div>
-          <div className="grid gap-4 lg:grid-cols-3">
-            {renderHouseMarket("⚽ Goles", "goalsOverLine", "goalsOverOdd", "goalsUnderLine", "goalsUnderOdd", GOAL_LINES, [...GOAL_LINES].reverse())}
-            {renderHouseMarket("🚩 Corners", "cornersOverLine", "cornersOverOdd", "cornersUnderLine", "cornersUnderOdd", CORNER_OVER_LINES, CORNER_UNDER_LINES)}
-            {renderHouseMarket("🟨 Tarjetas", "cardsOverLine", "cardsOverOdd", "cardsUnderLine", "cardsUnderOdd", CARD_LINES, [...CARD_LINES].reverse())}
+
+          <div className="grid gap-3 lg:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+              <p className="text-xs text-slate-400">Goles esperados</p>
+              <h3 className="mt-1 text-xl font-black">{dominanceAnalysis.values.localGoals.toFixed(1)} - {dominanceAnalysis.values.visitGoals.toFixed(1)}</h3>
+              <p className="mt-1 text-sm text-slate-300">{match.local || "Local"} vs {match.visitante || "Visitante"}</p>
+              <p className="mt-2 rounded-xl bg-white/10 p-2 text-xs">{dominanceAnalysis.dependencies.goals.label}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+              <p className="text-xs text-slate-400">Corners esperados</p>
+              <h3 className="mt-1 text-xl font-black">{dominanceAnalysis.values.localCorners.toFixed(1)} - {dominanceAnalysis.values.visitCorners.toFixed(1)}</h3>
+              <p className="mt-1 text-sm text-slate-300">Total: {dominanceAnalysis.values.totalCorners.toFixed(1)}</p>
+              <p className="mt-2 rounded-xl bg-white/10 p-2 text-xs">{dominanceAnalysis.dependencies.corners.label}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+              <p className="text-xs text-slate-400">Tarjetas esperadas</p>
+              <h3 className="mt-1 text-xl font-black">{dominanceAnalysis.values.localCards.toFixed(1)} - {dominanceAnalysis.values.visitCards.toFixed(1)}</h3>
+              <p className="mt-1 text-sm text-slate-300">Ajustado por árbitro</p>
+              <p className="mt-2 rounded-xl bg-white/10 p-2 text-xs">{dominanceAnalysis.dependencies.cards.label}</p>
+            </div>
           </div>
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            {renderResultHouseMarket()}
-            {renderHandicapHouseMarket()}
+
+          {dominanceAnalysis.dominators.length > 0 ? (
+            <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4 text-sm text-amber-50">
+              <h3 className="mb-2 font-black">📌 Lecturas de dominancia</h3>
+              {dominanceAnalysis.dominators.map((note) => <p key={note}>• {note}</p>)}
+            </div>
+          ) : null}
+
+          <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-3">
+              <h3 className="text-xl font-black">🏦 Líneas reales totales</h3>
+              <p className="text-xs text-slate-300">Goles, corners y tarjetas se llenan aquí y alimentan también Picks clasificados, Anti-Casa, Resumen 90’ y Modo PRO.</p>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-3">
+              {renderHouseMarket("⚽ Goles", "goalsOverLine", "goalsOverOdd", "goalsUnderLine", "goalsUnderOdd", GOAL_LINES, [...GOAL_LINES].reverse())}
+              {renderHouseMarket("🚩 Corners", "cornersOverLine", "cornersOverOdd", "cornersUnderLine", "cornersUnderOdd", CORNER_OVER_LINES, CORNER_UNDER_LINES)}
+              {renderHouseMarket("🟨 Tarjetas", "cardsOverLine", "cardsOverOdd", "cardsUnderLine", "cardsUnderOdd", CARD_LINES, [...CARD_LINES].reverse())}
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-3">
+              <h3 className="text-xl font-black">🎯 Líneas por equipo</h3>
+              <p className="text-xs text-slate-300">Úsalas cuando la casa ofrezca corners/goles/tarjetas por equipo. Sirven para detectar si el total depende de un solo lado.</p>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-3">
+              {renderDominancePair(`⚽ ${match.local || "Local"} goles`, "localGoalsOverLine", "localGoalsOverOdd", "localGoalsUnderLine", "localGoalsUnderOdd", TEAM_GOAL_LINES, [...TEAM_GOAL_LINES].reverse())}
+              {renderDominancePair(`⚽ ${match.visitante || "Visitante"} goles`, "visitGoalsOverLine", "visitGoalsOverOdd", "visitGoalsUnderLine", "visitGoalsUnderOdd", TEAM_GOAL_LINES, [...TEAM_GOAL_LINES].reverse())}
+              {renderDominancePair(`🚩 ${match.local || "Local"} corners`, "localCornersOverLine", "localCornersOverOdd", "localCornersUnderLine", "localCornersUnderOdd", TEAM_CORNER_LINES, [...TEAM_CORNER_LINES].reverse())}
+              {renderDominancePair(`🚩 ${match.visitante || "Visitante"} corners`, "visitCornersOverLine", "visitCornersOverOdd", "visitCornersUnderLine", "visitCornersUnderOdd", TEAM_CORNER_LINES, [...TEAM_CORNER_LINES].reverse())}
+              {renderDominancePair(`🟨 ${match.local || "Local"} tarjetas`, "localCardsOverLine", "localCardsOverOdd", "localCardsUnderLine", "localCardsUnderOdd", TEAM_CARD_LINES, [...TEAM_CARD_LINES].reverse())}
+              {renderDominancePair(`🟨 ${match.visitante || "Visitante"} tarjetas`, "visitCardsOverLine", "visitCardsOverOdd", "visitCardsUnderLine", "visitCardsUnderOdd", TEAM_CARD_LINES, [...TEAM_CARD_LINES].reverse())}
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-4">
+            <div className="mb-3">
+              <h3 className="text-xl font-black">🛡️ Resultado protegido y handicap</h3>
+              <p className="text-xs text-slate-300">Estas cuotas siguen alimentando doble oportunidad, handicap y protección del Modo PRO.</p>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {renderResultHouseMarket()}
+              {renderHandicapHouseMarket()}
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {dominanceAnalysis.picks.length === 0 ? <p className="text-sm text-slate-300">Carga registros y líneas para generar picks por dominancia.</p> : null}
+            {dominanceAnalysis.picks.map((pick) => (
+              <article key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="font-black">{pick.label}</h3>
+                    <p className="text-xs text-slate-300">{pick.reason}</p>
+                  </div>
+                  <span className={`rounded-full px-3 py-1 text-xs font-black ${pick.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pick.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>{getTierLabel(pick.grade)}</span>
+                </div>
+                <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+                  <div className="rounded-xl bg-white/5 p-3">Score: <b>{pick.score.toFixed(1)}%</b></div>
+                  <div className="rounded-xl bg-white/5 p-3">Cuota: <b>{pick.odd > 1 ? pick.odd.toFixed(2) : "—"}</b></div>
+                  <div className="rounded-xl bg-white/5 p-3">Riesgo: <b>{pick.risk}</b></div>
+                </div>
+              </article>
+            ))}
           </div>
         </section>
 
