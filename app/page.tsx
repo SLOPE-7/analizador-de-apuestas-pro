@@ -13,6 +13,7 @@ type TrapLevel = "valor_real" | "linea_comoda" | "linea_estrecha" | "linea_sospe
 type EliminationLeg = "none" | "first" | "second";
 type EliminationSide = "none" | "local" | "visitante";
 type RefereeStrictness = "none" | "low" | "medium" | "high";
+type FocusMarket = "winner" | "doubleChance" | "goals" | "corners" | "cards";
 
 type Indicator = {
   id: string;
@@ -103,6 +104,16 @@ type RefereeContext = {
   yellowAvg: string;
   redAvg: string;
   strictness: RefereeStrictness;
+};
+
+type MarketFocusState = {
+  winner: boolean;
+  doubleChance: boolean;
+  goals: boolean;
+  corners: boolean;
+  cards: boolean;
+  all: boolean;
+  recentCount: string;
 };
 
 type DominanceContext = {
@@ -231,6 +242,7 @@ type ExportShape = {
   eliminationContext?: EliminationContext;
   refereeContext?: RefereeContext;
   dominanceContext?: DominanceContext;
+  marketFocus?: MarketFocusState;
 };
 
 const STORAGE_KEY = "analizador_pro_h2h_casa_v4";
@@ -321,6 +333,15 @@ const CARD_LINES = ["1.5", "2.5", "3.5", "4.5", "5.5", "6.5"];
 const TEAM_GOAL_LINES = ["0.5", "1.5", "2.5", "3.5"];
 const TEAM_CORNER_LINES = ["1.5", "2.5", "3.5", "4.5", "5.5", "6.5", "7.5"];
 const TEAM_CARD_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"];
+const RECENT_MATCH_COUNT_OPTIONS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
+const FOCUS_OPTIONS: { key: keyof Omit<MarketFocusState, "recentCount">; label: string; help: string }[] = [
+  { key: "winner", label: "🏆 Ganador", help: "1X2 y ganador directo" },
+  { key: "doubleChance", label: "🛡️ Doble oportunidad", help: "1X, X2, 12 y handicap" },
+  { key: "goals", label: "⚽ Goles", help: "GF/GC, líneas y picks de goles" },
+  { key: "corners", label: "🚩 Corners", help: "CF/CC, líneas y dominancia de corners" },
+  { key: "cards", label: "🟨 Tarjetas", help: "TF/TC, árbitro y líneas de tarjetas" },
+  { key: "all", label: "📊 Todos", help: "Muestra todos los mercados" },
+];
 const HANDICAP_LINES = ["+0.5", "+1.5", "+2.5", "+3.5", "-0.5", "-1.5", "-2.5", "-3.5"];
 const TEAM_COLOR_PRESETS = [
   { label: "Man City", local1: "#6CABDD", local2: "#ffffff", visit1: "#6CABDD", visit2: "#ffffff" },
@@ -397,6 +418,18 @@ function emptyRefereeContext(): RefereeContext {
     yellowAvg: "",
     redAvg: "",
     strictness: "none",
+  };
+}
+
+function emptyMarketFocus(): MarketFocusState {
+  return {
+    winner: true,
+    doubleChance: true,
+    goals: true,
+    corners: true,
+    cards: true,
+    all: true,
+    recentCount: "3",
   };
 }
 
@@ -646,6 +679,44 @@ function dailyFamily(marketValue: string) {
   if (marketValue.includes("handicap") || marketValue.includes("plus") || marketValue.includes("minus")) return "handicap";
   if (["ganador", "empate", "local_o_empate", "visitante_o_empate", "local_o_visitante", "sin_derrotas", "sin_victorias", "derrotas", "victorias", "clean_sheet", "first_score", "first_concede", "first_half_winner", "first_half_loser"].includes(marketValue)) return "result";
   return marketValue || "other";
+}
+
+function focusEnabled(focus: MarketFocusState, key: FocusMarket) {
+  return Boolean(focus.all || focus[key]);
+}
+
+function focusNeedsResult(focus: MarketFocusState) {
+  return Boolean(focus.all || focus.winner || focus.doubleChance || focus.goals);
+}
+
+function getMarketFocusFamily(marketValue: string): FocusMarket | "result" | "other" {
+  const value = getMarketValue(marketValue);
+  if (value.includes("corners")) return "corners";
+  if (value.includes("cards")) return "cards";
+  if (["over_0_5", "over_1_5", "over_2_5", "under_2_5", "under_3_5", "under_4_5", "under_5_5", "btts", "no_clean", "clean_sheet"].includes(value)) return "goals";
+  if (["ganador", "empate", "victorias", "sin_victorias", "derrotas", "sin_derrotas", "first_score", "first_concede", "first_half_winner", "first_half_loser", "wins_any_half"].includes(value)) return "winner";
+  if (value === "local_o_empate" || value === "visitante_o_empate" || value === "local_o_visitante" || value.includes("plus") || value.includes("minus")) return "doubleChance";
+  return "other";
+}
+
+function isMarketAllowedByFocus(marketValue: string, focus: MarketFocusState) {
+  if (focus.all) return true;
+  const family = getMarketFocusFamily(marketValue);
+  if (family === "winner") return focus.winner;
+  if (family === "doubleChance") return focus.doubleChance;
+  if (family === "goals") return focus.goals;
+  if (family === "corners") return focus.corners;
+  if (family === "cards") return focus.cards;
+  return true;
+}
+
+function isDominancePickAllowedByFocus(pick: DominancePick, focus: MarketFocusState) {
+  const text = `${pick.key} ${pick.label}`.toLowerCase();
+  if (focus.all) return true;
+  if (text.includes("corner")) return focus.corners;
+  if (text.includes("tarjeta")) return focus.cards;
+  if (text.includes("gol")) return focus.goals;
+  return true;
 }
 
 function hasDangerFlag(flags: string[]) {
@@ -1352,6 +1423,7 @@ export default function Page() {
   const [eliminationContext, setEliminationContext] = useState<EliminationContext>(emptyEliminationContext());
   const [refereeContext, setRefereeContext] = useState<RefereeContext>(emptyRefereeContext());
   const [dominanceContext, setDominanceContext] = useState<DominanceContext>(emptyDominanceContext());
+  const [marketFocus, setMarketFocus] = useState<MarketFocusState>(emptyMarketFocus());
   const [indicatorBulkCount, setIndicatorBulkCount] = useState("1");
   const [bankroll, setBankroll] = useState<BankrollState>(emptyBankroll());
   const [bankBetDraft, setBankBetDraft] = useState<Omit<BankBet, "id">>(emptyBankBet());
@@ -1653,17 +1725,46 @@ export default function Page() {
     setter((prev) => [...prev, emptyRecentRow()]);
   };
 
+  const resizeRecentRows = (countRaw: string) => {
+    const count = clamp(Number(countRaw) || 3, 1, 10);
+    const resize = (rows: RecentRow[]) => {
+      if (rows.length === count) return rows;
+      if (rows.length > count) return rows.slice(0, count);
+      return [...rows, ...Array.from({ length: count - rows.length }, () => emptyRecentRow())];
+    };
+    setLocalRecent((prev) => resize(prev));
+    setVisitRecent((prev) => resize(prev));
+  };
+
+  const updateMarketFocus = (key: keyof Omit<MarketFocusState, "recentCount">, value: boolean) => {
+    setMarketFocus((prev) => {
+      if (key === "all") {
+        return { ...prev, all: value, winner: value, doubleChance: value, goals: value, corners: value, cards: value };
+      }
+      const next = { ...prev, [key]: value, all: false };
+      const allSelected = next.winner && next.doubleChance && next.goals && next.corners && next.cards;
+      return { ...next, all: allSelected };
+    });
+  };
+
+  const updateRecentCount = (value: string) => {
+    setMarketFocus((prev) => ({ ...prev, recentCount: value }));
+    resizeRecentRows(value);
+  };
+
   const projection = useMemo(() => buildProjection(localRecent, visitRecent), [localRecent, visitRecent]);
   const refereeCardAdjustment = useMemo(() => getRefereeCardAdjustment(refereeContext), [refereeContext]);
   const adjustedCardsExpected = useMemo(() => clamp(projection.expectedCards + refereeCardAdjustment.expectedBoost, 0, 12), [projection.expectedCards, refereeCardAdjustment.expectedBoost]);
-  const matchProfile = useMemo(() => buildMatchProfile(indicators, localRecent, visitRecent), [indicators, localRecent, visitRecent]);
+  const activeIndicators = useMemo(() => indicators.filter((indicator) => isMarketAllowedByFocus(indicator.market, marketFocus)), [indicators, marketFocus]);
+  const matchProfile = useMemo(() => buildMatchProfile(activeIndicators, localRecent, visitRecent), [activeIndicators, localRecent, visitRecent]);
   const totalRecentCount = useMemo(() => countValidRows(localRecent).length + countValidRows(visitRecent).length, [localRecent, visitRecent]);
   const hasMinimumData = useMemo(() => {
     const hasTeams = Boolean(match.local.trim()) && Boolean(match.visitante.trim());
-    const hasSignals = hasIndicatorSignal(indicators) || totalRecentCount >= 2 || hasHouseOdd(houseMarkets);
+    const hasSignals = hasIndicatorSignal(activeIndicators) || totalRecentCount >= 2 || hasHouseOdd(houseMarkets);
     return hasTeams && hasSignals;
-  }, [match.local, match.visitante, indicators, totalRecentCount, houseMarkets]);
+  }, [match.local, match.visitante, activeIndicators, totalRecentCount, houseMarkets]);
   const dominanceAnalysis = useMemo(() => buildDominanceAnalysis(dominanceContext, projection, adjustedCardsExpected, match, hasMinimumData), [dominanceContext, projection, adjustedCardsExpected, match, hasMinimumData]);
+  const focusedDominancePicks = useMemo(() => dominanceAnalysis.picks.filter((pick) => isDominancePickAllowedByFocus(pick, marketFocus)), [dominanceAnalysis.picks, marketFocus]);
 
   const housePicks = useMemo<HousePick[]>(() => {
     const candidates: Array<{ group: MarketGroup; direction: "over" | "under"; line: string; odd: string }> = [
@@ -1685,6 +1786,7 @@ export default function Page() {
 
     const marketLinePicks = candidates
       .filter((candidate) => candidate.line)
+      .filter((candidate) => focusEnabled(marketFocus, candidate.group === "goals" ? "goals" : candidate.group === "corners" ? "corners" : "cards"))
       .map((candidate) => {
         const odd = toNumber(candidate.odd);
         const implied = impliedProb(odd);
@@ -1780,6 +1882,7 @@ export default function Page() {
 
     const resultPicks: HousePick[] = resultCandidates
       .filter((candidate) => candidate.score >= 56)
+      .filter((candidate) => isMarketAllowedByFocus(candidate.marketValue, marketFocus))
       .map((candidate) => {
         const implied = impliedProb(candidate.odd);
         const value = implied > 0 ? candidate.score - implied : 0;
@@ -1798,7 +1901,7 @@ export default function Page() {
       });
 
     return [...marketLinePicks, ...resultPicks].sort((a, b) => b.modelScore - a.modelScore);
-  }, [houseMarkets, localRecent, visitRecent, matchProfile, projection, match, eliminationContext, refereeCardAdjustment, adjustedCardsExpected, hasMinimumData]);
+  }, [houseMarkets, localRecent, visitRecent, matchProfile, projection, match, eliminationContext, refereeCardAdjustment, adjustedCardsExpected, hasMinimumData, marketFocus]);
 
   const antiCasaAlerts = useMemo(() => {
     // Anti-Casa solo debe aparecer cuando hay datos reales:
@@ -1814,7 +1917,7 @@ export default function Page() {
   const results = useMemo<ResultPick[]>(() => {
     const grouped: Record<string, Indicator[]> = {};
 
-    indicators.forEach((indicator) => {
+    activeIndicators.forEach((indicator) => {
       const marketValue = getMarketValue(indicator.market);
       const pct = parseRecord(indicator.record);
       if (!marketValue || pct <= 0) return;
@@ -1908,7 +2011,7 @@ export default function Page() {
         const bRank = b.blendedScore - marketSortPenalty(b.marketValue, b.blendedScore, b.count);
         return bRank - aRank;
       });
-  }, [indicators, localRecent, visitRecent, matchProfile, projection.expectedCorners, refereeCardAdjustment]);
+  }, [activeIndicators, localRecent, visitRecent, matchProfile, projection.expectedCorners, refereeCardAdjustment]);
 
   const contradictionAlerts = useMemo(() => detectContradictions(results), [results]);
 
@@ -2363,11 +2466,12 @@ export default function Page() {
     if (saved.eliminationContext) setEliminationContext({ ...emptyEliminationContext(), ...saved.eliminationContext });
     if (saved.refereeContext) setRefereeContext({ ...emptyRefereeContext(), ...saved.refereeContext });
     if (saved.dominanceContext) setDominanceContext({ ...emptyDominanceContext(), ...saved.dominanceContext });
+    if (saved.marketFocus) setMarketFocus({ ...emptyMarketFocus(), ...saved.marketFocus });
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext }));
-  }, [match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext, marketFocus }));
+  }, [match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext, marketFocus]);
 
   useEffect(() => {
     setIndicators((prev) =>
@@ -2416,7 +2520,7 @@ export default function Page() {
     setHouseMarkets((prev) => {
       let next = prev;
 
-      indicators.forEach((indicator) => {
+      activeIndicators.forEach((indicator) => {
         const fields = getHouseFieldsForIndicator(indicator.market, indicator.line);
         const line = String(indicator.line || "").trim();
         const odd = String(indicator.houseOdd || "").trim();
@@ -2452,10 +2556,11 @@ export default function Page() {
     setEliminationContext(emptyEliminationContext());
     setRefereeContext(emptyRefereeContext());
     setDominanceContext(emptyDominanceContext());
+    setMarketFocus(emptyMarketFocus());
   };
 
   const saveManual = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext, marketFocus }));
     alert("✅ Partido guardado");
   };
 
@@ -2474,6 +2579,7 @@ export default function Page() {
       eliminationContext,
       refereeContext,
       dominanceContext,
+      marketFocus,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json;charset=utf-8",
@@ -2529,6 +2635,7 @@ setIndicators(importedIndicators);
         setEliminationContext({ ...emptyEliminationContext(), ...(data.eliminationContext || {}) });
         setRefereeContext({ ...emptyRefereeContext(), ...(data.refereeContext || {}) });
         setDominanceContext({ ...emptyDominanceContext(), ...(data.dominanceContext || {}) });
+        setMarketFocus({ ...emptyMarketFocus(), ...(data.marketFocus || {}) });
 
         alert("📨 Partido importado");
       } catch {
@@ -2611,24 +2718,38 @@ setIndicators(importedIndicators);
         {rows.map((row, index) => {
           const result = getAutoResult(row);
           return (
-            <div key={row.id} className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/5 p-3 sm:grid-cols-7">
-              <SelectNumber value={row.goalsFor} max={9} placeholder={`P${index + 1} GF`} onChange={(value) => updateRecent(side, row.id, "goalsFor", value)} />
-              <SelectNumber value={row.goalsAgainst} max={9} placeholder="GC" onChange={(value) => updateRecent(side, row.id, "goalsAgainst", value)} />
-              <SelectNumber value={row.cornersFor} max={20} placeholder="CF" onChange={(value) => updateRecent(side, row.id, "cornersFor", value)} />
-              <SelectNumber value={row.cornersAgainst} max={20} placeholder="CC" onChange={(value) => updateRecent(side, row.id, "cornersAgainst", value)} />
-              <SelectNumber value={row.cardsFor} max={10} placeholder="TF" onChange={(value) => updateRecent(side, row.id, "cardsFor", value)} />
-              <SelectNumber value={row.cardsAgainst} max={10} placeholder="TC" onChange={(value) => updateRecent(side, row.id, "cardsAgainst", value)} />
-              <div className="flex items-center justify-center rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 font-black text-white">
-                {result || "—"}
-              </div>
+            <div key={row.id} className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/5 p-3 sm:grid-cols-6">
+              {focusNeedsResult(marketFocus) ? (
+                <>
+                  <SelectNumber value={row.goalsFor} max={9} placeholder={`P${index + 1} GF`} onChange={(value) => updateRecent(side, row.id, "goalsFor", value)} />
+                  <SelectNumber value={row.goalsAgainst} max={9} placeholder="GC" onChange={(value) => updateRecent(side, row.id, "goalsAgainst", value)} />
+                </>
+              ) : null}
+              {focusEnabled(marketFocus, "corners") ? (
+                <>
+                  <SelectNumber value={row.cornersFor} max={20} placeholder="CF" onChange={(value) => updateRecent(side, row.id, "cornersFor", value)} />
+                  <SelectNumber value={row.cornersAgainst} max={20} placeholder="CC" onChange={(value) => updateRecent(side, row.id, "cornersAgainst", value)} />
+                </>
+              ) : null}
+              {focusEnabled(marketFocus, "cards") ? (
+                <>
+                  <SelectNumber value={row.cardsFor} max={10} placeholder="TF" onChange={(value) => updateRecent(side, row.id, "cardsFor", value)} />
+                  <SelectNumber value={row.cardsAgainst} max={10} placeholder="TC" onChange={(value) => updateRecent(side, row.id, "cardsAgainst", value)} />
+                </>
+              ) : null}
+              {focusNeedsResult(marketFocus) ? (
+                <div className="flex items-center justify-center rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 font-black text-white">
+                  {result || "—"}
+                </div>
+              ) : null}
             </div>
           );
         })}
       </div>
       <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-3">
-        <span className="rounded-xl bg-white/5 px-3 py-2">GF/GC = goles a favor/en contra</span>
-        <span className="rounded-xl bg-white/5 px-3 py-2">CF/CC = corners a favor/en contra</span>
-        <span className="rounded-xl bg-white/5 px-3 py-2">TF/TC = tarjetas propias/rival</span>
+        {focusNeedsResult(marketFocus) ? <span className="rounded-xl bg-white/5 px-3 py-2">GF/GC = goles a favor/en contra</span> : null}
+        {focusEnabled(marketFocus, "corners") ? <span className="rounded-xl bg-white/5 px-3 py-2">CF/CC = corners a favor/en contra</span> : null}
+        {focusEnabled(marketFocus, "cards") ? <span className="rounded-xl bg-white/5 px-3 py-2">TF/TC = tarjetas propias/rival</span> : null}
       </div>
     
       {(() => {
@@ -2641,9 +2762,9 @@ setIndicators(importedIndicators);
               <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-slate-100">{rb.wins}G · {rb.draws}E · {rb.losses}P</span>
             </div>
             <div className="grid gap-2 text-xs sm:grid-cols-3">
-              <div className="rounded-xl bg-slate-950/45 p-3"><p className="text-slate-400">Goles prom.</p><b>{stats.goalsForAvg.toFixed(1)} GF / {stats.goalsAgainstAvg.toFixed(1)} GC</b></div>
-              <div className="rounded-xl bg-slate-950/45 p-3"><p className="text-slate-400">Corners prom.</p><b>{stats.cornersForAvg.toFixed(1)} CF / {stats.cornersAgainstAvg.toFixed(1)} CC</b></div>
-              <div className="rounded-xl bg-slate-950/45 p-3"><p className="text-slate-400">Tarjetas prom.</p><b>{stats.cardsForAvg.toFixed(1)} TF / {stats.cardsAgainstAvg.toFixed(1)} TC</b></div>
+              {focusNeedsResult(marketFocus) ? <div className="rounded-xl bg-slate-950/45 p-3"><p className="text-slate-400">Goles prom.</p><b>{stats.goalsForAvg.toFixed(1)} GF / {stats.goalsAgainstAvg.toFixed(1)} GC</b></div> : null}
+              {focusEnabled(marketFocus, "corners") ? <div className="rounded-xl bg-slate-950/45 p-3"><p className="text-slate-400">Corners prom.</p><b>{stats.cornersForAvg.toFixed(1)} CF / {stats.cornersAgainstAvg.toFixed(1)} CC</b></div> : null}
+              {focusEnabled(marketFocus, "cards") ? <div className="rounded-xl bg-slate-950/45 p-3"><p className="text-slate-400">Tarjetas prom.</p><b>{stats.cardsForAvg.toFixed(1)} TF / {stats.cardsAgainstAvg.toFixed(1)} TC</b></div> : null}
             </div>
           </div>
         ) : null;
@@ -3020,6 +3141,47 @@ setIndicators(importedIndicators);
           </div>
         </section>
 
+
+        <section className="mb-5 rounded-3xl border border-cyan-300/25 bg-gradient-to-br from-cyan-400/10 via-slate-900/55 to-emerald-500/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200/80">Modo enfoque global</p>
+              <h2 className="text-2xl font-black">🎯 Mercados a analizar</h2>
+              <p className="text-xs text-slate-300">Marca solo lo que la casa permite o lo que quieres jugar. La app oculta el resto para que no llenes datos innecesarios.</p>
+            </div>
+            <label className="rounded-2xl border border-white/10 bg-slate-950/45 p-3 text-xs font-bold text-slate-300">
+              Partidos por equipo
+              <select className={`${selectClass} mt-2`} value={marketFocus.recentCount} onChange={(event) => updateRecentCount(event.target.value)}>
+                {RECENT_MATCH_COUNT_OPTIONS.map((option) => <option key={option} value={option}>{option} registros</option>)}
+              </select>
+            </label>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+            {FOCUS_OPTIONS.map((option) => {
+              const checked = Boolean(marketFocus[option.key]);
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => updateMarketFocus(option.key, !checked)}
+                  className={`rounded-2xl border px-4 py-3 text-left shadow-lg transition ${checked ? "border-emerald-300/40 bg-emerald-400/15 text-white" : "border-white/10 bg-slate-950/45 text-slate-300 opacity-80"}`}
+                >
+                  <div className="flex items-center gap-2 text-sm font-black">
+                    <span>{checked ? "☑" : "☐"}</span>
+                    <span>{option.label}</span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-300">{option.help}</p>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-cyan-300/20 bg-slate-950/45 p-3 text-xs text-cyan-50">
+            🧠 Enfoque activo: {marketFocus.all ? "Todos los mercados" : [marketFocus.winner && "Ganador", marketFocus.doubleChance && "Doble oportunidad", marketFocus.goals && "Goles", marketFocus.corners && "Corners", marketFocus.cards && "Tarjetas"].filter(Boolean).join(" · ") || "Sin mercados seleccionados"}.
+          </div>
+        </section>
+
     <section className="mb-5 rounded-3xl border border-amber-300/25 bg-gradient-to-br from-amber-400/10 via-slate-900/45 to-violet-500/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -3118,6 +3280,7 @@ setIndicators(importedIndicators);
           ) : null}
         </section>
 
+    {focusEnabled(marketFocus, "cards") ? (
     <section className="mb-5 rounded-3xl border border-rose-300/25 bg-gradient-to-br from-rose-400/10 via-slate-900/45 to-orange-500/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -3157,6 +3320,7 @@ setIndicators(importedIndicators);
             </div>
           ) : null}
         </section>
+    ) : null}
 
     <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="mb-4">
@@ -3292,24 +3456,30 @@ setIndicators(importedIndicators);
           </div>
 
           <div className="grid gap-3 lg:grid-cols-3">
+            {focusEnabled(marketFocus, "goals") || focusEnabled(marketFocus, "winner") || focusEnabled(marketFocus, "doubleChance") ? (
             <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
               <p className="text-xs text-slate-400">Goles esperados</p>
               <h3 className="mt-1 text-xl font-black">{dominanceAnalysis.values.localGoals.toFixed(1)} - {dominanceAnalysis.values.visitGoals.toFixed(1)}</h3>
               <p className="mt-1 text-sm text-slate-300">{match.local || "Local"} vs {match.visitante || "Visitante"}</p>
               <p className="mt-2 rounded-xl bg-white/10 p-2 text-xs">{dominanceAnalysis.dependencies.goals.label}</p>
             </div>
+            ) : null}
+            {focusEnabled(marketFocus, "corners") ? (
             <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
               <p className="text-xs text-slate-400">Corners esperados</p>
               <h3 className="mt-1 text-xl font-black">{dominanceAnalysis.values.localCorners.toFixed(1)} - {dominanceAnalysis.values.visitCorners.toFixed(1)}</h3>
               <p className="mt-1 text-sm text-slate-300">Total: {dominanceAnalysis.values.totalCorners.toFixed(1)}</p>
               <p className="mt-2 rounded-xl bg-white/10 p-2 text-xs">{dominanceAnalysis.dependencies.corners.label}</p>
             </div>
+            ) : null}
+            {focusEnabled(marketFocus, "cards") ? (
             <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
               <p className="text-xs text-slate-400">Tarjetas esperadas</p>
               <h3 className="mt-1 text-xl font-black">{dominanceAnalysis.values.localCards.toFixed(1)} - {dominanceAnalysis.values.visitCards.toFixed(1)}</h3>
               <p className="mt-1 text-sm text-slate-300">Ajustado por árbitro</p>
               <p className="mt-2 rounded-xl bg-white/10 p-2 text-xs">{dominanceAnalysis.dependencies.cards.label}</p>
             </div>
+            ) : null}
           </div>
 
           {dominanceAnalysis.dominators.length > 0 ? (
@@ -3325,9 +3495,9 @@ setIndicators(importedIndicators);
               <p className="text-xs text-slate-300">Goles, corners y tarjetas se llenan aquí y alimentan también Picks clasificados, Anti-Casa, Resumen 90’ y Modo PRO.</p>
             </div>
             <div className="grid gap-4 lg:grid-cols-3">
-              {renderHouseMarket("⚽ Goles", "goalsOverLine", "goalsOverOdd", "goalsUnderLine", "goalsUnderOdd", GOAL_LINES, [...GOAL_LINES].reverse())}
-              {renderHouseMarket("🚩 Corners", "cornersOverLine", "cornersOverOdd", "cornersUnderLine", "cornersUnderOdd", CORNER_OVER_LINES, CORNER_UNDER_LINES)}
-              {renderHouseMarket("🟨 Tarjetas", "cardsOverLine", "cardsOverOdd", "cardsUnderLine", "cardsUnderOdd", CARD_LINES, [...CARD_LINES].reverse())}
+              {focusEnabled(marketFocus, "goals") ? renderHouseMarket("⚽ Goles", "goalsOverLine", "goalsOverOdd", "goalsUnderLine", "goalsUnderOdd", GOAL_LINES, [...GOAL_LINES].reverse()) : null}
+              {focusEnabled(marketFocus, "corners") ? renderHouseMarket("🚩 Corners", "cornersOverLine", "cornersOverOdd", "cornersUnderLine", "cornersUnderOdd", CORNER_OVER_LINES, CORNER_UNDER_LINES) : null}
+              {focusEnabled(marketFocus, "cards") ? renderHouseMarket("🟨 Tarjetas", "cardsOverLine", "cardsOverOdd", "cardsUnderLine", "cardsUnderOdd", CARD_LINES, [...CARD_LINES].reverse()) : null}
             </div>
           </div>
 
@@ -3337,12 +3507,12 @@ setIndicators(importedIndicators);
               <p className="text-xs text-slate-300">Úsalas cuando la casa ofrezca corners/goles/tarjetas por equipo. Sirven para detectar si el total depende de un solo lado.</p>
             </div>
             <div className="grid gap-4 lg:grid-cols-3">
-              {renderDominancePair(`⚽ ${match.local || "Local"} goles`, "localGoalsOverLine", "localGoalsOverOdd", "localGoalsUnderLine", "localGoalsUnderOdd", TEAM_GOAL_LINES, [...TEAM_GOAL_LINES].reverse())}
-              {renderDominancePair(`⚽ ${match.visitante || "Visitante"} goles`, "visitGoalsOverLine", "visitGoalsOverOdd", "visitGoalsUnderLine", "visitGoalsUnderOdd", TEAM_GOAL_LINES, [...TEAM_GOAL_LINES].reverse())}
-              {renderDominancePair(`🚩 ${match.local || "Local"} corners`, "localCornersOverLine", "localCornersOverOdd", "localCornersUnderLine", "localCornersUnderOdd", TEAM_CORNER_LINES, [...TEAM_CORNER_LINES].reverse())}
-              {renderDominancePair(`🚩 ${match.visitante || "Visitante"} corners`, "visitCornersOverLine", "visitCornersOverOdd", "visitCornersUnderLine", "visitCornersUnderOdd", TEAM_CORNER_LINES, [...TEAM_CORNER_LINES].reverse())}
-              {renderDominancePair(`🟨 ${match.local || "Local"} tarjetas`, "localCardsOverLine", "localCardsOverOdd", "localCardsUnderLine", "localCardsUnderOdd", TEAM_CARD_LINES, [...TEAM_CARD_LINES].reverse())}
-              {renderDominancePair(`🟨 ${match.visitante || "Visitante"} tarjetas`, "visitCardsOverLine", "visitCardsOverOdd", "visitCardsUnderLine", "visitCardsUnderOdd", TEAM_CARD_LINES, [...TEAM_CARD_LINES].reverse())}
+              {focusEnabled(marketFocus, "goals") ? renderDominancePair(`⚽ ${match.local || "Local"} goles`, "localGoalsOverLine", "localGoalsOverOdd", "localGoalsUnderLine", "localGoalsUnderOdd", TEAM_GOAL_LINES, [...TEAM_GOAL_LINES].reverse()) : null}
+              {focusEnabled(marketFocus, "goals") ? renderDominancePair(`⚽ ${match.visitante || "Visitante"} goles`, "visitGoalsOverLine", "visitGoalsOverOdd", "visitGoalsUnderLine", "visitGoalsUnderOdd", TEAM_GOAL_LINES, [...TEAM_GOAL_LINES].reverse()) : null}
+              {focusEnabled(marketFocus, "corners") ? renderDominancePair(`🚩 ${match.local || "Local"} corners`, "localCornersOverLine", "localCornersOverOdd", "localCornersUnderLine", "localCornersUnderOdd", TEAM_CORNER_LINES, [...TEAM_CORNER_LINES].reverse()) : null}
+              {focusEnabled(marketFocus, "corners") ? renderDominancePair(`🚩 ${match.visitante || "Visitante"} corners`, "visitCornersOverLine", "visitCornersOverOdd", "visitCornersUnderLine", "visitCornersUnderOdd", TEAM_CORNER_LINES, [...TEAM_CORNER_LINES].reverse()) : null}
+              {focusEnabled(marketFocus, "cards") ? renderDominancePair(`🟨 ${match.local || "Local"} tarjetas`, "localCardsOverLine", "localCardsOverOdd", "localCardsUnderLine", "localCardsUnderOdd", TEAM_CARD_LINES, [...TEAM_CARD_LINES].reverse()) : null}
+              {focusEnabled(marketFocus, "cards") ? renderDominancePair(`🟨 ${match.visitante || "Visitante"} tarjetas`, "visitCardsOverLine", "visitCardsOverOdd", "visitCardsUnderLine", "visitCardsUnderOdd", TEAM_CARD_LINES, [...TEAM_CARD_LINES].reverse()) : null}
             </div>
           </div>
 
@@ -3352,14 +3522,14 @@ setIndicators(importedIndicators);
               <p className="text-xs text-slate-300">Estas cuotas siguen alimentando doble oportunidad, handicap y protección del Modo PRO.</p>
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
-              {renderResultHouseMarket()}
-              {renderHandicapHouseMarket()}
+              {focusEnabled(marketFocus, "doubleChance") || focusEnabled(marketFocus, "winner") ? renderResultHouseMarket() : null}
+              {focusEnabled(marketFocus, "doubleChance") ? renderHandicapHouseMarket() : null}
             </div>
           </div>
 
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            {dominanceAnalysis.picks.length === 0 ? <p className="text-sm text-slate-300">Carga registros y líneas para generar picks por dominancia.</p> : null}
-            {dominanceAnalysis.picks.map((pick) => (
+            {focusedDominancePicks.length === 0 ? <p className="text-sm text-slate-300">Carga registros y líneas del enfoque seleccionado para generar picks por dominancia.</p> : null}
+            {focusedDominancePicks.map((pick) => (
               <article key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -3381,7 +3551,7 @@ setIndicators(importedIndicators);
         <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <h2 className="mb-4 text-2xl font-bold">🏦 Lectura de casa + registros</h2>
           <div className="grid gap-3 lg:grid-cols-2">
-            {housePicks.map((pick) => (
+            {housePicks.filter((pick) => isMarketAllowedByFocus(pick.marketValue, marketFocus)).map((pick) => (
               <article key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 shadow-lg">
                 <div className="flex items-start justify-between gap-3">
                   <div><h3 className="font-black">{pick.label}</h3><p className="text-sm text-slate-300">Modelo: {formatScore(pick.modelScore)} · Prob. casa: {pick.implied ? formatScore(pick.implied) : "—"}</p></div>
