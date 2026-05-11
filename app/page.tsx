@@ -245,9 +245,42 @@ type ExportShape = {
   marketFocus?: MarketFocusState;
 };
 
+// ── MEJORA: Resultado real del partido para calibración ──────────────────────
+type MatchOutcome = {
+  id: string;
+  date: string;
+  matchName: string;
+  predictedPicks: { label: string; marketValue: string; line: string; score: number; grade: Grade }[];
+  actualGoals: string;        // "2-1" por ejemplo
+  actualCorners: string;      // total real
+  actualCards: string;        // total real
+  winner: "local" | "visitante" | "empate" | "";
+  notes: string;
+};
+
+type CalibrationState = {
+  outcomes: MatchOutcome[];
+};
+
 const STORAGE_KEY = "analizador_pro_h2h_casa_v4";
 const BANKROLL_STORAGE_KEY = "bankroll_tracker_h2h_v1";
 const DAILY_PICKS_STORAGE_KEY = "apuestas_del_dia_h2h_v1";
+const CALIBRATION_STORAGE_KEY = "calibracion_picks_v1";
+const ANALYSIS_HISTORY_KEY = "historial_analisis_v1";
+
+// ── Historial de análisis guardados ─────────────────────────────────────────
+type SavedAnalysis = {
+  id: string;
+  savedAt: string;
+  matchName: string;
+  profile: string;
+  topPicks: { label: string; score: number; grade: Grade }[];
+  snapshot: Partial<ExportShape>;
+};
+
+type AnalysisHistory = {
+  items: SavedAnalysis[];
+};
 
 const MARKET_OPTIONS = [
   // Rachas rápidas: no piden línea ni cuota. Solo registro X/Total.
@@ -377,6 +410,15 @@ function emptyRecentRow(): RecentRow {
 
 function createRecentRows() {
   return Array.from({ length: 3 }, () => emptyRecentRow());
+}
+
+function emptyMatch(): Match {
+  return {
+    local: "", visitante: "", oddLocal: "", oddDraw: "", oddVisit: "",
+    localColor1: "#38bdf8", localColor2: "#ffffff",
+    visitColor1: "#ef4444", visitColor2: "#111827",
+    backgroundMode: "team", backgroundImage: "",
+  };
 }
 
 function emptyHouseMarkets(): HouseMarket {
@@ -623,6 +665,253 @@ function getRefereeCardAdjustment(referee: RefereeContext) {
   };
 }
 
+// ── MEJORA 1: Criterio de Kelly ──────────────────────────────────────────────
+// Calcula el % óptimo del bankroll a apostar según probabilidad real y cuota.
+// fractional = 0.5 → Kelly fraccionado (más conservador, recomendado).
+function kellyStake(probPct: number, odd: number, bankroll: number, fractional = 0.5): {
+  kellyFraction: number;
+  recommendedStake: number;
+  tier: "fuerte" | "moderado" | "minimo" | "no_apostar";
+  label: string;
+} {
+  if (!odd || odd <= 1 || probPct <= 0 || bankroll <= 0) {
+    return { kellyFraction: 0, recommendedStake: 0, tier: "no_apostar", label: "Sin datos" };
+  }
+  const p = probPct / 100;
+  const b = odd - 1;
+  const q = 1 - p;
+  const rawKelly = (b * p - q) / b;
+  const fraction = Math.max(0, rawKelly) * fractional;
+  const recommendedStake = fraction * bankroll;
+  const fmt = (n: number) => Number.isFinite(n) ? n.toFixed(2) : "0.00";
+
+  let tier: "fuerte" | "moderado" | "minimo" | "no_apostar" = "no_apostar";
+  let label = "❌ No apostar (sin value)";
+  if (fraction >= 0.08) { tier = "fuerte"; label = `🔥 Stake fuerte: ${fmt(recommendedStake)} (${(fraction * 100).toFixed(1)}% bank)`; }
+  else if (fraction >= 0.04) { tier = "moderado"; label = `🟡 Stake moderado: ${fmt(recommendedStake)} (${(fraction * 100).toFixed(1)}% bank)`; }
+  else if (fraction > 0) { tier = "minimo"; label = `🟢 Stake mínimo: ${fmt(recommendedStake)} (${(fraction * 100).toFixed(1)}% bank)`; }
+
+  return { kellyFraction: fraction, recommendedStake, tier, label };
+}
+
+// ── MEJORA 2: Peso por recencia ──────────────────────────────────────────────
+// Los últimos partidos pesan más. Índice 0 = más reciente.
+function buildRecentStatsWeighted(rows: RecentRow[]) {
+  const valid = countValidRows(rows);
+  if (!valid.length) return buildRecentStats(rows);
+
+  const weights = valid.map((_, i) => Math.pow(0.75, i)); // 1, 0.75, 0.56, 0.42...
+  const totalW = weights.reduce((a, b) => a + b, 0);
+
+  const wAvg = (values: number[]) => {
+    const filtered = values.map((v, i) => ({ v, w: weights[i] ?? 0 })).filter((x) => x.v >= 0);
+    const total = filtered.reduce((s, x) => s + x.w, 0);
+    if (!total) return 0;
+    return filtered.reduce((s, x) => s + x.v * x.w, 0) / total;
+  };
+
+  const goalsFor = valid.map((r) => toNumber(r.goalsFor));
+  const goalsAgainst = valid.map((r) => toNumber(r.goalsAgainst));
+  const cornersFor = valid.map((r) => toNumber(r.cornersFor));
+  const cornersAgainst = valid.map((r) => toNumber(r.cornersAgainst));
+  const cardsFor = valid.map((r) => toNumber(r.cardsFor));
+  const cardsAgainst = valid.map((r) => toNumber(r.cardsAgainst));
+
+  const btts = valid.filter((r) => toNumber(r.goalsFor) > 0 && toNumber(r.goalsAgainst) > 0).length;
+  const noClean = valid.filter((r) => toNumber(r.goalsAgainst) > 0).length;
+  const noLose = valid.filter((r) => { const res = getAutoResult(r); return res === "G" || res === "E"; }).length;
+  const noWin = valid.filter((r) => { const res = getAutoResult(r); return res === "E" || res === "P"; }).length;
+  const wins = valid.filter((r) => getAutoResult(r) === "G").length;
+  const draws = valid.filter((r) => getAutoResult(r) === "E").length;
+
+  return {
+    count: valid.length,
+    goalsForAvg: wAvg(goalsFor),
+    goalsAgainstAvg: wAvg(goalsAgainst),
+    totalGoalsAvg: wAvg(valid.map((r) => toNumber(r.goalsFor) + toNumber(r.goalsAgainst))),
+    cornersForAvg: wAvg(cornersFor),
+    cornersAgainstAvg: wAvg(cornersAgainst),
+    totalCornersAvg: wAvg(valid.map((r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst))),
+    cardsForAvg: wAvg(cardsFor),
+    cardsAgainstAvg: wAvg(cardsAgainst),
+    totalCardsAvg: wAvg(valid.map((r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst))),
+    bttsPct: valid.length ? (btts / valid.length) * 100 : 0,
+    noCleanPct: valid.length ? (noClean / valid.length) * 100 : 0,
+    noLosePct: valid.length ? (noLose / valid.length) * 100 : 0,
+    noWinPct: valid.length ? (noWin / valid.length) * 100 : 0,
+    winPct: valid.length ? (wins / valid.length) * 100 : 0,
+    drawPct: valid.length ? (draws / valid.length) * 100 : 0,
+    _totalW: totalW,
+  };
+}
+
+// ── MEJORA 3: Value Bet Estricto ─────────────────────────────────────────────
+// Devuelve detalle de si un pick tiene value real según Kelly y margen de casa.
+function strictValueBetAnalysis(modelScore: number, odd: number, bankrollAmount: number): {
+  hasValue: boolean;
+  edge: number;
+  kellyResult: ReturnType<typeof kellyStake>;
+  verdict: string;
+  verdictColor: "green" | "yellow" | "red";
+} {
+  const implied = impliedProb(odd);
+  const edge = modelScore - implied;
+  const kellyResult = kellyStake(modelScore, odd, bankrollAmount);
+
+  let verdict = "";
+  let verdictColor: "green" | "yellow" | "red" = "red";
+
+  if (odd <= 1 || implied === 0) {
+    return { hasValue: false, edge: 0, kellyResult, verdict: "Sin cuota para analizar", verdictColor: "red" };
+  }
+
+  if (edge >= 10 && kellyResult.tier !== "no_apostar") {
+    verdict = `✅ Value real: +${edge.toFixed(1)}% de ventaja sobre la casa`;
+    verdictColor = "green";
+  } else if (edge >= 4) {
+    verdict = `🟡 Value marginal: +${edge.toFixed(1)}%. Jugar solo si hay alta confianza`;
+    verdictColor = "yellow";
+  } else if (edge >= 0) {
+    verdict = `⚠️ Value casi nulo: +${edge.toFixed(1)}%. No es suficiente para apostar`;
+    verdictColor = "red";
+  } else {
+    verdict = `❌ Sin value: la casa te lleva ${Math.abs(edge).toFixed(1)}% de ventaja`;
+    verdictColor = "red";
+  }
+
+  return { hasValue: edge >= 5, edge, kellyResult, verdict, verdictColor };
+}
+
+// ── MEJORA 4: Alerta de valor en parlay ──────────────────────────────────────
+function parlayValueAlert(picks: Array<{ score: number; odd: number; label: string }>): {
+  combinedOdds: number;
+  realProb: number;
+  impliedProbCasa: number;
+  edge: number;
+  hasValue: boolean;
+  message: string;
+  color: "green" | "yellow" | "red";
+} {
+  const valid = picks.filter((p) => p.odd > 1 && p.score > 0);
+  if (!valid.length) return { combinedOdds: 0, realProb: 0, impliedProbCasa: 0, edge: 0, hasValue: false, message: "Sin picks para analizar", color: "red" };
+
+  const totalOdds = valid.reduce((acc, p) => acc * p.odd, 1);
+  // Probabilidad real combinada (independencia asumida)
+  const realProb = valid.reduce((acc, p) => acc * (p.score / 100), 1) * 100;
+  const impliedProbCasa = impliedProb(totalOdds);
+  const edge = realProb - impliedProbCasa;
+
+  let message = "";
+  let color: "green" | "yellow" | "red" = "red";
+  let hasValue = false;
+
+  if (edge >= 8) {
+    message = `✅ Parlay con value real: probabilidad real ${realProb.toFixed(1)}% vs casa ${impliedProbCasa.toFixed(1)}%. Ventaja: +${edge.toFixed(1)}%`;
+    color = "green";
+    hasValue = true;
+  } else if (edge >= 3) {
+    message = `🟡 Parlay marginal: real ${realProb.toFixed(1)}% vs casa ${impliedProbCasa.toFixed(1)}%. Ventaja mínima de +${edge.toFixed(1)}%. Controla el stake.`;
+    color = "yellow";
+    hasValue = true;
+  } else if (edge >= 0) {
+    message = `⚠️ Parlay sin value suficiente: real ${realProb.toFixed(1)}% vs casa ${impliedProbCasa.toFixed(1)}%. Solo ${edge.toFixed(1)}% de ventaja.`;
+    color = "red";
+  } else {
+    message = `❌ Parlay con value NEGATIVO: la casa gana ${Math.abs(edge).toFixed(1)}% de ventaja. No combinar estos picks.`;
+    color = "red";
+  }
+
+  return { combinedOdds: totalOdds, realProb, impliedProbCasa, edge, hasValue, message, color };
+}
+
+// ── MEJORA 5: Calibración por historial ──────────────────────────────────────
+function emptyOutcomeDraft(): Omit<MatchOutcome, "id"> {
+  return {
+    date: new Date().toISOString().slice(0, 10),
+    matchName: "",
+    predictedPicks: [],
+    actualGoals: "",
+    actualCorners: "",
+    actualCards: "",
+    winner: "",
+    notes: "",
+  };
+}
+
+function buildCalibrationStats(outcomes: MatchOutcome[]) {
+  if (!outcomes.length) return { total: 0, accuracy: 0, byGrade: {} as Record<string, { total: number; correct: number }> };
+  // Contar picks predichos vs resultado real (simplificado: si el pick de ganador/goles coincide)
+  let totalPicks = 0;
+  let correctPicks = 0;
+  const byGrade: Record<string, { total: number; correct: number }> = { safe: { total: 0, correct: 0 }, reasonable: { total: 0, correct: 0 }, risky: { total: 0, correct: 0 } };
+
+  outcomes.forEach((outcome) => {
+    outcome.predictedPicks.forEach((pick) => {
+      totalPicks++;
+      byGrade[pick.grade] = byGrade[pick.grade] || { total: 0, correct: 0 };
+      byGrade[pick.grade].total++;
+
+      // Verificación simple basada en mercado
+      let correct = false;
+      if (pick.marketValue === "ganador" || pick.marketValue === "victorias") {
+        if ((pick.label.toLowerCase().includes(outcome.winner === "local" ? "local" : outcome.winner === "visitante" ? "visitante" : "empate"))) correct = true;
+      } else if (pick.marketValue === "over_2_5") {
+        const goals = outcome.actualGoals.split("-").reduce((a, b) => a + toNumber(b), 0);
+        if (goals > 2.5) correct = true;
+      } else if (pick.marketValue === "under_2_5") {
+        const goals = outcome.actualGoals.split("-").reduce((a, b) => a + toNumber(b), 0);
+        if (goals < 2.5) correct = true;
+      } else if (pick.marketValue.includes("corners") && pick.marketValue.includes("over")) {
+        if (toNumber(outcome.actualCorners) > toNumber(pick.line)) correct = true;
+      } else if (pick.marketValue.includes("corners") && pick.marketValue.includes("under")) {
+        if (toNumber(outcome.actualCorners) < toNumber(pick.line)) correct = true;
+      }
+
+      if (correct) { correctPicks++; byGrade[pick.grade].correct++; }
+    });
+  });
+
+  return { total: outcomes.length, accuracy: totalPicks > 0 ? (correctPicks / totalPicks) * 100 : 0, byGrade };
+}
+
+// ── Alerta de racha negativa ────────────────────────────────────────────────
+function detectLosingStreak(bets: BankBet[]): { streak: number; alert: boolean; message: string } {
+  const settled = [...bets].filter((b) => b.status === "won" || b.status === "lost");
+  if (!settled.length) return { streak: 0, alert: false, message: "" };
+  let streak = 0;
+  for (let i = 0; i < settled.length; i++) {
+    if (settled[i].status === "lost") streak++;
+    else break;
+  }
+  const alert = streak >= 3;
+  const message = streak >= 5
+    ? `🚨 Llevas ${streak} pérdidas consecutivas. Para ya, revisa tu estrategia antes de seguir.`
+    : streak >= 3
+    ? `⚠️ Llevas ${streak} pérdidas seguidas. Considera pausar y analizar qué está fallando.`
+    : "";
+  return { streak, alert, message };
+}
+
+// ── Límite de pérdida diaria ─────────────────────────────────────────────────
+function getDailyLossInfo(bets: BankBet[], initialBank: number, limitPct: number): {
+  todayLoss: number;
+  limitAmount: number;
+  exceeded: boolean;
+  message: string;
+} {
+  const today = new Date().toISOString().slice(0, 10);
+  const todaySettled = bets.filter((b) => b.date === today && (b.status === "won" || b.status === "lost"));
+  const todayLoss = Math.abs(Math.min(0, todaySettled.reduce((sum, b) => sum + betProfit(b), 0)));
+  const limitAmount = initialBank > 0 ? (initialBank * limitPct) / 100 : 0;
+  const exceeded = limitAmount > 0 && todayLoss >= limitAmount;
+  const message = exceeded
+    ? `🚨 Límite diario alcanzado: perdiste ${formatMoney(todayLoss)} hoy (límite: ${formatMoney(limitAmount)}). No sigas apostando.`
+    : limitAmount > 0 && todayLoss >= limitAmount * 0.7
+    ? `⚠️ Cerca del límite diario: ${formatMoney(todayLoss)} de ${formatMoney(limitAmount)} perdidos hoy.`
+    : "";
+  return { todayLoss, limitAmount, exceeded, message };
+}
+
 function getSideName(side: EliminationSide, match: Match) {
   if (side === "local") return match.local || "Local";
   if (side === "visitante") return match.visitante || "Visitante";
@@ -783,7 +1072,7 @@ function buildBankrollStats(bankroll: BankrollState) {
   const profit = bankroll.bets.reduce((sum, bet) => sum + betProfit(bet), 0);
   const roi = totalStake > 0 ? (profit / totalStake) * 100 : 0;
   const winrate = decided.length > 0 ? (wins / decided.length) * 100 : 0;
-  const currentBank = initialBank + profit;
+  const currentBank = initialBank + profit - pendingStake;
 
   const sourceStats = (["app", "manual"] as BetSource[]).map((source) => {
     const sourceBets = bankroll.bets.filter((bet) => bet.source === source && (bet.status === "won" || bet.status === "lost"));
@@ -1014,8 +1303,9 @@ function recordStrength(count: number) {
 }
 
 function buildProjection(localRows: RecentRow[], visitRows: RecentRow[]) {
-  const local = buildRecentStats(localRows);
-  const visit = buildRecentStats(visitRows);
+  // MEJORA 2: Usar estadísticas ponderadas por recencia
+  const local = buildRecentStatsWeighted(localRows);
+  const visit = buildRecentStatsWeighted(visitRows);
 
   const localCornersExpected = average([local.cornersForAvg, visit.cornersAgainstAvg].filter((n) => n > 0));
   const visitCornersExpected = average([visit.cornersForAvg, local.cornersAgainstAvg].filter((n) => n > 0));
@@ -1429,6 +1719,15 @@ export default function Page() {
   const [bankBetDraft, setBankBetDraft] = useState<Omit<BankBet, "id">>(emptyBankBet());
   const [dailyPicks, setDailyPicks] = useState<DailyPick[]>([]);
   const [dailyPlanGenerated, setDailyPlanGenerated] = useState(false);
+  // MEJORAS: estados nuevos
+  const [calibration, setCalibration] = useState<CalibrationState>({ outcomes: [] });
+  const [showCalibration, setShowCalibration] = useState(false);
+  const [outcomeDraft, setOutcomeDraft] = useState<Omit<MatchOutcome, "id">>(emptyOutcomeDraft());
+  const [showKellyPanel, setShowKellyPanel] = useState(false);
+  // ── NUEVOS ESTADOS ───────────────────────────────────────────────────────
+  const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistory>({ items: [] });
+  const [showHistory, setShowHistory] = useState(false);
+  const [dailyLossLimitPct, setDailyLossLimitPct] = useState("10");
 
   const bankrollStats = useMemo(() => buildBankrollStats(bankroll), [bankroll]);
   const dailyPlan = useMemo(() => buildDailyPlan(dailyPicks), [dailyPicks]);
@@ -2559,6 +2858,132 @@ export default function Page() {
     setMarketFocus(emptyMarketFocus());
   };
 
+  // ── MEJORA 5: Calibración – persistencia y helpers ───────────────────────
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(CALIBRATION_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as CalibrationState;
+      setCalibration(saved);
+    } catch { /* silencioso */ }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(calibration));
+  }, [calibration]);
+
+  const addOutcome = () => {
+    if (!outcomeDraft.matchName.trim()) { alert("Ingresa el nombre del partido."); return; }
+    const next: MatchOutcome = { ...outcomeDraft, id: makeId() };
+    setCalibration((prev) => ({ outcomes: [next, ...prev.outcomes] }));
+    setOutcomeDraft(emptyOutcomeDraft());
+  };
+
+  const deleteOutcome = (id: string) => {
+    if (!confirm("¿Eliminar este registro de resultado?")) return;
+    setCalibration((prev) => ({ outcomes: prev.outcomes.filter((o) => o.id !== id) }));
+  };
+
+  const prefillOutcomeDraft = () => {
+    const matchName = `${match.local || "Local"} vs ${match.visitante || "Visitante"}`;
+    const predictedPicks = [
+      ...results.slice(0, 3).map((p) => ({ label: p.label, marketValue: p.marketValue, line: p.line, score: p.blendedScore, grade: p.grade })),
+      ...housePicks.slice(0, 2).map((p) => ({ label: p.label, marketValue: p.marketValue, line: p.line, score: p.modelScore, grade: p.grade })),
+    ].slice(0, 5);
+    setOutcomeDraft((prev) => ({ ...prev, matchName, predictedPicks }));
+  };
+
+  const calibrationStats = useMemo(() => buildCalibrationStats(calibration.outcomes), [calibration.outcomes]);
+
+  // ── Racha negativa y límite diario ───────────────────────────────────────
+  const losingStreak = useMemo(() => detectLosingStreak(bankroll.bets), [bankroll.bets]);
+  const dailyLossInfo = useMemo(() => getDailyLossInfo(bankroll.bets, bankrollStats.initialBank, toNumber(dailyLossLimitPct)), [bankroll.bets, bankrollStats.initialBank, dailyLossLimitPct]);
+
+  // ── Vincular bankroll con calibración: cuando se marca ganada/perdida ────
+  const updateBankBetStatusWithCalibration = (id: string, status: BetStatus) => {
+    const bet = bankroll.bets.find((b) => b.id === id);
+    setBankroll((prev) => ({
+      ...prev,
+      bets: prev.bets.map((b) => (b.id === id ? { ...b, status } : b)),
+    }));
+    // Si hay un outcome pendiente en calibración que coincida con el partido, actualizar automáticamente
+    if (bet && (status === "won" || status === "lost")) {
+      setCalibration((prev) => ({
+        outcomes: prev.outcomes.map((o) => {
+          if (o.matchName.toLowerCase() === bet.matchName.toLowerCase() && o.winner === "") {
+            return {
+              ...o,
+              notes: o.notes
+                ? o.notes
+                : `Apuesta ${status === "won" ? "ganada ✅" : "perdida ❌"}: ${bet.pick} (${bet.odd}x)`,
+            };
+          }
+          return o;
+        }),
+      }));
+    }
+  };
+
+  // ── Historial de análisis: persistencia ─────────────────────────────────
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(ANALYSIS_HISTORY_KEY);
+      if (!raw) return;
+      setAnalysisHistory(JSON.parse(raw) as AnalysisHistory);
+    } catch { /* silencioso */ }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(ANALYSIS_HISTORY_KEY, JSON.stringify(analysisHistory));
+  }, [analysisHistory]);
+
+  const saveToHistory = () => {
+    if (!match.local.trim() || !match.visitante.trim()) {
+      alert("Ingresa los nombres de los equipos antes de guardar en historial.");
+      return;
+    }
+    const topPicks = [
+      ...results.slice(0, 3).map((p) => ({ label: p.label + (p.line ? ` · ${p.line}` : ""), score: p.blendedScore, grade: p.grade })),
+      ...housePicks.slice(0, 2).map((p) => ({ label: p.label, score: p.modelScore, grade: p.grade })),
+    ].slice(0, 5);
+
+    const newItem: SavedAnalysis = {
+      id: makeId(),
+      savedAt: new Date().toISOString(),
+      matchName: `${match.local} vs ${match.visitante}`,
+      profile: matchProfile.type,
+      topPicks,
+      snapshot: { match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext, marketFocus },
+    };
+    setAnalysisHistory((prev) => ({ items: [newItem, ...prev.items].slice(0, 15) }));
+    alert(`✅ Análisis de ${newItem.matchName} guardado en historial.`);
+  };
+
+  const loadFromHistory = (item: SavedAnalysis) => {
+    if (!confirm(`¿Cargar el análisis de ${item.matchName}? Esto reemplazará el partido actual.`)) return;
+    const s = item.snapshot;
+    if (s.match) setMatch({ ...emptyMatch(), ...s.match });
+    if (Array.isArray(s.indicators)) setIndicators(s.indicators);
+    if (Array.isArray(s.localRecent)) setLocalRecent(s.localRecent);
+    if (Array.isArray(s.visitRecent)) setVisitRecent(s.visitRecent);
+    if (s.houseMarkets) setHouseMarkets({ ...emptyHouseMarkets(), ...s.houseMarkets });
+    if (s.eliminationContext) setEliminationContext({ ...emptyEliminationContext(), ...s.eliminationContext });
+    if (s.refereeContext) setRefereeContext({ ...emptyRefereeContext(), ...s.refereeContext });
+    if (s.dominanceContext) setDominanceContext({ ...emptyDominanceContext(), ...s.dominanceContext });
+    if (s.marketFocus) setMarketFocus({ ...emptyMarketFocus(), ...s.marketFocus });
+    setShowHistory(false);
+    alert(`📂 Análisis de ${item.matchName} cargado.`);
+  };
+
+  const deleteFromHistory = (id: string) => {
+    if (!confirm("¿Eliminar este análisis del historial?")) return;
+    setAnalysisHistory((prev) => ({ items: prev.items.filter((item) => item.id !== id) }));
+  };
+
   const saveManual = () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext, marketFocus }));
     alert("✅ Partido guardado");
@@ -2930,8 +3355,35 @@ setIndicators(importedIndicators);
                 <button onClick={exportBankroll} className="rounded-2xl bg-emerald-400 px-4 py-3 font-black text-emerald-950">🗃️ Exportar bank</button>
                 <button onClick={() => bankrollImportRef.current?.click()} className="rounded-2xl bg-sky-400 px-4 py-3 font-black text-sky-950">📨 Importar bank</button>
                 <button onClick={resetBankroll} className="rounded-2xl bg-rose-500 px-4 py-3 font-black text-white">🧨 Reset bankroll</button>
+                <button onClick={() => setShowKellyPanel((v) => !v)} className="rounded-2xl bg-violet-400 px-4 py-3 font-black text-violet-950">🎯 Kelly</button>
                 <input ref={bankrollImportRef} type="file" accept="application/json" className="hidden" onChange={(event) => importBankroll(event.target.files?.[0] || null)} />
               </div>
+            </div>
+
+            {/* ── Alerta de racha negativa ──────────────────────────────── */}
+            {losingStreak.alert && (
+              <div className="mb-4 rounded-2xl border border-rose-400/40 bg-rose-500/15 p-4">
+                <p className="font-black text-rose-100">{losingStreak.message}</p>
+                <p className="mt-1 text-xs text-rose-200/70">Tu método sigue siendo válido — las rachas malas son parte del juego. Pausa, analiza y vuelve con calma.</p>
+              </div>
+            )}
+
+            {/* ── Alerta de límite diario ───────────────────────────────── */}
+            {dailyLossInfo.message && (
+              <div className={`mb-4 rounded-2xl border p-4 ${dailyLossInfo.exceeded ? "border-rose-400/40 bg-rose-500/15" : "border-amber-400/40 bg-amber-500/15"}`}>
+                <p className={`font-black ${dailyLossInfo.exceeded ? "text-rose-100" : "text-amber-100"}`}>{dailyLossInfo.message}</p>
+              </div>
+            )}
+
+            {/* ── Config límite diario ──────────────────────────────────── */}
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3">
+              <p className="text-xs font-bold text-slate-300">🛡️ Límite de pérdida diaria:</p>
+              <select className="rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-bold text-white outline-none" value={dailyLossLimitPct} onChange={(e) => setDailyLossLimitPct(e.target.value)}>
+                {["5","8","10","15","20","25"].map((v) => <option key={v} value={v}>{v}% del bank ({bankrollStats.initialBank > 0 ? formatMoney((bankrollStats.initialBank * Number(v)) / 100) : "—"})</option>)}
+              </select>
+              {dailyLossInfo.limitAmount > 0 && (
+                <p className="text-xs text-slate-400">Perdido hoy: <span className={dailyLossInfo.exceeded ? "font-black text-rose-300" : "text-white"}>{formatMoney(dailyLossInfo.todayLoss)}</span> / {formatMoney(dailyLossInfo.limitAmount)}</p>
+              )}
             </div>
 
             <div className="grid gap-3 lg:grid-cols-5">
@@ -3021,9 +3473,9 @@ setIndicators(importedIndicators);
                       </div>
                       <div className="flex flex-wrap items-center gap-2 lg:justify-end">
                         <span className={`rounded-xl px-3 py-2 text-sm font-black ${bet.status === "won" ? "bg-emerald-400/20 text-emerald-100" : bet.status === "lost" ? "bg-rose-400/20 text-rose-100" : bet.status === "void" ? "bg-slate-400/20 text-slate-100" : "bg-amber-400/20 text-amber-100"}`}>{bet.status === "won" ? `+${formatMoney(profit)}` : bet.status === "lost" ? formatMoney(profit) : bet.status === "void" ? "Nula" : "Pendiente"}</span>
-                        <button onClick={() => updateBankBetStatus(bet.id, "won")} className="rounded-lg bg-emerald-500/20 px-2 py-1 text-xs font-bold text-emerald-100">✅</button>
-                        <button onClick={() => updateBankBetStatus(bet.id, "lost")} className="rounded-lg bg-rose-500/20 px-2 py-1 text-xs font-bold text-rose-100">❌</button>
-                        <button onClick={() => updateBankBetStatus(bet.id, "void")} className="rounded-lg bg-slate-500/20 px-2 py-1 text-xs font-bold text-slate-100">↩️</button>
+                        <button onClick={() => updateBankBetStatusWithCalibration(bet.id, "won")} className="rounded-lg bg-emerald-500/20 px-2 py-1 text-xs font-bold text-emerald-100">✅</button>
+                        <button onClick={() => updateBankBetStatusWithCalibration(bet.id, "lost")} className="rounded-lg bg-rose-500/20 px-2 py-1 text-xs font-bold text-rose-100">❌</button>
+                        <button onClick={() => updateBankBetStatusWithCalibration(bet.id, "void")} className="rounded-lg bg-slate-500/20 px-2 py-1 text-xs font-bold text-slate-100">↩️</button>
                         <button onClick={() => deleteBankBet(bet.id)} className="rounded-lg bg-white/10 px-2 py-1 text-xs font-bold text-white">🗑️</button>
                       </div>
                     </div>
@@ -3037,6 +3489,7 @@ setIndicators(importedIndicators);
         <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="mb-4 flex flex-wrap gap-3">
             <button onClick={saveManual} className="rounded-2xl bg-emerald-500 px-4 py-3 font-bold text-emerald-950 shadow-lg shadow-emerald-500/20">💾 Guardar</button>
+            <button onClick={saveToHistory} className="rounded-2xl bg-indigo-400 px-4 py-3 font-bold text-indigo-950 shadow-lg shadow-indigo-400/20">📂 Al historial</button>
             <button onClick={clearAll} className="rounded-2xl bg-rose-500 px-4 py-3 font-bold text-white shadow-lg shadow-rose-500/20">🧹 Limpiar</button>
             <button onClick={() => importRef.current?.click()} className="rounded-2xl bg-sky-400 px-4 py-3 font-bold text-sky-950 shadow-lg shadow-sky-400/20">📨 Importar</button>
             <button onClick={exportMatch} className="rounded-2xl bg-violet-400 px-4 py-3 font-bold text-violet-950 shadow-lg shadow-violet-400/20">🗃️ Exportar</button>
@@ -4005,6 +4458,251 @@ setIndicators(importedIndicators);
               </div>
             </div>
         
+   {/* ── MEJORA 1 & 3: Panel Kelly + Value Bet Estricto ─────────────────── */}
+        {showKellyPanel && (
+          <section className="mb-5 rounded-3xl border border-violet-300/30 bg-gradient-to-br from-violet-400/15 via-slate-900/60 to-indigo-500/15 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
+            <div className="mb-4">
+              <p className="text-xs font-black uppercase tracking-[0.35em] text-violet-200/80">Criterio de Kelly + Value Bet</p>
+              <h2 className="mt-1 text-2xl font-black">🎯 Calculadora de stake óptimo</h2>
+              <p className="mt-1 text-xs text-slate-300">Kelly te dice exactamente cuánto apostar según tu bankroll. Value Bet estricto filtra cuándo la cuota realmente vale.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              {hasMinimumData && bankrollStats.currentBank > 0 ? (
+                <div className="rounded-2xl border border-violet-300/20 bg-slate-950/40 p-4">
+                  <h3 className="mb-3 font-black text-violet-100">📊 Picks actuales con Kelly</h3>
+                  <div className="space-y-3">
+                    {[...results.slice(0, 4).map((p) => ({ key: p.key, label: p.label, line: p.line, score: p.blendedScore, odd: p.avgOdd })),
+                      ...housePicks.slice(0, 2).map((p) => ({ key: p.key, label: p.label, line: p.line, score: p.modelScore, odd: p.odd }))]
+                      .filter((p) => p.score >= 65 && p.odd > 1)
+                      .slice(0, 6)
+                      .map((p) => {
+                        const va = strictValueBetAnalysis(p.score, p.odd, bankrollStats.currentBank);
+                        return (
+                          <div key={p.key} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-sm font-black">{p.label}{p.line ? ` · ${p.line}` : ""}</p>
+                                <p className="text-xs text-slate-400">Score {p.score.toFixed(1)}% · Cuota {p.odd.toFixed(2)}</p>
+                              </div>
+                              <span className={`rounded-full px-2 py-1 text-xs font-black ${va.verdictColor === "green" ? "bg-emerald-400/20 text-emerald-100" : va.verdictColor === "yellow" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>
+                                {va.edge >= 0 ? "+" : ""}{va.edge.toFixed(1)}%
+                              </span>
+                            </div>
+                            <p className={`mt-2 text-xs font-bold ${va.kellyResult.tier === "fuerte" ? "text-emerald-100" : va.kellyResult.tier === "moderado" ? "text-amber-100" : va.kellyResult.tier === "minimo" ? "text-sky-100" : "text-rose-100"}`}>{va.kellyResult.label}</p>
+                            <p className={`mt-1 text-xs ${va.verdictColor === "green" ? "text-emerald-200/80" : va.verdictColor === "yellow" ? "text-amber-200/80" : "text-rose-200/80"}`}>{va.verdict}</p>
+                          </div>
+                        );
+                      })}
+                    {![...results, ...housePicks].some((p) => ("blendedScore" in p ? p.blendedScore : p.modelScore) >= 65) && (
+                      <p className="text-sm text-slate-300">Carga picks (score ≥65%) para ver el análisis Kelly.</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 text-sm text-slate-300">
+                  {bankrollStats.currentBank <= 0 ? "Ingresa tu bank inicial en el Bankroll Tracker para activar Kelly." : "Carga datos del partido primero."}
+                </div>
+              )}
+              <div className="rounded-2xl border border-indigo-300/20 bg-slate-950/40 p-4">
+                <h3 className="mb-3 font-black text-indigo-100">🧮 Valor del parlay PRO actual</h3>
+                {(() => {
+                  const parlayPicks = [
+                    ...(proMode?.proParlay ?? []).map((p) => ({ score: p.score, odd: p.odd, label: p.label })),
+                    ...(proMode?.proParlay.length === 0 ? parlaySuggestions.conservador.map((p) => ({
+                      score: "blendedScore" in p ? p.blendedScore : ("modelScore" in p ? p.modelScore : p.score),
+                      odd: "avgOdd" in p ? p.avgOdd : p.odd,
+                      label: p.label,
+                    })) : []),
+                  ].slice(0, 3);
+                  if (!parlayPicks.length) return <p className="text-sm text-slate-300">Genera picks primero para analizar el valor del parlay.</p>;
+                  const pAlert = parlayValueAlert(parlayPicks);
+                  const bankForKelly = bankrollStats.currentBank || 0;
+                  const pKelly = bankForKelly > 0 ? kellyStake(pAlert.realProb, pAlert.combinedOdds, bankForKelly) : null;
+                  return (
+                    <div className="space-y-3">
+                      <div className={`rounded-xl border p-3 ${pAlert.color === "green" ? "border-emerald-300/30 bg-emerald-400/10" : pAlert.color === "yellow" ? "border-amber-300/30 bg-amber-400/10" : "border-rose-300/30 bg-rose-400/10"}`}>
+                        <p className={`text-xs font-bold ${pAlert.color === "green" ? "text-emerald-100" : pAlert.color === "yellow" ? "text-amber-100" : "text-rose-100"}`}>{pAlert.message}</p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-xs">
+                        <div className="rounded-xl bg-white/5 p-3"><p className="text-slate-400">Prob. real</p><b className="text-white">{pAlert.realProb.toFixed(1)}%</b></div>
+                        <div className="rounded-xl bg-white/5 p-3"><p className="text-slate-400">Prob. casa</p><b className="text-white">{pAlert.impliedProbCasa.toFixed(1)}%</b></div>
+                        <div className="rounded-xl bg-white/5 p-3"><p className="text-slate-400">Cuota total</p><b className="text-white">{pAlert.combinedOdds > 1 ? pAlert.combinedOdds.toFixed(2) : "—"}</b></div>
+                      </div>
+                      {pKelly && (
+                        <div className="rounded-xl border border-violet-300/20 bg-violet-400/10 p-3">
+                          <p className="text-xs text-violet-200">Kelly para este parlay:</p>
+                          <p className={`mt-1 text-sm font-black ${pKelly.tier === "fuerte" ? "text-emerald-100" : pKelly.tier === "moderado" ? "text-amber-100" : pKelly.tier === "minimo" ? "text-sky-100" : "text-rose-100"}`}>{pKelly.label}</p>
+                        </div>
+                      )}
+                      <div className="space-y-1">
+                        {parlayPicks.map((p, i) => (
+                          <div key={i} className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2 text-xs">
+                            <span className="text-slate-200">{p.label}</span>
+                            <span className="font-bold">{p.score.toFixed(0)}% · {p.odd > 1 ? p.odd.toFixed(2) : "—"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </section>
+        )}
+
+
+   {/* ── HISTORIAL DE ANÁLISIS ────────────────────────────────────────────── */}
+        <section className="mb-5 overflow-hidden rounded-[2rem] border border-indigo-300/20 bg-gradient-to-br from-indigo-400/10 via-slate-900/65 to-blue-500/10 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
+          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.35em] text-indigo-200/80">Memoria de partidos</p>
+                <h2 className="mt-1 text-2xl font-black">📂 Historial de análisis</h2>
+                <p className="mt-1 text-sm text-slate-300">Guarda hasta 15 análisis. Puedes cargar cualquiera sin perder el actual — compara partidos y recupera trabajo.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={saveToHistory} className="rounded-2xl bg-indigo-400 px-4 py-3 font-black text-indigo-950">💾 Guardar análisis actual</button>
+                <button onClick={() => setShowHistory((v) => !v)} className="rounded-2xl border border-indigo-300/30 bg-indigo-400/15 px-4 py-3 font-black text-indigo-100">
+                  {showHistory ? "▲ Ocultar" : `▼ Ver historial (${analysisHistory.items.length})`}
+                </button>
+              </div>
+            </div>
+
+            {showHistory && (
+              <div className="space-y-2">
+                {analysisHistory.items.length === 0 && (
+                  <p className="text-sm text-slate-300">Sin análisis guardados todavía. Carga un partido y pulsa "Guardar análisis actual".</p>
+                )}
+                {analysisHistory.items.map((item) => (
+                  <div key={item.id} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4 lg:grid-cols-[1fr_auto]">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-black text-indigo-100">{item.matchName}</p>
+                        <span className={`rounded-full px-2 py-1 text-xs font-bold ${item.profile === "abierto" ? "bg-emerald-400/20 text-emerald-100" : item.profile === "cerrado" ? "bg-sky-400/20 text-sky-100" : item.profile === "trampa" ? "bg-rose-400/20 text-rose-100" : "bg-slate-400/20 text-slate-100"}`}>
+                          {item.profile}
+                        </span>
+                        <span className="text-xs text-slate-400">{new Date(item.savedAt).toLocaleDateString("es", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {item.topPicks.map((pk, i) => (
+                          <span key={i} className={`rounded-full px-2 py-1 text-xs ${pk.grade === "safe" ? "bg-emerald-400/15 text-emerald-100" : pk.grade === "reasonable" ? "bg-amber-400/15 text-amber-100" : "bg-rose-400/15 text-rose-100"}`}>
+                            {pk.label} {pk.score.toFixed(0)}%
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <button onClick={() => loadFromHistory(item)} className="rounded-xl bg-indigo-400/20 px-3 py-2 text-xs font-black text-indigo-100 hover:bg-indigo-400/40">📂 Cargar</button>
+                      <button onClick={() => deleteFromHistory(item.id)} className="rounded-xl bg-rose-500/20 px-3 py-2 text-xs font-black text-rose-100">🗑️</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+   {/* ── MEJORA 5: Calibración de predicciones ─────────────────────────── */}
+        <section className="mb-5 overflow-hidden rounded-[2rem] border border-teal-300/20 bg-gradient-to-br from-teal-400/10 via-slate-900/65 to-cyan-500/10 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
+          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.35em] text-teal-200/80">Calibrador de picks</p>
+                <h2 className="mt-1 text-2xl font-black">📐 Resultado real vs predicción</h2>
+                <p className="mt-1 text-sm text-slate-300">Registra el resultado real de cada partido. La app aprende qué tipos de pick aciertan más para que concentres el dinero ahí.</p>
+              </div>
+              <button onClick={() => setShowCalibration((v) => !v)} className="rounded-2xl border border-teal-300/30 bg-teal-400/15 px-4 py-3 font-black text-teal-100">
+                {showCalibration ? "▲ Ocultar" : "▼ Ver calibrador"}
+              </button>
+            </div>
+            {calibration.outcomes.length > 0 && (
+              <div className="grid gap-3 sm:grid-cols-4">
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                  <p className="text-xs text-slate-400">Partidos registrados</p>
+                  <p className="mt-1 text-3xl font-black text-teal-100">{calibrationStats.total}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                  <p className="text-xs text-slate-400">Acierto global</p>
+                  <p className={`mt-1 text-3xl font-black ${calibrationStats.accuracy >= 70 ? "text-emerald-100" : calibrationStats.accuracy >= 50 ? "text-amber-100" : "text-rose-100"}`}>{calibrationStats.accuracy.toFixed(1)}%</p>
+                </div>
+                {(["safe", "reasonable", "risky"] as Grade[]).map((grade) => {
+                  const s = calibrationStats.byGrade[grade];
+                  return s ? (
+                    <div key={grade} className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                      <p className="text-xs text-slate-400">{grade === "safe" ? "🟢 Picks seguros" : grade === "reasonable" ? "🟡 Razonables" : "🔴 Riesgosos"}</p>
+                      <p className="mt-1 text-xl font-black">{s.total > 0 ? ((s.correct / s.total) * 100).toFixed(0) : "—"}%</p>
+                      <p className="text-xs text-slate-400">{s.correct}/{s.total} picks</p>
+                    </div>
+                  ) : null;
+                })}
+              </div>
+            )}
+            {showCalibration && (
+              <div className="mt-4 space-y-4">
+                <div className="rounded-2xl border border-teal-300/20 bg-slate-950/45 p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-black">➕ Registrar resultado del partido</h3>
+                    <button onClick={prefillOutcomeDraft} className="rounded-xl bg-teal-400 px-3 py-2 text-xs font-black text-teal-950">⚡ Usar picks del análisis actual</button>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <input className={inputClass} type="date" value={outcomeDraft.date} onChange={(e) => setOutcomeDraft((p) => ({ ...p, date: e.target.value }))} />
+                    <input className={inputClass} placeholder="Partido (ej: Betis vs Barça)" value={outcomeDraft.matchName} onChange={(e) => setOutcomeDraft((p) => ({ ...p, matchName: e.target.value }))} />
+                    <select className={selectClass} value={outcomeDraft.winner} onChange={(e) => setOutcomeDraft((p) => ({ ...p, winner: e.target.value as MatchOutcome["winner"] }))}>
+                      <option value="">Ganador real</option>
+                      <option value="local">Local</option>
+                      <option value="empate">Empate</option>
+                      <option value="visitante">Visitante</option>
+                    </select>
+                    <input className={inputClass} placeholder="Goles real (ej: 2-1)" value={outcomeDraft.actualGoals} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualGoals: e.target.value }))} />
+                    <input className={inputClass} placeholder="Corners total real" value={outcomeDraft.actualCorners} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualCorners: e.target.value }))} />
+                    <input className={inputClass} placeholder="Tarjetas total real" value={outcomeDraft.actualCards} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualCards: e.target.value }))} />
+                    <input className={`${inputClass} lg:col-span-2`} placeholder="Nota: qué aprendiste de este partido" value={outcomeDraft.notes} onChange={(e) => setOutcomeDraft((p) => ({ ...p, notes: e.target.value }))} />
+                  </div>
+                  {outcomeDraft.predictedPicks.length > 0 && (
+                    <div className="mt-3 rounded-xl bg-white/5 p-3">
+                      <p className="mb-2 text-xs text-slate-400">Picks a evaluar:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {outcomeDraft.predictedPicks.map((pk, i) => (
+                          <span key={i} className={`rounded-full px-3 py-1 text-xs font-bold ${pk.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pk.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>
+                            {pk.label}{pk.line ? ` · ${pk.line}` : ""} ({pk.score.toFixed(0)}%)
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <button onClick={addOutcome} className="mt-3 rounded-2xl bg-teal-400 px-4 py-3 font-black text-teal-950">💾 Guardar resultado real</button>
+                </div>
+                <div className="space-y-2">
+                  {calibration.outcomes.length === 0 && <p className="text-sm text-slate-300">Sin resultados todavía. Registra el primero después de que termine un partido analizado.</p>}
+                  {calibration.outcomes.slice(0, 10).map((outcome) => (
+                    <div key={outcome.id} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4 lg:grid-cols-[1fr_auto]">
+                      <div>
+                        <p className="text-xs text-slate-400">{outcome.date}</p>
+                        <p className="font-black">{outcome.matchName}</p>
+                        <div className="mt-1 flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full bg-white/10 px-2 py-1">{outcome.winner === "local" ? "🏠 Local" : outcome.winner === "visitante" ? "✈️ Visitante" : outcome.winner === "empate" ? "🤝 Empate" : "—"}</span>
+                          {outcome.actualGoals && <span className="rounded-full bg-white/10 px-2 py-1">⚽ {outcome.actualGoals}</span>}
+                          {outcome.actualCorners && <span className="rounded-full bg-white/10 px-2 py-1">🚩 {outcome.actualCorners} corners</span>}
+                          {outcome.actualCards && <span className="rounded-full bg-white/10 px-2 py-1">🟨 {outcome.actualCards} tarjetas</span>}
+                        </div>
+                        {outcome.notes && <p className="mt-1 text-xs text-slate-400 italic">💡 {outcome.notes}</p>}
+                        {outcome.predictedPicks.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {outcome.predictedPicks.map((pk, i) => (
+                              <span key={i} className="rounded-full bg-white/5 px-2 py-1 text-[11px] text-slate-300">{pk.label} ({pk.score.toFixed(0)}%)</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={() => deleteOutcome(outcome.id)} className="self-start rounded-xl bg-rose-500/80 px-3 py-2 text-xs font-black text-white">🗑️</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
         {match.local && match.visitante ? (
           <section
             className="mb-5 overflow-hidden rounded-3xl border border-white/10 p-1 shadow-2xl shadow-black/40 backdrop-blur-xl"
