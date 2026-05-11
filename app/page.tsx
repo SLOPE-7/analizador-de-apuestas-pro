@@ -4506,14 +4506,37 @@ setIndicators(importedIndicators);
               <div className="rounded-2xl border border-indigo-300/20 bg-slate-950/40 p-4">
                 <h3 className="mb-3 font-black text-indigo-100">🧮 Valor del parlay PRO actual</h3>
                 {(() => {
-                  const parlayPicks = [
-                    ...(proMode?.proParlay ?? []).map((p) => ({ score: p.score, odd: p.odd, label: p.label })),
-                    ...(proMode?.proParlay.length === 0 ? parlaySuggestions.conservador.map((p) => ({
-                      score: "blendedScore" in p ? p.blendedScore : ("modelScore" in p ? p.modelScore : p.score),
-                      odd: "avgOdd" in p ? p.avgOdd : p.odd,
-                      label: p.label,
-                    })) : []),
-                  ].slice(0, 3);
+              const parlayPicks: {
+  score: number;
+  odd: number;
+  label: string;
+}[] = [
+  ...(proMode?.proParlay ?? []).map((p) => ({
+    score: Number(p.score || 0),
+    odd: Number(p.odd || 0),
+    label: String(p.label || ""),
+  })),
+
+  ...((proMode?.proParlay?.length ?? 0) === 0
+    ? parlaySuggestions.conservador.map((p) => ({
+        score: Number(
+          "blendedScore" in p
+            ? p.blendedScore
+            : "modelScore" in p
+            ? p.modelScore
+            : p.score
+        ),
+
+        odd: Number(
+          "avgOdd" in p
+            ? p.avgOdd
+            : p.odd
+        ),
+
+        label: String(p.label || ""),
+      }))
+    : []),
+].slice(0, 3);
                   if (!parlayPicks.length) return <p className="text-sm text-slate-300">Genera picks primero para analizar el valor del parlay.</p>;
                   const pAlert = parlayValueAlert(parlayPicks);
                   const bankForKelly = bankrollStats.currentBank || 0;
