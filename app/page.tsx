@@ -267,6 +267,36 @@ const BANKROLL_STORAGE_KEY = "bankroll_tracker_h2h_v1";
 const DAILY_PICKS_STORAGE_KEY = "apuestas_del_dia_h2h_v1";
 const CALIBRATION_STORAGE_KEY = "calibracion_picks_v1";
 const ANALYSIS_HISTORY_KEY = "historial_analisis_v1";
+const TEAM_MEMORY_KEY = "memoria_equipos_v1";
+
+// ── 1. MEMORIA DE EQUIPOS ────────────────────────────────────────────────────
+type TeamCondition = "local" | "visitante";
+type TeamMemoryEntry = {
+  id: string;
+  name: string;
+  condition: TeamCondition;
+  updatedAt: string;
+  rows: RecentRow[];
+  quickText: string; // texto rápido usado para llenar
+};
+type TeamMemoryState = { entries: TeamMemoryEntry[] };
+
+// ── 2. DETECTOR DE LÍNEA MOVIDA ──────────────────────────────────────────────
+type LineMovement = {
+  market: string;       // "goals_over" | "corners_over" | etc.
+  label: string;
+  lineValue: string;
+  oddBefore: string;    // cuota original (apertura)
+  oddNow: string;       // cuota actual
+};
+
+// ── 3. SCORE DE CONFIANZA ────────────────────────────────────────────────────
+type ConfidenceScore = {
+  total: number;        // 0-100
+  grade: "alta" | "media" | "baja";
+  breakdown: { label: string; points: number; max: number; ok: boolean }[];
+  message: string;
+};
 
 // ── Historial de análisis guardados ─────────────────────────────────────────
 type SavedAnalysis = {
@@ -309,7 +339,76 @@ const MARKET_OPTIONS = [
 
 const STREAK_MARKETS = new Set(["victorias", "sin_victorias", "derrotas", "sin_derrotas", "no_clean", "clean_sheet", "first_score", "first_concede", "first_half_loser"]);
 const NO_ODD_MARKETS = new Set(["victorias", "sin_victorias", "derrotas", "sin_derrotas", "no_clean", "clean_sheet", "first_score", "first_concede", "first_half_loser"]);
-const RECORD_NUMBER_OPTIONS = Array.from({ length: 16 }, (_, index) => String(index));
+const RECORD_NUMBER_OPTIONS = Array.from({ length: 16 }, (_, i) => String(i));
+
+// ── ENTRADA RÁPIDA: Forma reciente ───────────────────────────────────────────
+// Formato: "GF-GC" o "GF-GC/CF-CC" o "GF-GC/CF-CC/TF-TC"
+// Ejemplos válidos: "2-1"  "1-0/5-3"  "2-1/8-4/2-1"
+// Separa partidos con espacio o coma: "2-1 0-0 3-2/6-4"
+function parseQuickRows(text: string, count: number): RecentRow[] {
+  const tokens = text.trim().split(/[\s,]+/).filter(Boolean);
+  const base: RecentRow[] = Array.from({ length: count }, () => emptyRecentRow());
+  tokens.slice(0, count).forEach((token, i) => {
+    const segs = token.split("/");
+    const goals = segs[0]?.split("-");
+    const corners = segs[1]?.split("-");
+    const cards = segs[2]?.split("-");
+    const gf = Number(goals?.[0]); const gc = Number(goals?.[1]);
+    if (!Number.isFinite(gf) || !Number.isFinite(gc)) return;
+    base[i] = {
+      ...base[i],
+      goalsFor: String(gf), goalsAgainst: String(gc),
+      cornersFor: corners?.[0] !== undefined && Number.isFinite(Number(corners[0])) ? String(Number(corners[0])) : "",
+      cornersAgainst: corners?.[1] !== undefined && Number.isFinite(Number(corners[1])) ? String(Number(corners[1])) : "",
+      cardsFor: cards?.[0] !== undefined && Number.isFinite(Number(cards[0])) ? String(Number(cards[0])) : "",
+      cardsAgainst: cards?.[1] !== undefined && Number.isFinite(Number(cards[1])) ? String(Number(cards[1])) : "",
+    };
+  });
+  return base;
+}
+
+// ── ENTRADA RÁPIDA: Mercados de la casa ──────────────────────────────────────
+// Formato: "overLine overOdd underLine underOdd" por mercado, separados por |
+// Ej: "2.5 1.85 2.5 1.95 | 9.5 1.90 9.5 1.90 | 4.5 1.75 4.5 2.00 | 1X 1.30 X2 1.45"
+// Cada bloque: goles | corners | tarjetas | doble oportunidad
+function parseQuickHouse(text: string): Partial<HouseMarket> {
+  const blocks = text.split("|").map((b) => b.trim());
+  const result: Partial<HouseMarket> = {};
+  const parseBlock = (block: string) => block.trim().split(/\s+/).filter(Boolean);
+
+  // Goles
+  if (blocks[0]) {
+    const p = parseBlock(blocks[0]);
+    if (p[0]) result.goalsOverLine = p[0];
+    if (p[1]) result.goalsOverOdd = p[1];
+    if (p[2]) result.goalsUnderLine = p[2];
+    if (p[3]) result.goalsUnderOdd = p[3];
+  }
+  // Corners
+  if (blocks[1]) {
+    const p = parseBlock(blocks[1]);
+    if (p[0]) result.cornersOverLine = p[0];
+    if (p[1]) result.cornersOverOdd = p[1];
+    if (p[2]) result.cornersUnderLine = p[2];
+    if (p[3]) result.cornersUnderOdd = p[3];
+  }
+  // Tarjetas
+  if (blocks[2]) {
+    const p = parseBlock(blocks[2]);
+    if (p[0]) result.cardsOverLine = p[0];
+    if (p[1]) result.cardsOverOdd = p[1];
+    if (p[2]) result.cardsUnderLine = p[2];
+    if (p[3]) result.cardsUnderOdd = p[3];
+  }
+  // Doble oportunidad (1X cuota | X2 cuota | 12 cuota)
+  if (blocks[3]) {
+    const p = parseBlock(blocks[3]);
+    if (p[1]) result.dcLocalDrawOdd = p[1];
+    if (p[3]) result.dcDrawVisitOdd = p[3];
+    if (p[5]) result.dcLocalVisitOdd = p[5];
+  }
+  return result;
+}
 
 function isStreakIndicatorMarket(marketValue: string) {
   return STREAK_MARKETS.has(getMarketValue(marketValue));
@@ -910,6 +1009,160 @@ function getDailyLossInfo(bets: BankBet[], initialBank: number, limitPct: number
     ? `⚠️ Cerca del límite diario: ${formatMoney(todayLoss)} de ${formatMoney(limitAmount)} perdidos hoy.`
     : "";
   return { todayLoss, limitAmount, exceeded, message };
+}
+
+// ── MEMORIA DE EQUIPOS: helpers ──────────────────────────────────────────────
+function emptyTeamMemory(): TeamMemoryState { return { entries: [] }; }
+
+function saveTeamToMemory(
+  memory: TeamMemoryState,
+  name: string,
+  condition: TeamCondition,
+  rows: RecentRow[],
+  quickText: string
+): TeamMemoryState {
+  const clean = name.trim().toLowerCase();
+  const existing = memory.entries.findIndex(
+    (e) => e.name.toLowerCase() === clean && e.condition === condition
+  );
+  const entry: TeamMemoryEntry = {
+    id: existing >= 0 ? memory.entries[existing].id : makeId(),
+    name: name.trim(),
+    condition,
+    updatedAt: new Date().toISOString(),
+    rows,
+    quickText,
+  };
+  const next = [...memory.entries];
+  if (existing >= 0) next[existing] = entry;
+  else next.unshift(entry);
+  return { entries: next.slice(0, 60) }; // máx 60 equipos
+}
+
+function findTeamInMemory(
+  memory: TeamMemoryState,
+  name: string,
+  condition: TeamCondition
+): TeamMemoryEntry | null {
+  if (!name.trim()) return null;
+  const clean = name.trim().toLowerCase();
+  return memory.entries.find(
+    (e) => e.name.toLowerCase() === clean && e.condition === condition
+  ) ?? null;
+}
+
+function searchTeamMemory(memory: TeamMemoryState, query: string): TeamMemoryEntry[] {
+  if (!query.trim()) return memory.entries.slice(0, 10);
+  const q = query.trim().toLowerCase();
+  return memory.entries.filter((e) => e.name.toLowerCase().includes(q)).slice(0, 8);
+}
+
+// ── DETECTOR DE LÍNEA MOVIDA ─────────────────────────────────────────────────
+function analyzeLineMovement(movements: LineMovement[]): {
+  alerts: { movement: LineMovement; pct: number; direction: "subió" | "bajó"; signal: string; color: "green" | "amber" | "red" }[];
+} {
+  const alerts = movements
+    .filter((m) => toNumber(m.oddBefore) > 1 && toNumber(m.oddNow) > 1)
+    .map((m) => {
+      const before = toNumber(m.oddBefore);
+      const now = toNumber(m.oddNow);
+      const pct = Math.abs(((now - before) / before) * 100);
+      const direction: "subió" | "bajó" = now > before ? "subió" : "bajó";
+      let signal = "";
+      let color: "green" | "amber" | "red" = "amber";
+
+      if (pct >= 12) {
+        // Movimiento muy fuerte — dinero profesional casi seguro
+        signal = direction === "bajó"
+          ? `⚡ Movimiento fuerte: la cuota bajó ${pct.toFixed(1)}%. Dinero profesional entrando en OVER/este lado.`
+          : `⚡ Movimiento fuerte: la cuota subió ${pct.toFixed(1)}%. Dinero profesional saliendo — revisar.`;
+        color = direction === "bajó" ? "green" : "red";
+      } else if (pct >= 5) {
+        signal = direction === "bajó"
+          ? `🔶 Cuota recortada ${pct.toFixed(1)}%. Señal moderada de dinero entrando.`
+          : `🔶 Cuota estirada ${pct.toFixed(1)}%. El mercado se aleja — menos value.`;
+        color = "amber";
+      } else {
+        signal = `Movimiento menor (${pct.toFixed(1)}%). Normal en mercados líquidos.`;
+        color = "amber";
+      }
+
+      return { movement: m, pct, direction, signal, color };
+    })
+    .filter((a) => a.pct >= 3) // solo movimientos relevantes
+    .sort((a, b) => b.pct - a.pct);
+
+  return { alerts };
+}
+
+// ── SCORE DE CONFIANZA ───────────────────────────────────────────────────────
+function buildConfidenceScore(
+  indicators: Indicator[],
+  localRows: RecentRow[],
+  visitRows: RecentRow[],
+  houseMarkets: HouseMarket,
+  refereeContext: RefereeContext,
+  marketFocus: MarketFocusState
+): ConfidenceScore {
+  const localValid = countValidRows(localRows).length;
+  const visitValid = countValidRows(visitRows).length;
+  const activeInds = indicators.filter((ind) => parseRecord(ind.record) > 0).length;
+  const hasOdds = hasHouseOdd(houseMarkets);
+  const hasGoalLines = toNumber(houseMarkets.goalsOverOdd) > 1 || toNumber(houseMarkets.goalsUnderOdd) > 1;
+  const hasCornersLines = toNumber(houseMarkets.cornersOverOdd) > 1 || toNumber(houseMarkets.cornersUnderOdd) > 1;
+  const hasCardsLines = toNumber(houseMarkets.cardsOverOdd) > 1 || toNumber(houseMarkets.cardsUnderOdd) > 1;
+  const hasReferee = refereeContext.strictness !== "none" || !!refereeContext.yellowAvg;
+  const focusCount = [marketFocus.goals, marketFocus.corners, marketFocus.cards, marketFocus.winner, marketFocus.doubleChance].filter(Boolean).length;
+
+  const breakdown: ConfidenceScore["breakdown"] = [
+    {
+      label: "Registros local",
+      points: localValid >= 5 ? 20 : localValid >= 3 ? 13 : localValid >= 1 ? 6 : 0,
+      max: 20,
+      ok: localValid >= 3,
+    },
+    {
+      label: "Registros visitante",
+      points: visitValid >= 5 ? 20 : visitValid >= 3 ? 13 : visitValid >= 1 ? 6 : 0,
+      max: 20,
+      ok: visitValid >= 3,
+    },
+    {
+      label: "Indicadores SofaScore",
+      points: activeInds >= 5 ? 20 : activeInds >= 3 ? 13 : activeInds >= 1 ? 6 : 0,
+      max: 20,
+      ok: activeInds >= 3,
+    },
+    {
+      label: "Cuotas de la casa",
+      points: hasGoalLines && hasCornersLines ? 20 : hasOdds ? 12 : 0,
+      max: 20,
+      ok: hasOdds,
+    },
+    {
+      label: "Árbitro y contexto",
+      points: hasReferee ? 10 : 0,
+      max: 10,
+      ok: hasReferee,
+    },
+    {
+      label: "Mercados enfocados",
+      points: focusCount >= 2 ? 10 : focusCount >= 1 ? 5 : 0,
+      max: 10,
+      ok: focusCount >= 1,
+    },
+  ];
+
+  const total = Math.min(100, breakdown.reduce((s, b) => s + b.points, 0));
+  const grade: ConfidenceScore["grade"] = total >= 70 ? "alta" : total >= 40 ? "media" : "baja";
+
+  const message = grade === "alta"
+    ? "✅ Análisis bien respaldado. Los picks tienen base sólida."
+    : grade === "media"
+    ? "🟡 Análisis parcial. Carga más datos antes de apostar fuerte."
+    : "🔴 Datos insuficientes. No apuestes con estos picks todavía.";
+
+  return { total, grade, breakdown, message };
 }
 
 function getSideName(side: EliminationSide, match: Match) {
@@ -1728,6 +1981,26 @@ export default function Page() {
   const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistory>({ items: [] });
   const [showHistory, setShowHistory] = useState(false);
   const [dailyLossLimitPct, setDailyLossLimitPct] = useState("10");
+  // ── ENTRADA RÁPIDA ───────────────────────────────────────────────────────
+  const [quickLocalText, setQuickLocalText] = useState("");
+  const [quickVisitText, setQuickVisitText] = useState("");
+  const [quickHouseText, setQuickHouseText] = useState("");
+  const [showQuickEntry, setShowQuickEntry] = useState(false);
+  // ── MEMORIA DE EQUIPOS ───────────────────────────────────────────────────
+  const [teamMemory, setTeamMemory] = useState<TeamMemoryState>(emptyTeamMemory());
+  const [showMemoryLocal, setShowMemoryLocal] = useState(false);
+  const [showMemoryVisit, setShowMemoryVisit] = useState(false);
+  const [memorySearchLocal, setMemorySearchLocal] = useState("");
+  const [memorySearchVisit, setMemorySearchVisit] = useState("");
+  // ── DETECTOR DE LÍNEA MOVIDA ─────────────────────────────────────────────
+  const [lineMovements, setLineMovements] = useState<LineMovement[]>([
+    { market: "goals_over", label: "⚽ Goles Over", lineValue: "", oddBefore: "", oddNow: "" },
+    { market: "goals_under", label: "⚽ Goles Under", lineValue: "", oddBefore: "", oddNow: "" },
+    { market: "corners_over", label: "🚩 Corners Over", lineValue: "", oddBefore: "", oddNow: "" },
+    { market: "corners_under", label: "🚩 Corners Under", lineValue: "", oddBefore: "", oddNow: "" },
+    { market: "cards_over", label: "🟨 Tarjetas Over", lineValue: "", oddBefore: "", oddNow: "" },
+  ]);
+  const [showLineMovement, setShowLineMovement] = useState(false);
 
   const bankrollStats = useMemo(() => buildBankrollStats(bankroll), [bankroll]);
   const dailyPlan = useMemo(() => buildDailyPlan(dailyPicks), [dailyPicks]);
@@ -2837,6 +3110,141 @@ export default function Page() {
     });
   }, [indicators]);
 
+  // ── MEMORIA DE EQUIPOS: persistencia ────────────────────────────────────
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(TEAM_MEMORY_KEY);
+      if (raw) setTeamMemory(JSON.parse(raw) as TeamMemoryState);
+    } catch { /* silencioso */ }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(TEAM_MEMORY_KEY, JSON.stringify(teamMemory));
+  }, [teamMemory]);
+
+  const saveLocalToMemory = () => {
+    if (!match.local.trim()) { alert("Escribe el nombre del equipo local primero."); return; }
+    const valid = countValidRows(localRecent);
+    if (!valid.length) { alert("No hay registros del local para guardar."); return; }
+    setTeamMemory((prev) => saveTeamToMemory(prev, match.local, "local", localRecent, quickLocalText));
+    alert(`✅ ${match.local} (local) guardado en memoria.`);
+  };
+
+  const saveVisitToMemory = () => {
+    if (!match.visitante.trim()) { alert("Escribe el nombre del equipo visitante primero."); return; }
+    const valid = countValidRows(visitRecent);
+    if (!valid.length) { alert("No hay registros del visitante para guardar."); return; }
+    setTeamMemory((prev) => saveTeamToMemory(prev, match.visitante, "visitante", visitRecent, quickVisitText));
+    alert(`✅ ${match.visitante} (visitante) guardado en memoria.`);
+  };
+
+  const loadFromMemoryLocal = (entry: TeamMemoryEntry) => {
+    setLocalRecent(entry.rows.map((r) => ({ ...r, id: makeId() })));
+    if (entry.quickText) setQuickLocalText(entry.quickText);
+    setShowMemoryLocal(false);
+    setMemorySearchLocal("");
+  };
+
+  const loadFromMemoryVisit = (entry: TeamMemoryEntry) => {
+    setVisitRecent(entry.rows.map((r) => ({ ...r, id: makeId() })));
+    if (entry.quickText) setQuickVisitText(entry.quickText);
+    setShowMemoryVisit(false);
+    setMemorySearchVisit("");
+  };
+
+  const deleteFromMemory = (id: string) => {
+    setTeamMemory((prev) => ({ entries: prev.entries.filter((e) => e.id !== id) }));
+  };
+
+  // Auto-detect team in memory when match name changes
+  useEffect(() => {
+    if (!match.local.trim()) return;
+    const found = findTeamInMemory(teamMemory, match.local, "local");
+    if (found && !countValidRows(localRecent).length) {
+      setLocalRecent(found.rows.map((r) => ({ ...r, id: makeId() })));
+    }
+  }, [match.local]);
+
+  useEffect(() => {
+    if (!match.visitante.trim()) return;
+    const found = findTeamInMemory(teamMemory, match.visitante, "visitante");
+    if (found && !countValidRows(visitRecent).length) {
+      setVisitRecent(found.rows.map((r) => ({ ...r, id: makeId() })));
+    }
+  }, [match.visitante]);
+
+  // ── ENTRADA RÁPIDA: handlers ─────────────────────────────────────────────
+  const applyQuickLocal = () => {
+    if (!quickLocalText.trim()) return;
+    setLocalRecent(parseQuickRows(quickLocalText, marketFocus.recentCount ? Number(marketFocus.recentCount) : 6));
+    setQuickLocalText("");
+  };
+
+  const applyQuickVisit = () => {
+    if (!quickVisitText.trim()) return;
+    setVisitRecent(parseQuickRows(quickVisitText, marketFocus.recentCount ? Number(marketFocus.recentCount) : 6));
+    setQuickVisitText("");
+  };
+
+  const applyQuickHouse = () => {
+    if (!quickHouseText.trim()) return;
+    const parsed = parseQuickHouse(quickHouseText);
+    setHouseMarkets((prev) => ({ ...prev, ...parsed }));
+    setQuickHouseText("");
+  };
+
+  // ── AUTOFILL: genera indicadores desde la forma reciente ─────────────────
+  const autoFillIndicatorsFromRecent = () => {
+    const localStats = buildRecentStatsWeighted(localRecent);
+    const visitStats = buildRecentStatsWeighted(visitRecent);
+    if (!localStats.count && !visitStats.count) {
+      alert("Carga primero la forma reciente de al menos un equipo.");
+      return;
+    }
+    const newIndicators: Indicator[] = [];
+    const addIfStrong = (team: TeamSide, market: string, pct: number, label: string) => {
+      if (pct >= 60) {
+        const total = team === "local" ? localStats.count : visitStats.count;
+        const hits = Math.round((pct / 100) * total);
+        newIndicators.push({
+          id: makeId(), team, period: "full", market,
+          line: "", record: `${hits}/${total}`, houseOdd: "",
+        });
+      }
+    };
+    // Local
+    if (localStats.count > 0) {
+      addIfStrong("local", "over_2_5", localStats.bttsPct, "BTTS local");
+      addIfStrong("local", "btts", localStats.bttsPct, "BTTS local");
+      addIfStrong("local", "no_clean", localStats.noCleanPct, "Sin portería local");
+      addIfStrong("local", "victorias", localStats.winPct, "Victorias local");
+      addIfStrong("local", "sin_derrotas", localStats.noLosePct, "Sin derrota local");
+    }
+    // Visitante
+    if (visitStats.count > 0) {
+      addIfStrong("visitante", "over_2_5", visitStats.bttsPct, "BTTS visita");
+      addIfStrong("visitante", "btts", visitStats.bttsPct, "BTTS visita");
+      addIfStrong("visitante", "no_clean", visitStats.noCleanPct, "Sin portería visita");
+      addIfStrong("visitante", "victorias", visitStats.winPct, "Victorias visita");
+      addIfStrong("visitante", "sin_derrotas", visitStats.noLosePct, "Sin derrota visita");
+    }
+    if (!newIndicators.length) {
+      alert("Los registros no muestran señales fuertes (>60%). Revisa los datos.");
+      return;
+    }
+    // Deduplicar: no agregar si ya existe mismo team+market
+    const existing = new Set(indicators.map((ind) => `${ind.team}_${ind.market}`));
+    const toAdd = newIndicators.filter((ind) => !existing.has(`${ind.team}_${ind.market}`));
+    if (!toAdd.length) {
+      alert("Todos los indicadores detectados ya existen.");
+      return;
+    }
+    setIndicators((prev) => [...prev, ...toAdd]);
+    alert(`✅ Se agregaron ${toAdd.length} indicadores automáticos desde los registros.`);
+  };
+
   const clearAll = () => {
     if (!confirm("¿Seguro que quieres borrar todo el partido actual?")) return;
     if (typeof window !== "undefined") {
@@ -2896,6 +3304,13 @@ export default function Page() {
   };
 
   const calibrationStats = useMemo(() => buildCalibrationStats(calibration.outcomes), [calibration.outcomes]);
+
+  const confidenceScore = useMemo(
+    () => buildConfidenceScore(indicators, localRecent, visitRecent, houseMarkets, refereeContext, marketFocus),
+    [indicators, localRecent, visitRecent, houseMarkets, refereeContext, marketFocus]
+  );
+
+  const lineMovementAnalysis = useMemo(() => analyzeLineMovement(lineMovements), [lineMovements]);
 
   // ── Racha negativa y límite diario ───────────────────────────────────────
   const losingStreak = useMemo(() => detectLosingStreak(bankroll.bets), [bankroll.bets]);
@@ -3776,10 +4191,118 @@ setIndicators(importedIndicators);
     ) : null}
 
     <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4">
-            <h2 className="text-2xl font-bold">🧪 Últimos registros</h2>
-            <p className="text-xs text-slate-300">Ahora los corners y tarjetas se llenan a favor/en contra. Eso frena unders engañosos.</p>
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-2xl font-bold">🧪 Últimos registros</h2>
+              <p className="text-xs text-slate-300">Ahora los corners y tarjetas se llenan a favor/en contra. Eso frena unders engañosos.</p>
+            </div>
+            <button
+              onClick={() => setShowQuickEntry((v) => !v)}
+              className="rounded-2xl bg-amber-400 px-4 py-3 font-black text-amber-950 shadow-lg shadow-amber-400/20"
+            >
+              ⚡ {showQuickEntry ? "Ocultar entrada rápida" : "Entrada rápida"}
+            </button>
           </div>
+
+          {/* ── PANEL DE ENTRADA RÁPIDA ─────────────────────────────────── */}
+          {showQuickEntry && (
+            <div className="mb-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 space-y-3">
+              <div>
+                <p className="mb-1 text-xs font-black text-amber-100 uppercase tracking-widest">⚡ Carga rápida de forma reciente</p>
+                <p className="text-xs text-slate-300 mb-3">
+                  Escribe un partido por token: <b className="text-white">GF-GC</b> o con corners: <b className="text-white">GF-GC/CF-CC</b> o completo: <b className="text-white">GF-GC/CF-CC/TF-TC</b><br/>
+                  Separa partidos con espacio. Ej: <span className="text-amber-200 font-mono">2-1 0-0/5-3 3-2/8-4/1-0</span>
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {/* Local */}
+                  <div>
+                    <div className="mb-1 flex items-center justify-between">
+                      <p className="text-xs font-bold text-slate-300">🏠 {match.local || "Local"}</p>
+                      <div className="flex gap-1">
+                        <button onClick={saveLocalToMemory} className="rounded-lg bg-indigo-400/20 px-2 py-1 text-[11px] font-black text-indigo-200" title="Guardar en memoria">💾 Guardar</button>
+                        <button onClick={() => { setShowMemoryLocal((v) => !v); setShowMemoryVisit(false); }} className="rounded-lg bg-indigo-400/20 px-2 py-1 text-[11px] font-black text-indigo-200" title="Cargar desde memoria">📂 Memoria</button>
+                      </div>
+                    </div>
+                    {showMemoryLocal && (
+                      <div className="mb-2 rounded-xl border border-indigo-300/20 bg-slate-950/60 p-2">
+                        <input
+                          className="mb-2 w-full rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1 text-xs text-white outline-none"
+                          placeholder="Buscar equipo..."
+                          value={memorySearchLocal}
+                          onChange={(e) => setMemorySearchLocal(e.target.value)}
+                        />
+                        <div className="max-h-40 space-y-1 overflow-y-auto">
+                          {searchTeamMemory(teamMemory, memorySearchLocal).filter((e) => e.condition === "local").length === 0
+                            ? <p className="text-xs text-slate-400 px-1">Sin equipos locales guardados.</p>
+                            : searchTeamMemory(teamMemory, memorySearchLocal).filter((e) => e.condition === "local").map((entry) => (
+                              <div key={entry.id} className="flex items-center justify-between gap-1 rounded-lg bg-white/5 px-2 py-1">
+                                <button onClick={() => loadFromMemoryLocal(entry)} className="flex-1 text-left text-xs font-bold text-indigo-100 hover:text-white">
+                                  🏠 {entry.name} <span className="font-normal text-slate-400">· {countValidRows(entry.rows).length} partidos · {new Date(entry.updatedAt).toLocaleDateString("es", { day: "numeric", month: "short" })}</span>
+                                </button>
+                                <button onClick={() => deleteFromMemory(entry.id)} className="text-rose-400 text-xs">🗑️</button>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <input
+                        className="flex-1 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none font-mono"
+                        placeholder="2-1 0-0 3-2/6-4/2-1 ..."
+                        value={quickLocalText}
+                        onChange={(e) => setQuickLocalText(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") applyQuickLocal(); }}
+                      />
+                      <button onClick={applyQuickLocal} className="rounded-xl bg-emerald-400 px-3 py-2 font-black text-emerald-950 text-sm">✓</button>
+                    </div>
+                  </div>
+                  {/* Visitante */}
+                  <div>
+                    <div className="mb-1 flex items-center justify-between">
+                      <p className="text-xs font-bold text-slate-300">✈️ {match.visitante || "Visitante"}</p>
+                      <div className="flex gap-1">
+                        <button onClick={saveVisitToMemory} className="rounded-lg bg-indigo-400/20 px-2 py-1 text-[11px] font-black text-indigo-200" title="Guardar en memoria">💾 Guardar</button>
+                        <button onClick={() => { setShowMemoryVisit((v) => !v); setShowMemoryLocal(false); }} className="rounded-lg bg-indigo-400/20 px-2 py-1 text-[11px] font-black text-indigo-200" title="Cargar desde memoria">📂 Memoria</button>
+                      </div>
+                    </div>
+                    {showMemoryVisit && (
+                      <div className="mb-2 rounded-xl border border-indigo-300/20 bg-slate-950/60 p-2">
+                        <input
+                          className="mb-2 w-full rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1 text-xs text-white outline-none"
+                          placeholder="Buscar equipo..."
+                          value={memorySearchVisit}
+                          onChange={(e) => setMemorySearchVisit(e.target.value)}
+                        />
+                        <div className="max-h-40 space-y-1 overflow-y-auto">
+                          {searchTeamMemory(teamMemory, memorySearchVisit).filter((e) => e.condition === "visitante").length === 0
+                            ? <p className="text-xs text-slate-400 px-1">Sin equipos visitantes guardados.</p>
+                            : searchTeamMemory(teamMemory, memorySearchVisit).filter((e) => e.condition === "visitante").map((entry) => (
+                              <div key={entry.id} className="flex items-center justify-between gap-1 rounded-lg bg-white/5 px-2 py-1">
+                                <button onClick={() => loadFromMemoryVisit(entry)} className="flex-1 text-left text-xs font-bold text-indigo-100 hover:text-white">
+                                  ✈️ {entry.name} <span className="font-normal text-slate-400">· {countValidRows(entry.rows).length} partidos · {new Date(entry.updatedAt).toLocaleDateString("es", { day: "numeric", month: "short" })}</span>
+                                </button>
+                                <button onClick={() => deleteFromMemory(entry.id)} className="text-rose-400 text-xs">🗑️</button>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <input
+                        className="flex-1 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none font-mono"
+                        placeholder="1-1 2-0 0-1/4-6/0-2 ..."
+                        value={quickVisitText}
+                        onChange={(e) => setQuickVisitText(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") applyQuickVisit(); }}
+                      />
+                      <button onClick={applyQuickVisit} className="rounded-xl bg-emerald-400 px-3 py-2 font-black text-emerald-950 text-sm">✓</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid gap-4 lg:grid-cols-2">
             {renderRecentBlock(`Registro Local🏡 · ${match.local || "Local"}`, "local", localRecent)}
             {renderRecentBlock(`Registro Visitante🛩️ · ${match.visitante || "Visitante"}`, "visitante", visitRecent)}
@@ -3802,18 +4325,92 @@ setIndicators(importedIndicators);
           ) : null}
         </section>
 
+        {/* ── DETECTOR DE LÍNEA MOVIDA ────────────────────────────────────── */}
+        <section className="mb-5 overflow-hidden rounded-[2rem] border border-orange-300/20 bg-gradient-to-br from-orange-400/10 via-slate-900/65 to-red-500/10 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
+          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.35em] text-orange-200/80">Dinero profesional</p>
+                <h2 className="mt-1 text-2xl font-black">📡 Detector de línea movida</h2>
+                <p className="mt-1 text-sm text-slate-300">Ingresa la cuota de apertura y la cuota actual. Si se movió más del 5%, hay dinero entrando en ese mercado.</p>
+              </div>
+              <button onClick={() => setShowLineMovement((v) => !v)} className="rounded-2xl border border-orange-300/30 bg-orange-400/15 px-4 py-3 font-black text-orange-100">
+                {showLineMovement ? "▲ Ocultar" : "▼ Ver detector"}
+              </button>
+            </div>
+
+            {/* Alertas siempre visibles si hay movimiento */}
+            {lineMovementAnalysis.alerts.length > 0 && (
+              <div className="mb-4 space-y-2">
+                {lineMovementAnalysis.alerts.map((a) => (
+                  <div key={a.movement.market} className={`rounded-2xl border px-4 py-3 ${a.color === "green" ? "border-emerald-300/40 bg-emerald-400/15" : a.color === "red" ? "border-rose-300/40 bg-rose-400/15" : "border-amber-300/40 bg-amber-400/15"}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-black text-sm">{a.movement.label} {a.movement.lineValue ? `(${a.movement.lineValue})` : ""}</span>
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${a.color === "green" ? "bg-emerald-400/30 text-emerald-100" : a.color === "red" ? "bg-rose-400/30 text-rose-100" : "bg-amber-400/30 text-amber-100"}`}>
+                        {a.direction === "bajó" ? "▼" : "▲"} {a.pct.toFixed(1)}% · {toNumber(a.movement.oddBefore).toFixed(2)} → {toNumber(a.movement.oddNow).toFixed(2)}
+                      </span>
+                    </div>
+                    <p className={`mt-1 text-xs ${a.color === "green" ? "text-emerald-200" : a.color === "red" ? "text-rose-200" : "text-amber-200"}`}>{a.signal}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {showLineMovement && (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {lineMovements.map((mv, i) => (
+                  <div key={mv.market} className="rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+                    <p className="mb-2 text-sm font-black">{mv.label}</p>
+                    <div className="space-y-2">
+                      <input
+                        className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none"
+                        placeholder="Línea (ej: 2.5)"
+                        value={mv.lineValue}
+                        onChange={(e) => setLineMovements((prev) => prev.map((m, j) => j === i ? { ...m, lineValue: e.target.value } : m))}
+                      />
+                      <input
+                        className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none"
+                        placeholder="Cuota apertura"
+                        inputMode="decimal"
+                        value={mv.oddBefore}
+                        onChange={(e) => setLineMovements((prev) => prev.map((m, j) => j === i ? { ...m, oddBefore: e.target.value } : m))}
+                      />
+                      <input
+                        className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none"
+                        placeholder="Cuota actual"
+                        inputMode="decimal"
+                        value={mv.oddNow}
+                        onChange={(e) => setLineMovements((prev) => prev.map((m, j) => j === i ? { ...m, oddNow: e.target.value } : m))}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
     
     <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-2xl font-bold">Indicadores SofaScore🧾</h2>
-              <p className="text-xs text-slate-300">Carga 3 a 6 señales fuertes. Evita llenar mercados débiles.</p>
+              <h2 className="text-2xl font-bold">Indicadores SofaScore o Automaticos segun Registros🧾</h2>
+              <p className="text-xs text-slate-300">Carga señales fuertes. Genera automaticamente los mercador conforme a los registros. Evita llenar mercados débiles.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/35 p-2">
-              <select className="rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300" value={indicatorBulkCount} onChange={(event) => setIndicatorBulkCount(event.target.value)}>
-                {INDICATOR_BULK_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-              <button onClick={addMultipleIndicators} className="rounded-2xl bg-gradient-to-r from-sky-300 to-blue-500 px-4 py-3 font-bold text-slate-950 shadow-lg shadow-sky-500/20">+ Agregar indicadores</button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={autoFillIndicatorsFromRecent}
+                className="rounded-2xl bg-teal-400 px-4 py-3 font-black text-teal-950 shadow-lg shadow-teal-400/20"
+                title="Genera indicadores automáticamente desde los registros recientes cargados"
+              >
+                🤖 Auto desde registros
+              </button>
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/35 p-2">
+                <select className="rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300" value={indicatorBulkCount} onChange={(event) => setIndicatorBulkCount(event.target.value)}>
+                  {INDICATOR_BULK_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+                <button onClick={addMultipleIndicators} className="rounded-2xl bg-gradient-to-r from-sky-300 to-blue-500 px-4 py-3 font-bold text-slate-950 shadow-lg shadow-sky-500/20">+ Agregar indicadores</button>
+              </div>
             </div>
           </div>
 
@@ -3943,10 +4540,35 @@ setIndicators(importedIndicators);
           ) : null}
 
           <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-3">
-              <h3 className="text-xl font-black">🏦 Líneas reales totales</h3>
-              <p className="text-xs text-slate-300">Goles, corners y tarjetas se llenan aquí y alimentan también Picks clasificados, Anti-Casa, Resumen 90’ y Modo PRO.</p>
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-xl font-black">🏦 Líneas reales totales</h3>
+                <p className="text-xs text-slate-300">Goles, corners y tarjetas se llenan aquí y alimentan también Picks clasificados, Anti-Casa, Resumen 90' y Modo PRO.</p>
+              </div>
+              <button onClick={() => setShowQuickEntry((v) => !v)} className="rounded-2xl bg-amber-400 px-3 py-2 font-black text-amber-950 text-sm">
+                ⚡ {showQuickEntry ? "Ocultar carga rápida" : "Carga rápida de cuotas"}
+              </button>
             </div>
+            {showQuickEntry && (
+              <div className="mb-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4">
+                <p className="text-xs font-black text-amber-100 uppercase tracking-widest mb-2">⚡ Carga rápida de mercados</p>
+                <p className="text-xs text-slate-300 mb-3">
+                  Formato por bloque: <span className="font-mono text-amber-200">lineaOver cuotaOver lineaUnder cuotaUnder</span> — separa con <b className="text-white"> | </b><br/>
+                  Ej: <span className="font-mono text-amber-200 text-[11px]">2.5 1.85 2.5 1.95 | 9.5 1.90 9.5 1.90 | 4.5 1.75 4.5 2.00</span><br/>
+                  (bloque 1 = goles · bloque 2 = corners · bloque 3 = tarjetas)
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none font-mono"
+                    placeholder="2.5 1.85 2.5 1.95 | 9.5 1.90 9.5 1.90 | 4.5 1.75 4.5 2.00"
+                    value={quickHouseText}
+                    onChange={(e) => setQuickHouseText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") applyQuickHouse(); }}
+                  />
+                  <button onClick={applyQuickHouse} className="rounded-xl bg-emerald-400 px-4 py-2 font-black text-emerald-950 text-sm">✓ Aplicar</button>
+                </div>
+              </div>
+            )}
             <div className="grid gap-4 lg:grid-cols-3">
               {focusEnabled(marketFocus, "goals") ? renderHouseMarket("⚽ Goles", "goalsOverLine", "goalsOverOdd", "goalsUnderLine", "goalsUnderOdd", GOAL_LINES, [...GOAL_LINES].reverse()) : null}
               {focusEnabled(marketFocus, "corners") ? renderHouseMarket("🚩 Corners", "cornersOverLine", "cornersOverOdd", "cornersUnderLine", "cornersUnderOdd", CORNER_OVER_LINES, CORNER_UNDER_LINES) : null}
@@ -4000,6 +4622,34 @@ setIndicators(importedIndicators);
             ))}
           </div>
         </section>
+
+   {/* ── SCORE DE CONFIANZA ──────────────────────────────────────────── */}
+        <section className="mb-5 overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-slate-800/60 via-slate-900/80 to-slate-800/60 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
+          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.35em] text-slate-300/80">¿Qué tan sólido es este análisis?</p>
+                <h2 className="mt-1 text-2xl font-black">🎓 Score de confianza</h2>
+              </div>
+              <div className={`rounded-2xl px-5 py-3 text-center ${confidenceScore.grade === "alta" ? "bg-emerald-400/20 border border-emerald-300/30" : confidenceScore.grade === "media" ? "bg-amber-400/20 border border-amber-300/30" : "bg-rose-400/20 border border-rose-300/30"}`}>
+                <p className="text-3xl font-black">{confidenceScore.total}</p>
+                <p className={`text-xs font-black uppercase ${confidenceScore.grade === "alta" ? "text-emerald-100" : confidenceScore.grade === "media" ? "text-amber-100" : "text-rose-100"}`}>{confidenceScore.grade === "alta" ? "✅ Alta" : confidenceScore.grade === "media" ? "🟡 Media" : "🔴 Baja"}</p>
+              </div>
+            </div>
+            <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {confidenceScore.breakdown.map((item) => (
+                <div key={item.label} className={`flex items-center justify-between rounded-xl border px-3 py-2 ${item.ok ? "border-emerald-300/20 bg-emerald-400/10" : "border-rose-300/20 bg-rose-400/10"}`}>
+                  <span className="text-xs font-bold">{item.ok ? "✅" : "❌"} {item.label}</span>
+                  <span className="text-xs font-black">{item.points}/{item.max}</span>
+                </div>
+              ))}
+            </div>
+            <div className={`rounded-2xl border px-4 py-3 text-sm font-bold ${confidenceScore.grade === "alta" ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100" : confidenceScore.grade === "media" ? "border-amber-300/30 bg-amber-400/10 text-amber-100" : "border-rose-300/30 bg-rose-400/10 text-rose-100"}`}>
+              {confidenceScore.message}
+            </div>
+          </div>
+        </section>
+
 
         <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <h2 className="mb-4 text-2xl font-bold">🏦 Lectura de casa + registros</h2>
