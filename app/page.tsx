@@ -298,7 +298,16 @@ type ConfidenceScore = {
   message: string;
 };
 
-// ── Historial de análisis guardados ─────────────────────────────────────────
+// ── 4. PANEL PRE-APUESTA ─────────────────────────────────────────────────────
+type PreBetPick = {
+  label: string;
+  line: string;
+  score: number;
+  odd: number;
+  grade: Grade;
+  marketValue: string;
+  source: "SofaScore" | "Casa";
+};
 type SavedAnalysis = {
   id: string;
   savedAt: string;
@@ -2001,6 +2010,10 @@ export default function Page() {
     { market: "cards_over", label: "🟨 Tarjetas Over", lineValue: "", oddBefore: "", oddNow: "" },
   ]);
   const [showLineMovement, setShowLineMovement] = useState(false);
+  // ── PANEL PRE-APUESTA ────────────────────────────────────────────────────
+  const [showPreBet, setShowPreBet] = useState(false);
+  const [preBetPick, setPreBetPick] = useState<PreBetPick | null>(null);
+  const [preBetNote, setPreBetNote] = useState("");
 
   const bankrollStats = useMemo(() => buildBankrollStats(bankroll), [bankroll]);
   const dailyPlan = useMemo(() => buildDailyPlan(dailyPicks), [dailyPicks]);
@@ -3204,34 +3217,95 @@ export default function Page() {
       return;
     }
     const newIndicators: Indicator[] = [];
-    const addIfStrong = (team: TeamSide, market: string, pct: number, label: string) => {
+
+    const addIfStrong = (team: TeamSide, market: string, line: string, pct: number) => {
       if (pct >= 60) {
-        const total = team === "local" ? localStats.count : visitStats.count;
+        const stats = team === "local" ? localStats : visitStats;
+        const total = stats.count;
         const hits = Math.round((pct / 100) * total);
         newIndicators.push({
           id: makeId(), team, period: "full", market,
-          line: "", record: `${hits}/${total}`, houseOdd: "",
+          line, record: `${hits}/${total}`, houseOdd: "",
         });
       }
     };
-    // Local
+
+    // ── Calcular % corners y tarjetas por equipo ─────────────────────────
+    const calcPct = (rows: RecentRow[], fn: (r: RecentRow) => boolean) => {
+      const valid = countValidRows(rows);
+      if (!valid.length) return 0;
+      return (valid.filter(fn).length / valid.length) * 100;
+    };
+
+    const localCorners10Over  = calcPct(localRecent,  (r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst) > 10.5);
+    const localCorners10Under = calcPct(localRecent,  (r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst) < 10.5 && toNumber(r.cornersFor) + toNumber(r.cornersAgainst) > 0);
+    const visitCorners10Over  = calcPct(visitRecent,  (r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst) > 10.5);
+    const visitCorners10Under = calcPct(visitRecent,  (r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst) < 10.5 && toNumber(r.cornersFor) + toNumber(r.cornersAgainst) > 0);
+
+    const localCards4Over     = calcPct(localRecent,  (r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst) > 4.5);
+    const localCards4Under    = calcPct(localRecent,  (r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst) < 4.5 && toNumber(r.cardsFor) + toNumber(r.cardsAgainst) > 0);
+    const visitCards4Over     = calcPct(visitRecent,  (r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst) > 4.5);
+    const visitCards4Under    = calcPct(visitRecent,  (r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst) < 4.5 && toNumber(r.cardsFor) + toNumber(r.cardsAgainst) > 0);
+
+    // ── Combinado local + visitante para corners y tarjetas (ambos) ──────
+    // Si ambos equipos muestran la misma tendencia, agrega indicador "ambos"
+    const combinedCorners10Over  = (localCorners10Over  + visitCorners10Over)  / 2;
+    const combinedCorners10Under = (localCorners10Under + visitCorners10Under) / 2;
+    const combinedCards4Over     = (localCards4Over     + visitCards4Over)     / 2;
+    const combinedCards4Under    = (localCards4Under    + visitCards4Under)    / 2;
+
+    // ── Local ────────────────────────────────────────────────────────────
     if (localStats.count > 0) {
-      addIfStrong("local", "over_2_5", localStats.bttsPct, "BTTS local");
-      addIfStrong("local", "btts", localStats.bttsPct, "BTTS local");
-      addIfStrong("local", "no_clean", localStats.noCleanPct, "Sin portería local");
-      addIfStrong("local", "victorias", localStats.winPct, "Victorias local");
-      addIfStrong("local", "sin_derrotas", localStats.noLosePct, "Sin derrota local");
+      addIfStrong("local", "over_2_5",           "2.5",  localStats.bttsPct);
+      addIfStrong("local", "btts",               "Sí",   localStats.bttsPct);
+      addIfStrong("local", "no_clean",           "Sí",   localStats.noCleanPct);
+      addIfStrong("local", "victorias",          "",     localStats.winPct);
+      addIfStrong("local", "sin_derrotas",       "",     localStats.noLosePct);
+      addIfStrong("local", "over_10_5_corners",  "10.5", localCorners10Over);
+      addIfStrong("local", "under_10_5_corners", "10.5", localCorners10Under);
+      addIfStrong("local", "over_4_5_cards",     "4.5",  localCards4Over);
+      addIfStrong("local", "under_4_5_cards",    "4.5",  localCards4Under);
     }
-    // Visitante
+
+    // ── Visitante ────────────────────────────────────────────────────────
     if (visitStats.count > 0) {
-      addIfStrong("visitante", "over_2_5", visitStats.bttsPct, "BTTS visita");
-      addIfStrong("visitante", "btts", visitStats.bttsPct, "BTTS visita");
-      addIfStrong("visitante", "no_clean", visitStats.noCleanPct, "Sin portería visita");
-      addIfStrong("visitante", "victorias", visitStats.winPct, "Victorias visita");
-      addIfStrong("visitante", "sin_derrotas", visitStats.noLosePct, "Sin derrota visita");
+      addIfStrong("visitante", "over_2_5",           "2.5",  visitStats.bttsPct);
+      addIfStrong("visitante", "btts",               "Sí",   visitStats.bttsPct);
+      addIfStrong("visitante", "no_clean",           "Sí",   visitStats.noCleanPct);
+      addIfStrong("visitante", "victorias",          "",     visitStats.winPct);
+      addIfStrong("visitante", "sin_derrotas",       "",     visitStats.noLosePct);
+      addIfStrong("visitante", "over_10_5_corners",  "10.5", visitCorners10Over);
+      addIfStrong("visitante", "under_10_5_corners", "10.5", visitCorners10Under);
+      addIfStrong("visitante", "over_4_5_cards",     "4.5",  visitCards4Over);
+      addIfStrong("visitante", "under_4_5_cards",    "4.5",  visitCards4Under);
     }
+
+    // ── Combinado "ambos": solo si ambos equipos muestran la señal ───────
+    if (localStats.count > 0 && visitStats.count > 0) {
+      if (combinedCorners10Over  >= 65) {
+        const hits = Math.round((combinedCorners10Over / 100) * Math.min(localStats.count, visitStats.count));
+        const total = Math.min(localStats.count, visitStats.count);
+        newIndicators.push({ id: makeId(), team: "ambos", period: "full", market: "over_10_5_corners",  line: "10.5", record: `${hits}/${total}`, houseOdd: "" });
+      }
+      if (combinedCorners10Under >= 65) {
+        const hits = Math.round((combinedCorners10Under / 100) * Math.min(localStats.count, visitStats.count));
+        const total = Math.min(localStats.count, visitStats.count);
+        newIndicators.push({ id: makeId(), team: "ambos", period: "full", market: "under_10_5_corners", line: "10.5", record: `${hits}/${total}`, houseOdd: "" });
+      }
+      if (combinedCards4Over     >= 65) {
+        const hits = Math.round((combinedCards4Over / 100) * Math.min(localStats.count, visitStats.count));
+        const total = Math.min(localStats.count, visitStats.count);
+        newIndicators.push({ id: makeId(), team: "ambos", period: "full", market: "over_4_5_cards",     line: "4.5",  record: `${hits}/${total}`, houseOdd: "" });
+      }
+      if (combinedCards4Under    >= 65) {
+        const hits = Math.round((combinedCards4Under / 100) * Math.min(localStats.count, visitStats.count));
+        const total = Math.min(localStats.count, visitStats.count);
+        newIndicators.push({ id: makeId(), team: "ambos", period: "full", market: "under_4_5_cards",    line: "4.5",  record: `${hits}/${total}`, houseOdd: "" });
+      }
+    }
+
     if (!newIndicators.length) {
-      alert("Los registros no muestran señales fuertes (>60%). Revisa los datos.");
+      alert("Los registros no muestran señales fuertes (>60%). Revisa los datos o agrega más partidos.");
       return;
     }
     // Deduplicar: no agregar si ya existe mismo team+market
@@ -3243,6 +3317,38 @@ export default function Page() {
     }
     setIndicators((prev) => [...prev, ...toAdd]);
     alert(`✅ Se agregaron ${toAdd.length} indicadores automáticos desde los registros.`);
+  };
+
+  // ── PANEL PRE-APUESTA: handlers ─────────────────────────────────────────
+  const openPreBet = (pick: PreBetPick) => {
+    setPreBetPick(pick);
+    setPreBetNote("");
+    setShowPreBet(true);
+    // Scroll suave al panel
+    setTimeout(() => {
+      document.getElementById("pre-bet-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+  };
+
+  const sendPreBetToBankroll = (stake: number) => {
+    if (!preBetPick) return;
+    const newBet: BankBet = {
+      id: makeId(),
+      date: new Date().toISOString().slice(0, 10),
+      matchName: `${match.local || "Local"} vs ${match.visitante || "Visitante"}`,
+      pick: preBetPick.label + (preBetPick.line ? ` · ${preBetPick.line}` : ""),
+      market: preBetPick.marketValue,
+      stake: stake.toFixed(2),
+      odd: preBetPick.odd > 1 ? preBetPick.odd.toFixed(2) : "",
+      status: "pending",
+      source: "app",
+      notes: preBetNote,
+    };
+    setBankroll((prev) => ({ ...prev, bets: [newBet, ...prev.bets] }));
+    setShowPreBet(false);
+    setPreBetPick(null);
+    setPreBetNote("");
+    alert(`✅ Apuesta registrada: ${newBet.pick} · Stake: ${formatMoney(stake)}`);
   };
 
   const clearAll = () => {
@@ -4658,7 +4764,13 @@ setIndicators(importedIndicators);
               <article key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 shadow-lg">
                 <div className="flex items-start justify-between gap-3">
                   <div><h3 className="font-black">{pick.label}</h3><p className="text-sm text-slate-300">Modelo: {formatScore(pick.modelScore)} · Prob. casa: {pick.implied ? formatScore(pick.implied) : "—"}</p></div>
-                  <span className={`rounded-full px-3 py-1 text-sm font-bold ${pick.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pick.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>{pick.tier}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full px-3 py-1 text-sm font-bold ${pick.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pick.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>{pick.tier}</span>
+                    <button
+                      onClick={() => openPreBet({ label: pick.label, line: pick.line, score: pick.modelScore, odd: pick.odd, grade: pick.grade, marketValue: pick.marketValue, source: "Casa" })}
+                      className="rounded-xl bg-violet-400 px-3 py-2 text-xs font-black text-violet-950 shadow-lg shadow-violet-400/20"
+                    >⚡ Pre-apuesta</button>
+                  </div>
                 </div>
                 <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
                   <div className="rounded-xl bg-white/5 p-3">Cuota: <b>{pick.odd ? pick.odd.toFixed(2) : "—"}</b></div>
@@ -4690,7 +4802,13 @@ setIndicators(importedIndicators);
                     <h3 className="text-lg font-black">{pick.sources?.[0]?.period && pick.sources[0].period !== "full" ? `${getPeriodLabel(pick.sources[0].period)} · ` : ""}{pick.label}{pick.line ? ` · ${pick.line}` : ""}</h3>
                     <p className="text-sm text-slate-300">Señales: {pick.count} · SofaScore: {formatScore(pick.confidence)} · Registros: {pick.recentScore ? formatScore(pick.recentScore) : "—"} · Licuadora: {formatScore(pick.blendedScore)}</p>
                   </div>
-                  <div className={`rounded-full px-3 py-1 text-sm font-bold ${pick.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pick.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>{pick.tier}</div>
+                  <div className="flex items-center gap-2">
+                    <div className={`rounded-full px-3 py-1 text-sm font-bold ${pick.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pick.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>{pick.tier}</div>
+                    <button
+                      onClick={() => openPreBet({ label: pick.label, line: pick.line, score: pick.blendedScore, odd: pick.avgOdd, grade: pick.grade, marketValue: pick.marketValue, source: "SofaScore" })}
+                      className="rounded-xl bg-violet-400 px-3 py-2 text-xs font-black text-violet-950 shadow-lg shadow-violet-400/20"
+                    >⚡ Pre-apuesta</button>
+                  </div>
                 </div>
                 <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
                   <div className="rounded-xl bg-white/5 p-3">Cuota casa: <b>{pick.avgOdd ? pick.avgOdd.toFixed(2) : "—"}</b></div>
@@ -4702,6 +4820,111 @@ setIndicators(importedIndicators);
             ))}
           </div>
         </section>
+
+
+        {/* ── PANEL PRE-APUESTA ──────────────────────────────────────────── */}
+        {showPreBet && preBetPick && (() => {
+          const bank = bankrollStats.currentBank;
+          const va = bank > 0 ? strictValueBetAnalysis(preBetPick.score, preBetPick.odd, bank) : null;
+          const kelly = va?.kellyResult ?? null;
+          const lineAlert = lineMovementAnalysis.alerts.find((a) => a.movement.market.includes(preBetPick.marketValue.split("_")[0]));
+          return (
+            <section id="pre-bet-panel" className="mb-5 overflow-hidden rounded-[2rem] border-2 border-violet-400/50 bg-gradient-to-br from-violet-500/20 via-slate-900/80 to-indigo-500/20 p-1 shadow-2xl shadow-violet-500/30 backdrop-blur-xl">
+              <div className="rounded-[1.8rem] bg-slate-950/70 p-5">
+                <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.35em] text-violet-200/80">Decisión de apuesta</p>
+                    <h2 className="mt-1 text-2xl font-black">⚡ Panel pre-apuesta</h2>
+                    <p className="mt-1 text-sm text-slate-300">{match.local || "Local"} vs {match.visitante || "Visitante"}</p>
+                  </div>
+                  <button onClick={() => setShowPreBet(false)} className="rounded-xl bg-white/10 px-3 py-2 text-sm font-black text-slate-300">✕ Cerrar</button>
+                </div>
+                <div className={`mb-4 rounded-2xl border p-4 ${preBetPick.grade === "safe" ? "border-emerald-300/40 bg-emerald-400/10" : preBetPick.grade === "reasonable" ? "border-amber-300/40 bg-amber-400/10" : "border-rose-300/40 bg-rose-400/10"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-bold text-slate-400">{preBetPick.source}</p>
+                      <p className="text-xl font-black">{preBetPick.label}{preBetPick.line ? ` · ${preBetPick.line}` : ""}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-3xl font-black">{preBetPick.score.toFixed(0)}%</p>
+                      <p className="text-xs text-slate-400">Score del modelo</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className={`rounded-2xl border p-3 ${confidenceScore.grade === "alta" ? "border-emerald-300/20 bg-emerald-400/10" : confidenceScore.grade === "media" ? "border-amber-300/20 bg-amber-400/10" : "border-rose-300/20 bg-rose-400/10"}`}>
+                    <p className="text-xs text-slate-400">Confianza análisis</p>
+                    <p className="text-2xl font-black">{confidenceScore.total}/100</p>
+                    <p className={`text-xs font-bold ${confidenceScore.grade === "alta" ? "text-emerald-200" : confidenceScore.grade === "media" ? "text-amber-200" : "text-rose-200"}`}>{confidenceScore.grade === "alta" ? "✅ Alta" : confidenceScore.grade === "media" ? "🟡 Media" : "🔴 Baja"}</p>
+                  </div>
+                  <div className={`rounded-2xl border p-3 ${va && va.hasValue ? "border-emerald-300/20 bg-emerald-400/10" : "border-rose-300/20 bg-rose-400/10"}`}>
+                    <p className="text-xs text-slate-400">Cuota · Value</p>
+                    <p className="text-2xl font-black">{preBetPick.odd > 1 ? preBetPick.odd.toFixed(2) : "—"}</p>
+                    <p className={`text-xs font-bold ${va && va.edge >= 5 ? "text-emerald-200" : "text-rose-200"}`}>{va ? `${va.edge >= 0 ? "+" : ""}${va.edge.toFixed(1)}% edge` : "Sin cuota"}</p>
+                  </div>
+                  <div className={`rounded-2xl border p-3 ${kelly && kelly.tier !== "no_apostar" ? "border-violet-300/20 bg-violet-400/10" : "border-slate-300/20 bg-slate-800/40"}`}>
+                    <p className="text-xs text-slate-400">Kelly recomendado</p>
+                    {kelly && kelly.recommendedStake > 0 ? (
+                      <>
+                        <p className="text-2xl font-black">{formatMoney(kelly.recommendedStake)}</p>
+                        <p className={`text-xs font-bold ${kelly.tier === "fuerte" ? "text-emerald-200" : kelly.tier === "moderado" ? "text-amber-200" : "text-sky-200"}`}>{(kelly.kellyFraction * 100).toFixed(1)}% del bank</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-2xl font-black">—</p>
+                        <p className="text-xs font-bold text-rose-200">{bank <= 0 ? "Sin bank definido" : "Sin value suficiente"}</p>
+                      </>
+                    )}
+                  </div>
+                  <div className={`rounded-2xl border p-3 ${lineAlert ? lineAlert.color === "green" ? "border-emerald-300/20 bg-emerald-400/10" : lineAlert.color === "red" ? "border-rose-300/20 bg-rose-400/10" : "border-amber-300/20 bg-amber-400/10" : "border-slate-300/20 bg-slate-800/40"}`}>
+                    <p className="text-xs text-slate-400">Línea movida</p>
+                    {lineAlert ? (
+                      <>
+                        <p className={`text-lg font-black ${lineAlert.direction === "bajó" ? "text-emerald-100" : "text-rose-100"}`}>{lineAlert.direction === "bajó" ? "▼" : "▲"} {lineAlert.pct.toFixed(1)}%</p>
+                        <p className={`text-xs font-bold ${lineAlert.color === "green" ? "text-emerald-200" : lineAlert.color === "red" ? "text-rose-200" : "text-amber-200"}`}>{lineAlert.direction === "bajó" ? "Dinero entrando ✅" : "Dinero saliendo ⚠️"}</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-lg font-black text-slate-400">Sin dato</p>
+                        <p className="text-xs text-slate-500">Llena el detector de línea</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {va && (
+                  <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-bold ${va.verdictColor === "green" ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100" : va.verdictColor === "yellow" ? "border-amber-300/30 bg-amber-400/10 text-amber-100" : "border-rose-300/30 bg-rose-400/10 text-rose-100"}`}>
+                    {va.verdict}
+                  </div>
+                )}
+                {losingStreak.alert && (
+                  <div className="mb-4 rounded-2xl border border-rose-400/40 bg-rose-500/15 px-4 py-3">
+                    <p className="text-sm font-black text-rose-100">⚠️ {losingStreak.message}</p>
+                  </div>
+                )}
+                <div className="space-y-3">
+                  <input
+                    className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none"
+                    placeholder="Nota opcional: baja de jugador, contexto del partido..."
+                    value={preBetNote}
+                    onChange={(e) => setPreBetNote(e.target.value)}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    {kelly && kelly.recommendedStake > 0 && (
+                      <>
+                        <button onClick={() => sendPreBetToBankroll(kelly.recommendedStake)} className="rounded-2xl bg-violet-400 px-5 py-3 font-black text-violet-950 shadow-lg shadow-violet-400/20">✅ Apostar Kelly ({formatMoney(kelly.recommendedStake)})</button>
+                        <button onClick={() => sendPreBetToBankroll(kelly.recommendedStake * 0.5)} className="rounded-2xl border border-violet-300/30 bg-violet-400/15 px-4 py-3 font-black text-violet-100">🔽 Medio Kelly ({formatMoney(kelly.recommendedStake * 0.5)})</button>
+                      </>
+                    )}
+                    {[5, 10, 20, 50].map((amt) => (
+                      <button key={amt} onClick={() => sendPreBetToBankroll(amt)} className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3 text-sm font-black text-white">{formatMoney(amt)}</button>
+                    ))}
+                    <button onClick={() => setShowPreBet(false)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-slate-300">❌ Descartar</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          );
+        })()}
 
   {hasMinimumData && antiCasaAlerts.length > 0 ? (
           <section className="mb-5 rounded-3xl border border-orange-300/30 bg-orange-400/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
