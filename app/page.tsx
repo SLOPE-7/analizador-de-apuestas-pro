@@ -308,6 +308,19 @@ type PreBetPick = {
   marketValue: string;
   source: "SofaScore" | "Casa";
 };
+
+// ── ANÁLISIS IA ──────────────────────────────────────────────────────────────
+type AIAnalysisStatus = "idle" | "loading_web" | "loading_ai" | "done" | "error";
+type AIAnalysis = {
+  previa: string;
+  perfilLocal: string;
+  perfilVisitante: string;
+  pronostico: string;
+  picksIA: string;
+  valueAnalysis: string;
+  usedWeb: boolean;
+  generatedAt: string;
+};
 type SavedAnalysis = {
   id: string;
   savedAt: string;
@@ -2014,6 +2027,12 @@ export default function Page() {
   const [showPreBet, setShowPreBet] = useState(false);
   const [preBetPick, setPreBetPick] = useState<PreBetPick | null>(null);
   const [preBetNote, setPreBetNote] = useState("");
+  // ── ANÁLISIS IA ──────────────────────────────────────────────────────────
+  const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null);
+  const [aiStatus, setAiStatus] = useState<AIAnalysisStatus>("idle");
+  const [aiError, setAiError] = useState("");
+  const [showAI, setShowAI] = useState(false);
+  const [useWebSearch, setUseWebSearch] = useState(true);
 
   const bankrollStats = useMemo(() => buildBankrollStats(bankroll), [bankroll]);
   const dailyPlan = useMemo(() => buildDailyPlan(dailyPicks), [dailyPicks]);
@@ -3319,6 +3338,139 @@ export default function Page() {
     alert(`✅ Se agregaron ${toAdd.length} indicadores automáticos desde los registros.`);
   };
 
+  // ── ANÁLISIS IA: función principal ───────────────────────────────────────
+  const runAIAnalysis = async () => {
+    const local = match.local.trim();
+    const visit = match.visitante.trim();
+    if (!local || !visit) {
+      alert("Escribe el nombre de ambos equipos primero.");
+      return;
+    }
+
+    setAiStatus("loading_web");
+    setAiError("");
+    setAiAnalysis(null);
+    setShowAI(true);
+
+    // Contexto de cuotas y datos cargados
+    const hasOdds = match.oddLocal || match.oddDraw || match.oddVisit;
+    const oddsCtx = hasOdds
+      ? `Cuotas 1X2: Local ${match.oddLocal || "—"} / Empate ${match.oddDraw || "—"} / Visitante ${match.oddVisit || "—"}.`
+      : "No se han ingresado cuotas 1X2.";
+    const goalsCtx = houseMarkets.goalsOverOdd
+      ? `Over ${houseMarkets.goalsOverLine} goles @${houseMarkets.goalsOverOdd} / Under @${houseMarkets.goalsUnderOdd}.`
+      : "";
+    const cornersCtx = houseMarkets.cornersOverOdd
+      ? `Over ${houseMarkets.cornersOverLine} corners @${houseMarkets.cornersOverOdd} / Under @${houseMarkets.cornersUnderOdd}.`
+      : "";
+    const cardsCtx = houseMarkets.cardsOverOdd
+      ? `Over ${houseMarkets.cardsOverLine} tarjetas @${houseMarkets.cardsOverOdd} / Under @${houseMarkets.cardsUnderOdd}.`
+      : "";
+
+    const systemPrompt = `Eres un analista profesional de fútbol y apuestas deportivas. Respondes en español.
+Responde ÚNICAMENTE con un objeto JSON válido, sin texto extra, sin markdown, sin backticks.
+Sé CONCISO: máximo 80 palabras por campo. Prioriza datos concretos sobre texto genérico.
+JSON con exactamente estas claves (todas obligatorias):
+{"previa":"...","perfilLocal":"...","perfilVisitante":"...","pronostico":"...","picksIA":"...","valueAnalysis":"..."}`;
+
+    const userPrompt = `Analiza el partido: ${local} vs ${visit}.
+
+Datos del sistema de análisis:
+- ${oddsCtx}
+${goalsCtx ? `- Mercado goles: ${goalsCtx}` : ""}
+${cornersCtx ? `- Mercado corners: ${cornersCtx}` : ""}
+${cardsCtx ? `- Mercado tarjetas: ${cardsCtx}` : ""}
+
+Proporciona:
+1. PREVIA: Estado de forma reciente, contexto, bajas conocidas, importancia del partido
+2. PERFIL LOCAL (${local}): Estilo de juego, tendencias, rendimiento en casa
+3. PERFIL VISITANTE (${visit}): Estilo de juego, tendencias, rendimiento fuera  
+4. PRONÓSTICO: Resultado más probable con razonamiento
+5. PICKS IA: Picks concretos para goles over/under, corners y resultado con justificación
+6. VALUE: Basándote en las cuotas dadas, ¿qué mercados tienen value real?`;
+
+    try {
+      const tools = useWebSearch ? [{
+        type: "web_search_20250305",
+        name: "web_search",
+      }] : undefined;
+
+      setAiStatus("loading_ai");
+
+      const response = await fetch("/api/ai-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 2000,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
+          ...(tools ? { tools } : {}),
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as { error?: { message?: string } }).error?.message || `Error ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // Extraer texto de todos los bloques (incluyendo tool_result si usó web search)
+      const fullText = (data.content as Array<{ type: string; text?: string }>)
+        .map((block) => (block.type === "text" ? block.text ?? "" : ""))
+        .filter(Boolean)
+        .join("\n");
+
+      // Parser robusto: limpia backticks, intenta parsear, y si falla extrae campo a campo
+      const clean = fullText.replace(/```json|```/g, "").trim();
+
+      let parsed: AIAnalysis;
+      try {
+        parsed = JSON.parse(clean) as AIAnalysis;
+      } catch {
+        // JSON cortado: extraer cada campo con regex
+        const extract = (key: string): string => {
+          // Busca "key": "valor" — captura hasta la siguiente clave o fin
+          const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\[\\s\\S])*)"`, "s");
+          const m = clean.match(re);
+          if (m) return m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
+          // Intento alternativo: captura texto hasta próxima clave conocida
+          const keys = ["previa","perfilLocal","perfilVisitante","pronostico","picksIA","valueAnalysis"];
+          const idx = keys.indexOf(key);
+          const nextKey = keys[idx + 1];
+          const re2 = nextKey
+            ? new RegExp(`"${key}"\\s*:\\s*"([\\s\\S]*?)"\\s*,?\\s*"${nextKey}"`, "s")
+            : new RegExp(`"${key}"\\s*:\\s*"([\\s\\S]*?)"\\s*[,}]?\\s*$`, "s");
+          const m2 = clean.match(re2);
+          return m2 ? m2[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim() : "(sin datos — respuesta incompleta)";
+        };
+
+        parsed = {
+          previa:           extract("previa"),
+          perfilLocal:      extract("perfilLocal"),
+          perfilVisitante:  extract("perfilVisitante"),
+          pronostico:       extract("pronostico"),
+          picksIA:          extract("picksIA"),
+          valueAnalysis:    extract("valueAnalysis"),
+          usedWeb: useWebSearch,
+          generatedAt: new Date().toISOString(),
+        };
+      }
+
+      setAiAnalysis({
+        ...parsed,
+        usedWeb: useWebSearch,
+        generatedAt: new Date().toISOString(),
+      });
+      setAiStatus("done");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error desconocido";
+      setAiError(msg);
+      setAiStatus("error");
+    }
+  };
+
   // ── PANEL PRE-APUESTA: handlers ─────────────────────────────────────────
   const openPreBet = (pick: PreBetPick) => {
     setPreBetPick(pick);
@@ -4025,6 +4177,27 @@ setIndicators(importedIndicators);
             <input className={inputClass} inputMode="decimal" placeholder="💰 Cuota Visitante🛩️" value={match.oddVisit} onChange={(event) => setMatch({ ...match, oddVisit: event.target.value })} />
           </div>
 
+          {/* ── BOTÓN ANÁLISIS IA ────────────────────────────────────────── */}
+          {match.local.trim() && match.visitante.trim() && (
+            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-sky-300/20 bg-sky-400/10 p-3">
+              <div className="flex-1">
+                <p className="text-sm font-black text-sky-100">🤖 Análisis IA del partido</p>
+                <p className="text-xs text-slate-400">Claude analiza la previa, perfiles, pronóstico y value de las cuotas</p>
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-300">
+                <input type="checkbox" checked={useWebSearch} onChange={(e) => setUseWebSearch(e.target.checked)} className="accent-sky-400" />
+                🌐 Búsqueda web
+              </label>
+              <button
+                onClick={runAIAnalysis}
+                disabled={aiStatus === "loading_web" || aiStatus === "loading_ai"}
+                className="rounded-2xl bg-sky-400 px-5 py-3 font-black text-sky-950 shadow-lg shadow-sky-400/20 disabled:opacity-50"
+              >
+                {aiStatus === "loading_web" ? "🌐 Buscando..." : aiStatus === "loading_ai" ? "🤖 Analizando..." : "⚡ Analizar con IA"}
+              </button>
+            </div>
+          )}
+
           <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/35 p-4">
             <p className="mb-3 text-sm font-black text-slate-100">🎨 Colores visuales para banner/escudos</p>
             <div className="grid gap-3 sm:grid-cols-4">
@@ -4295,6 +4468,96 @@ setIndicators(importedIndicators);
           ) : null}
         </section>
     ) : null}
+
+        {/* ── PANEL RESULTADO ANÁLISIS IA ──────────────────────────────────── */}
+        {showAI && (
+          <section className="mb-5 overflow-hidden rounded-[2rem] border border-sky-300/30 bg-gradient-to-br from-sky-500/15 via-slate-900/80 to-indigo-500/15 p-1 shadow-2xl shadow-sky-500/20 backdrop-blur-xl">
+            <div className="rounded-[1.8rem] bg-slate-950/70 p-5">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.35em] text-sky-200/80">Inteligencia Artificial</p>
+                  <h2 className="mt-1 text-2xl font-black">🤖 Análisis IA — {match.local} vs {match.visitante}</h2>
+                  {aiAnalysis && <p className="mt-1 text-xs text-slate-400">{aiAnalysis.usedWeb ? "🌐 Con búsqueda web" : "🧠 Solo conocimiento Claude"} · {new Date(aiAnalysis.generatedAt).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</p>}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={runAIAnalysis} disabled={aiStatus === "loading_web" || aiStatus === "loading_ai"} className="rounded-2xl border border-sky-300/30 bg-sky-400/15 px-4 py-3 font-black text-sky-100 disabled:opacity-50">
+                    {aiStatus === "loading_web" ? "🌐 Buscando..." : aiStatus === "loading_ai" ? "🤖 Analizando..." : "🔄 Regenerar"}
+                  </button>
+                  <button onClick={() => setShowAI(false)} className="rounded-xl bg-white/10 px-3 py-2 text-sm font-black text-slate-300">✕</button>
+                </div>
+              </div>
+
+              {/* Loading */}
+              {(aiStatus === "loading_web" || aiStatus === "loading_ai") && (
+                <div className="space-y-3 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
+                    <p className="text-sm font-bold text-sky-200">
+                      {aiStatus === "loading_web" ? "🌐 Buscando información actualizada en la web..." : "🤖 Claude está analizando el partido..."}
+                    </p>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                    <div className="h-full animate-pulse rounded-full bg-sky-400" style={{ width: aiStatus === "loading_web" ? "40%" : "80%" }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Error */}
+              {aiStatus === "error" && (
+                <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-4">
+                  <p className="font-black text-rose-100">❌ Error al generar el análisis</p>
+                  <p className="mt-1 text-xs text-rose-200">{aiError}</p>
+                  <p className="mt-2 text-xs text-slate-400">Verifica que la app esté correctamente configurada con acceso a la API.</p>
+                </div>
+              )}
+
+              {/* Resultado */}
+              {aiStatus === "done" && aiAnalysis && (
+                <div className="space-y-4">
+                  {/* Previa */}
+                  <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+                    <p className="mb-2 text-xs font-black uppercase tracking-widest text-sky-200">📋 Previa del partido</p>
+                    <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.previa}</p>
+                  </div>
+
+                  {/* Perfiles */}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4">
+                      <p className="mb-2 text-xs font-black uppercase tracking-widest text-emerald-200">🏠 {match.local}</p>
+                      <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.perfilLocal}</p>
+                    </div>
+                    <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4">
+                      <p className="mb-2 text-xs font-black uppercase tracking-widest text-rose-200">✈️ {match.visitante}</p>
+                      <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.perfilVisitante}</p>
+                    </div>
+                  </div>
+
+                  {/* Pronóstico */}
+                  <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4">
+                    <p className="mb-2 text-xs font-black uppercase tracking-widest text-amber-200">🎯 Pronóstico</p>
+                    <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.pronostico}</p>
+                  </div>
+
+                  {/* Picks IA */}
+                  <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-4">
+                    <p className="mb-2 text-xs font-black uppercase tracking-widest text-violet-200">⚡ Picks sugeridos por IA</p>
+                    <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-line">{aiAnalysis.picksIA}</p>
+                  </div>
+
+                  {/* Value */}
+                  {aiAnalysis.valueAnalysis && (
+                    <div className="rounded-2xl border border-teal-300/20 bg-teal-400/10 p-4">
+                      <p className="mb-2 text-xs font-black uppercase tracking-widest text-teal-200">💰 Análisis de value en cuotas</p>
+                      <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.valueAnalysis}</p>
+                    </div>
+                  )}
+
+                  <p className="text-center text-xs text-slate-500">⚠️ El análisis IA es orientativo. Combínalo siempre con tu análisis estadístico propio.</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
     <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
