@@ -3401,7 +3401,7 @@ Proporciona:
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-5-20251022",
+          model: "claude-sonnet-4-6",
           max_tokens: 2000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
