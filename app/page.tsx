@@ -2360,6 +2360,17 @@ export default function Page() {
   const refereeCardAdjustment = useMemo(() => getRefereeCardAdjustment(refereeContext), [refereeContext]);
   const adjustedCardsExpected = useMemo(() => clamp(projection.expectedCards + refereeCardAdjustment.expectedBoost, 0, 12), [projection.expectedCards, refereeCardAdjustment.expectedBoost]);
   const activeIndicators = useMemo(() => indicators.filter((indicator) => isMarketAllowedByFocus(indicator.market, marketFocus)), [indicators, marketFocus]);
+
+  // ── Filtro estricto de apostabilidad ─────────────────────────────────────
+  // Solo entran en picks, parlay y proMode los indicadores que tienen:
+  // 1. Mercado apostable (no es racha/streak)
+  // 2. Cuota real de casa ingresada (>1)
+  const activeIndicatorsWithOdd = useMemo(() => activeIndicators.filter((ind) => {
+    const mv = getMarketValue(ind.market);
+    if (!mv) return false;
+    if (STREAK_MARKETS.has(mv)) return false;      // rachas → nunca apostables
+    return toNumber(ind.houseOdd) > 1;             // debe tener cuota real
+  }), [activeIndicators]);
   const matchProfile = useMemo(() => buildMatchProfile(activeIndicators, localRecent, visitRecent), [activeIndicators, localRecent, visitRecent]);
   const totalRecentCount = useMemo(() => countValidRows(localRecent).length + countValidRows(visitRecent).length, [localRecent, visitRecent]);
   const hasMinimumData = useMemo(() => {
@@ -2520,8 +2531,7 @@ export default function Page() {
 
   const results = useMemo<ResultPick[]>(() => {
     const grouped: Record<string, Indicator[]> = {};
-
-    activeIndicators.forEach((indicator) => {
+    activeIndicatorsWithOdd.forEach((indicator) => {
       const marketValue = getMarketValue(indicator.market);
       const pct = parseRecord(indicator.record);
       if (!marketValue || pct <= 0) return;
@@ -2590,6 +2600,29 @@ export default function Page() {
         if (confidence >= 70 && confidence < 85 && avgOdd >= 2.1) riskFlags.push("Value agresivo: buena cuota, pero riesgo medio/alto.");
         if (isCardMarket(marketValue) && rows.length <= 1) riskFlags.push("Tarjetas con una sola señal: confirmar árbitro/contexto antes de confiar.");
 
+        // ── TECHO DE SCORE POR CALIDAD DE DATOS ──────────────────────────
+        // Un pick solo puede llegar a 100% si tiene base sólida.
+        // Sin suficientes partidos recientes o señales → techo dinámico.
+        const localValid  = countValidRows(localRecent).length;
+        const visitValid  = countValidRows(visitRecent).length;
+        const totalValid  = localValid + visitValid;
+        const signalCount = rows.length;
+
+        let scoreCeiling = 100;
+        if (totalValid < 2 && signalCount < 2) {
+          scoreCeiling = 72; // muy pocos datos
+          riskFlags.push("⚠️ Techo 72%: menos de 2 partidos recientes y 1 sola señal.");
+        } else if (totalValid < 4 && signalCount < 2) {
+          scoreCeiling = 82;
+          riskFlags.push("⚠️ Techo 82%: pocos registros recientes. Agrega más partidos para mayor fiabilidad.");
+        } else if (totalValid < 4 || signalCount < 2) {
+          scoreCeiling = 88;
+        }
+
+        if (blendedScore > scoreCeiling) {
+          blendedScore = scoreCeiling;
+        }
+
         const grade = getGrade(blendedScore, riskFlags);
 
         return {
@@ -2615,7 +2648,42 @@ export default function Page() {
         const bRank = b.blendedScore - marketSortPenalty(b.marketValue, b.blendedScore, b.count);
         return bRank - aRank;
       });
-  }, [activeIndicators, localRecent, visitRecent, matchProfile, projection.expectedCorners, refereeCardAdjustment]);
+  }, [activeIndicatorsWithOdd, localRecent, visitRecent, matchProfile, projection.expectedCorners, refereeCardAdjustment]);
+
+  // ── SEÑALES CRUZADAS: local × visitante ──────────────────────────────────
+  // Si ambos equipos tienen el mismo mercado con cuota, genera un pick combinado
+  // más fuerte que cualquiera de los dos por separado.
+  const crossedSignals = useMemo(() => {
+    const byMarket: Record<string, { local?: ResultPick; visitante?: ResultPick }> = {};
+    results.forEach((pick) => {
+      const teamSides = pick.sources.map((s) => s.team);
+      if (teamSides.includes("local")) {
+        if (!byMarket[pick.marketValue]) byMarket[pick.marketValue] = {};
+        byMarket[pick.marketValue].local = pick;
+      }
+      if (teamSides.includes("visitante")) {
+        if (!byMarket[pick.marketValue]) byMarket[pick.marketValue] = {};
+        byMarket[pick.marketValue].visitante = pick;
+      }
+    });
+    return Object.entries(byMarket)
+      .filter(([, sides]) => sides.local && sides.visitante)
+      .map(([market, sides]) => {
+        const avg = ((sides.local!.blendedScore + sides.visitante!.blendedScore) / 2);
+        const boosted = clamp(avg + 6, 0, 99); // +6 por confirmación cruzada
+        return {
+          market,
+          label: sides.local!.label,
+          line: sides.local!.line,
+          localScore: sides.local!.blendedScore,
+          visitScore: sides.visitante!.blendedScore,
+          combinedScore: boosted,
+          grade: getGrade(boosted, []),
+        };
+      })
+      .filter((s) => s.combinedScore >= 75)
+      .sort((a, b) => b.combinedScore - a.combinedScore);
+  }, [results]);
 
   const contradictionAlerts = useMemo(() => detectContradictions(results), [results]);
 
@@ -5056,8 +5124,37 @@ setIndicators(importedIndicators);
 
         <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <h2 className="mb-4 text-2xl font-bold">📊 Picks clasificados</h2>
+
+          {/* ── SEÑALES CRUZADAS ──────────────────────────────────────────── */}
+          {crossedSignals.length > 0 && (
+            <div className="mb-4 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-4">
+              <p className="mb-2 text-xs font-black uppercase tracking-widest text-emerald-200">🔥 Señales cruzadas local × visitante</p>
+              <p className="mb-3 text-xs text-slate-300">Ambos equipos confirman el mismo mercado. Señal más fuerte que cualquiera sola.</p>
+              <div className="space-y-2">
+                {crossedSignals.map((sig) => (
+                  <div key={sig.market} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-300/20 bg-slate-950/40 px-4 py-3">
+                    <div>
+                      <p className="font-black text-emerald-100">{sig.label}{sig.line ? ` · ${sig.line}` : ""}</p>
+                      <p className="text-xs text-slate-400">Local {sig.localScore.toFixed(0)}% · Visitante {sig.visitScore.toFixed(0)}% → Combinado {sig.combinedScore.toFixed(0)}%</p>
+                    </div>
+                    <span className={`rounded-full px-3 py-1 text-xs font-black ${sig.grade === "safe" ? "bg-emerald-400/30 text-emerald-100" : sig.grade === "reasonable" ? "bg-amber-400/30 text-amber-100" : "bg-rose-400/30 text-rose-100"}`}>
+                      {sig.combinedScore.toFixed(0)}% 🔥
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="space-y-3">
-            {results.length === 0 ? <p className="text-sm text-slate-300">Todavía no hay picks. Agrega indicadores con registro tipo X/X.</p> : null}
+            {results.length === 0 && activeIndicators.length > 0 ? (
+              <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4">
+                <p className="font-black text-amber-100">⚠️ Sin picks apostables</p>
+                <p className="mt-1 text-sm text-slate-300">Tienes indicadores cargados pero ninguno tiene cuota de casa ingresada. Los mercados de racha (victorias, portería a cero, etc.) no generan picks — solo perfilan el partido. Agrega la cuota en el campo "Cuota casa" de cada indicador apostable.</p>
+              </div>
+            ) : results.length === 0 ? (
+              <p className="text-sm text-slate-300">Todavía no hay picks. Agrega indicadores con registro tipo X/X y su cuota de casa.</p>
+            ) : null}
             {results.map((pick) => (
               <article key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 shadow-lg">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -5544,6 +5641,108 @@ setIndicators(importedIndicators);
           </section>
         ) : null}
         
+ {/* ── MEJORA 5: Calibración de predicciones ─────────────────────────── */}
+        <section className="mb-5 overflow-hidden rounded-[2rem] border border-teal-300/20 bg-gradient-to-br from-teal-400/10 via-slate-900/65 to-cyan-500/10 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
+          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.35em] text-teal-200/80">Calibrador de picks</p>
+                <h2 className="mt-1 text-2xl font-black">📐 Resultado real vs predicción</h2>
+                <p className="mt-1 text-sm text-slate-300">Registra el resultado real de cada partido. La app aprende qué tipos de pick aciertan más para que concentres el dinero ahí.</p>
+              </div>
+              <button onClick={() => setShowCalibration((v) => !v)} className="rounded-2xl border border-teal-300/30 bg-teal-400/15 px-4 py-3 font-black text-teal-100">
+                {showCalibration ? "▲ Ocultar" : "▼ Ver calibrador"}
+              </button>
+            </div>
+            {calibration.outcomes.length > 0 && (
+              <div className="grid gap-3 sm:grid-cols-4">
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                  <p className="text-xs text-slate-400">Partidos registrados</p>
+                  <p className="mt-1 text-3xl font-black text-teal-100">{calibrationStats.total}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                  <p className="text-xs text-slate-400">Acierto global</p>
+                  <p className={`mt-1 text-3xl font-black ${calibrationStats.accuracy >= 70 ? "text-emerald-100" : calibrationStats.accuracy >= 50 ? "text-amber-100" : "text-rose-100"}`}>{calibrationStats.accuracy.toFixed(1)}%</p>
+                </div>
+                {(["safe", "reasonable", "risky"] as Grade[]).map((grade) => {
+                  const s = calibrationStats.byGrade[grade];
+                  return s ? (
+                    <div key={grade} className="rounded-2xl border border-white/10 bg-white/10 p-4">
+                      <p className="text-xs text-slate-400">{grade === "safe" ? "🟢 Picks seguros" : grade === "reasonable" ? "🟡 Razonables" : "🔴 Riesgosos"}</p>
+                      <p className="mt-1 text-xl font-black">{s.total > 0 ? ((s.correct / s.total) * 100).toFixed(0) : "—"}%</p>
+                      <p className="text-xs text-slate-400">{s.correct}/{s.total} picks</p>
+                    </div>
+                  ) : null;
+                })}
+              </div>
+            )}
+            {showCalibration && (
+              <div className="mt-4 space-y-4">
+                <div className="rounded-2xl border border-teal-300/20 bg-slate-950/45 p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-black">➕ Registrar resultado del partido</h3>
+                    <button onClick={prefillOutcomeDraft} className="rounded-xl bg-teal-400 px-3 py-2 text-xs font-black text-teal-950">⚡ Usar picks del análisis actual</button>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <input className={inputClass} type="date" value={outcomeDraft.date} onChange={(e) => setOutcomeDraft((p) => ({ ...p, date: e.target.value }))} />
+                    <input className={inputClass} placeholder="Partido (ej: Betis vs Barça)" value={outcomeDraft.matchName} onChange={(e) => setOutcomeDraft((p) => ({ ...p, matchName: e.target.value }))} />
+                    <select className={selectClass} value={outcomeDraft.winner} onChange={(e) => setOutcomeDraft((p) => ({ ...p, winner: e.target.value as MatchOutcome["winner"] }))}>
+                      <option value="">Ganador real</option>
+                      <option value="local">Local</option>
+                      <option value="empate">Empate</option>
+                      <option value="visitante">Visitante</option>
+                    </select>
+                    <input className={inputClass} placeholder="Goles real (ej: 2-1)" value={outcomeDraft.actualGoals} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualGoals: e.target.value }))} />
+                    <input className={inputClass} placeholder="Corners total real" value={outcomeDraft.actualCorners} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualCorners: e.target.value }))} />
+                    <input className={inputClass} placeholder="Tarjetas total real" value={outcomeDraft.actualCards} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualCards: e.target.value }))} />
+                    <input className={`${inputClass} lg:col-span-2`} placeholder="Nota: qué aprendiste de este partido" value={outcomeDraft.notes} onChange={(e) => setOutcomeDraft((p) => ({ ...p, notes: e.target.value }))} />
+                  </div>
+                  {outcomeDraft.predictedPicks.length > 0 && (
+                    <div className="mt-3 rounded-xl bg-white/5 p-3">
+                      <p className="mb-2 text-xs text-slate-400">Picks a evaluar:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {outcomeDraft.predictedPicks.map((pk, i) => (
+                          <span key={i} className={`rounded-full px-3 py-1 text-xs font-bold ${pk.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pk.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>
+                            {pk.label}{pk.line ? ` · ${pk.line}` : ""} ({pk.score.toFixed(0)}%)
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <button onClick={addOutcome} className="mt-3 rounded-2xl bg-teal-400 px-4 py-3 font-black text-teal-950">💾 Guardar resultado real</button>
+                </div>
+                <div className="space-y-2">
+                  {calibration.outcomes.length === 0 && <p className="text-sm text-slate-300">Sin resultados todavía. Registra el primero después de que termine un partido analizado.</p>}
+                  {calibration.outcomes.slice(0, 10).map((outcome) => (
+                    <div key={outcome.id} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4 lg:grid-cols-[1fr_auto]">
+                      <div>
+                        <p className="text-xs text-slate-400">{outcome.date}</p>
+                        <p className="font-black">{outcome.matchName}</p>
+                        <div className="mt-1 flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full bg-white/10 px-2 py-1">{outcome.winner === "local" ? "🏠 Local" : outcome.winner === "visitante" ? "✈️ Visitante" : outcome.winner === "empate" ? "🤝 Empate" : "—"}</span>
+                          {outcome.actualGoals && <span className="rounded-full bg-white/10 px-2 py-1">⚽ {outcome.actualGoals}</span>}
+                          {outcome.actualCorners && <span className="rounded-full bg-white/10 px-2 py-1">🚩 {outcome.actualCorners} corners</span>}
+                          {outcome.actualCards && <span className="rounded-full bg-white/10 px-2 py-1">🟨 {outcome.actualCards} tarjetas</span>}
+                        </div>
+                        {outcome.notes && <p className="mt-1 text-xs text-slate-400 italic">💡 {outcome.notes}</p>}
+                        {outcome.predictedPicks.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {outcome.predictedPicks.map((pk, i) => (
+                              <span key={i} className="rounded-full bg-white/5 px-2 py-1 text-[11px] text-slate-300">{pk.label} ({pk.score.toFixed(0)}%)</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={() => deleteOutcome(outcome.id)} className="self-start rounded-xl bg-rose-500/80 px-3 py-2 text-xs font-black text-white">🗑️</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+
+
 <div className="mt-4 grid gap-4 lg:grid-cols-3">
               <div className="rounded-3xl border border-white/10 bg-white/10 p-4 lg:col-span-2">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -5756,107 +5955,6 @@ setIndicators(importedIndicators);
                     </div>
                   </div>
                 ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-   {/* ── MEJORA 5: Calibración de predicciones ─────────────────────────── */}
-        <section className="mb-5 overflow-hidden rounded-[2rem] border border-teal-300/20 bg-gradient-to-br from-teal-400/10 via-slate-900/65 to-cyan-500/10 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
-          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.35em] text-teal-200/80">Calibrador de picks</p>
-                <h2 className="mt-1 text-2xl font-black">📐 Resultado real vs predicción</h2>
-                <p className="mt-1 text-sm text-slate-300">Registra el resultado real de cada partido. La app aprende qué tipos de pick aciertan más para que concentres el dinero ahí.</p>
-              </div>
-              <button onClick={() => setShowCalibration((v) => !v)} className="rounded-2xl border border-teal-300/30 bg-teal-400/15 px-4 py-3 font-black text-teal-100">
-                {showCalibration ? "▲ Ocultar" : "▼ Ver calibrador"}
-              </button>
-            </div>
-            {calibration.outcomes.length > 0 && (
-              <div className="grid gap-3 sm:grid-cols-4">
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs text-slate-400">Partidos registrados</p>
-                  <p className="mt-1 text-3xl font-black text-teal-100">{calibrationStats.total}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs text-slate-400">Acierto global</p>
-                  <p className={`mt-1 text-3xl font-black ${calibrationStats.accuracy >= 70 ? "text-emerald-100" : calibrationStats.accuracy >= 50 ? "text-amber-100" : "text-rose-100"}`}>{calibrationStats.accuracy.toFixed(1)}%</p>
-                </div>
-                {(["safe", "reasonable", "risky"] as Grade[]).map((grade) => {
-                  const s = calibrationStats.byGrade[grade];
-                  return s ? (
-                    <div key={grade} className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                      <p className="text-xs text-slate-400">{grade === "safe" ? "🟢 Picks seguros" : grade === "reasonable" ? "🟡 Razonables" : "🔴 Riesgosos"}</p>
-                      <p className="mt-1 text-xl font-black">{s.total > 0 ? ((s.correct / s.total) * 100).toFixed(0) : "—"}%</p>
-                      <p className="text-xs text-slate-400">{s.correct}/{s.total} picks</p>
-                    </div>
-                  ) : null;
-                })}
-              </div>
-            )}
-            {showCalibration && (
-              <div className="mt-4 space-y-4">
-                <div className="rounded-2xl border border-teal-300/20 bg-slate-950/45 p-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="font-black">➕ Registrar resultado del partido</h3>
-                    <button onClick={prefillOutcomeDraft} className="rounded-xl bg-teal-400 px-3 py-2 text-xs font-black text-teal-950">⚡ Usar picks del análisis actual</button>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    <input className={inputClass} type="date" value={outcomeDraft.date} onChange={(e) => setOutcomeDraft((p) => ({ ...p, date: e.target.value }))} />
-                    <input className={inputClass} placeholder="Partido (ej: Betis vs Barça)" value={outcomeDraft.matchName} onChange={(e) => setOutcomeDraft((p) => ({ ...p, matchName: e.target.value }))} />
-                    <select className={selectClass} value={outcomeDraft.winner} onChange={(e) => setOutcomeDraft((p) => ({ ...p, winner: e.target.value as MatchOutcome["winner"] }))}>
-                      <option value="">Ganador real</option>
-                      <option value="local">Local</option>
-                      <option value="empate">Empate</option>
-                      <option value="visitante">Visitante</option>
-                    </select>
-                    <input className={inputClass} placeholder="Goles real (ej: 2-1)" value={outcomeDraft.actualGoals} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualGoals: e.target.value }))} />
-                    <input className={inputClass} placeholder="Corners total real" value={outcomeDraft.actualCorners} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualCorners: e.target.value }))} />
-                    <input className={inputClass} placeholder="Tarjetas total real" value={outcomeDraft.actualCards} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualCards: e.target.value }))} />
-                    <input className={`${inputClass} lg:col-span-2`} placeholder="Nota: qué aprendiste de este partido" value={outcomeDraft.notes} onChange={(e) => setOutcomeDraft((p) => ({ ...p, notes: e.target.value }))} />
-                  </div>
-                  {outcomeDraft.predictedPicks.length > 0 && (
-                    <div className="mt-3 rounded-xl bg-white/5 p-3">
-                      <p className="mb-2 text-xs text-slate-400">Picks a evaluar:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {outcomeDraft.predictedPicks.map((pk, i) => (
-                          <span key={i} className={`rounded-full px-3 py-1 text-xs font-bold ${pk.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pk.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>
-                            {pk.label}{pk.line ? ` · ${pk.line}` : ""} ({pk.score.toFixed(0)}%)
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <button onClick={addOutcome} className="mt-3 rounded-2xl bg-teal-400 px-4 py-3 font-black text-teal-950">💾 Guardar resultado real</button>
-                </div>
-                <div className="space-y-2">
-                  {calibration.outcomes.length === 0 && <p className="text-sm text-slate-300">Sin resultados todavía. Registra el primero después de que termine un partido analizado.</p>}
-                  {calibration.outcomes.slice(0, 10).map((outcome) => (
-                    <div key={outcome.id} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4 lg:grid-cols-[1fr_auto]">
-                      <div>
-                        <p className="text-xs text-slate-400">{outcome.date}</p>
-                        <p className="font-black">{outcome.matchName}</p>
-                        <div className="mt-1 flex flex-wrap gap-2 text-xs">
-                          <span className="rounded-full bg-white/10 px-2 py-1">{outcome.winner === "local" ? "🏠 Local" : outcome.winner === "visitante" ? "✈️ Visitante" : outcome.winner === "empate" ? "🤝 Empate" : "—"}</span>
-                          {outcome.actualGoals && <span className="rounded-full bg-white/10 px-2 py-1">⚽ {outcome.actualGoals}</span>}
-                          {outcome.actualCorners && <span className="rounded-full bg-white/10 px-2 py-1">🚩 {outcome.actualCorners} corners</span>}
-                          {outcome.actualCards && <span className="rounded-full bg-white/10 px-2 py-1">🟨 {outcome.actualCards} tarjetas</span>}
-                        </div>
-                        {outcome.notes && <p className="mt-1 text-xs text-slate-400 italic">💡 {outcome.notes}</p>}
-                        {outcome.predictedPicks.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {outcome.predictedPicks.map((pk, i) => (
-                              <span key={i} className="rounded-full bg-white/5 px-2 py-1 text-[11px] text-slate-300">{pk.label} ({pk.score.toFixed(0)}%)</span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      <button onClick={() => deleteOutcome(outcome.id)} className="self-start rounded-xl bg-rose-500/80 px-3 py-2 text-xs font-black text-white">🗑️</button>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
           </div>
