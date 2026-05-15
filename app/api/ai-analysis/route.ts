@@ -18,7 +18,11 @@ export async function POST(req: NextRequest) {
     const data = await response.json();
 
     if (!response.ok) {
-      return NextResponse.json(data, { status: response.status });
+      // Devuelve el error completo de Anthropic
+      return NextResponse.json(
+        { error: { message: JSON.stringify(data) } },
+        { status: response.status }
+      );
     }
 
     return NextResponse.json(data);
