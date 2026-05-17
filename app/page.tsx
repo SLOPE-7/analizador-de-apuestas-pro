@@ -2055,7 +2055,7 @@ const autoFillFromAPIFootball = async (count: number = 5) => {
       const res = await fetch("/api/football-data", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ localTeam: local, visitTeam: visit, matchCount: count, season: 2024 }),
+        body: JSON.stringify({ localTeam: local, visitTeam: visit, matchCount: count, season: 2025 }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
