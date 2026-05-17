@@ -1,3 +1,4 @@
+// app/api/ai-analysis/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
@@ -18,7 +19,6 @@ export async function POST(req: NextRequest) {
     const data = await response.json();
 
     if (!response.ok) {
-      // Devuelve el error completo de Anthropic
       return NextResponse.json(
         { error: { message: JSON.stringify(data) } },
         { status: response.status }

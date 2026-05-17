@@ -47,6 +47,9 @@ type RecentRow = {
   cornersAgainst: string;
   cardsFor: string;
   cardsAgainst: string;
+  shotsTotal: string;
+  shotsOnTarget: string;
+  fouls: string;
 };
 
 type HouseMarket = {
@@ -526,6 +529,9 @@ function emptyRecentRow(): RecentRow {
     cornersAgainst: "",
     cardsFor: "",
     cardsAgainst: "",
+    shotsTotal: "",
+    shotsOnTarget: "",
+    fouls: "",
   };
 }
 
@@ -2032,7 +2038,56 @@ export default function Page() {
   const [aiStatus, setAiStatus] = useState<AIAnalysisStatus>("idle");
   const [aiError, setAiError] = useState("");
   const [showAI, setShowAI] = useState(false);
-  const [useWebSearch, setUseWebSearch] = useState(true);
+ const [useWebSearch, setUseWebSearch] = useState(true);
+  const [apiFootballStatus, setApiFootballStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [apiFootballError, setApiFootballError] = useState("");
+
+const autoFillFromAPIFootball = async (count: number = 5) => {
+    const local = match.local.trim();
+    const visit = match.visitante.trim();
+    if (!local || !visit) {
+      alert("Escribe el nombre de ambos equipos primero.");
+      return;
+    }
+    setApiFootballStatus("loading");
+    setApiFootballError("");
+    try {
+      const res = await fetch("/api/football-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ localTeam: local, visitTeam: visit, matchCount: count, season: 2024 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+
+      const toRows = (matches: Array<{
+        goalsFor: number; goalsAgainst: number;
+        cornersFor: number; cornersAgainst: number;
+        cardsFor: number; cardsAgainst: number;
+        shotsTotal: number; shotsOnTarget: number; fouls: number;
+      }>): RecentRow[] =>
+        matches.map((m) => ({
+          id: makeId(),
+          goalsFor: String(m.goalsFor),
+          goalsAgainst: String(m.goalsAgainst),
+          cornersFor: String(m.cornersFor),
+          cornersAgainst: String(m.cornersAgainst),
+          cardsFor: String(m.cardsFor),
+          cardsAgainst: String(m.cardsAgainst),
+          shotsTotal: String(m.shotsTotal),
+          shotsOnTarget: String(m.shotsOnTarget),
+          fouls: String(m.fouls),
+        }));
+
+      if (data.local?.matches?.length) setLocalRecent(toRows(data.local.matches));
+      if (data.visitante?.matches?.length) setVisitRecent(toRows(data.visitante.matches));
+      setApiFootballStatus("done");
+      alert(`✅ Datos cargados: ${data.local.matches.length} partidos del local, ${data.visitante.matches.length} del visitante.`);
+    } catch (err) {
+      setApiFootballError(err instanceof Error ? err.message : "Error desconocido");
+      setApiFootballStatus("error");
+    }
+  };
 
   const bankrollStats = useMemo(() => buildBankrollStats(bankroll), [bankroll]);
   const dailyPlan = useMemo(() => buildDailyPlan(dailyPicks), [dailyPicks]);
@@ -3406,8 +3461,7 @@ export default function Page() {
     alert(`✅ Se agregaron ${toAdd.length} indicadores automáticos desde los registros.`);
   };
 
-  // ── ANÁLISIS IA: función principal ───────────────────────────────────────
-  const runAIAnalysis = async () => {
+   const runAIAnalysis = async () => {
     const local = match.local.trim();
     const visit = match.visitante.trim();
     if (!local || !visit) {
@@ -3420,7 +3474,6 @@ export default function Page() {
     setAiAnalysis(null);
     setShowAI(true);
 
-    // Contexto de cuotas y datos cargados
     const hasOdds = match.oddLocal || match.oddDraw || match.oddVisit;
     const oddsCtx = hasOdds
       ? `Cuotas 1X2: Local ${match.oddLocal || "—"} / Empate ${match.oddDraw || "—"} / Visitante ${match.oddVisit || "—"}.`
@@ -3435,34 +3488,53 @@ export default function Page() {
       ? `Over ${houseMarkets.cardsOverLine} tarjetas @${houseMarkets.cardsOverOdd} / Under @${houseMarkets.cardsUnderOdd}.`
       : "";
 
-    const systemPrompt = `Eres un analista profesional de fútbol y apuestas deportivas. Respondes en español.
+    // Resumen de forma reciente con nuevos campos
+    const summarizeRecent = (rows: RecentRow[], label: string) => {
+      const valid = rows.filter((r) => r.goalsFor !== "" || r.goalsAgainst !== "");
+      if (!valid.length) return "";
+      const avgGoalsFor = (valid.reduce((a, r) => a + Number(r.goalsFor || 0), 0) / valid.length).toFixed(1);
+      const avgGoalsAgainst = (valid.reduce((a, r) => a + Number(r.goalsAgainst || 0), 0) / valid.length).toFixed(1);
+      const avgCorners = (valid.reduce((a, r) => a + Number(r.cornersFor || 0), 0) / valid.length).toFixed(1);
+      const avgCards = (valid.reduce((a, r) => a + Number(r.cardsFor || 0), 0) / valid.length).toFixed(1);
+      const avgShots = (valid.reduce((a, r) => a + Number(r.shotsTotal || 0), 0) / valid.length).toFixed(1);
+      const avgShotsOT = (valid.reduce((a, r) => a + Number(r.shotsOnTarget || 0), 0) / valid.length).toFixed(1);
+      const avgFouls = (valid.reduce((a, r) => a + Number(r.fouls || 0), 0) / valid.length).toFixed(1);
+      const btts = valid.filter((r) => Number(r.goalsFor) > 0 && Number(r.goalsAgainst) > 0).length;
+      return `${label}: GF ${avgGoalsFor} GC ${avgGoalsAgainst} | Corners ${avgCorners} | Tarjetas ${avgCards} | Disparos ${avgShots} (a puerta ${avgShotsOT}) | Faltas ${avgFouls} | BTTS ${btts}/${valid.length}`;
+    };
+
+    const localCtx = summarizeRecent(localRecent, `${local} como local`);
+    const visitCtx = summarizeRecent(visitRecent, `${visit} como visitante`);
+
+    const systemPrompt = `Eres un analista profesional de fútbol y apuestas deportivas. Respondes SIEMPRE en español.
 Responde ÚNICAMENTE con un objeto JSON válido, sin texto extra, sin markdown, sin backticks.
-Sé CONCISO: máximo 80 palabras por campo. Prioriza datos concretos sobre texto genérico.
+Sé CONCRETO y DIRECTO: máximo 100 palabras por campo. Usa los datos reales del sistema.
 JSON con exactamente estas claves (todas obligatorias):
-{"previa":"...","perfilLocal":"...","perfilVisitante":"...","pronostico":"...","picksIA":"...","valueAnalysis":"..."}`;
+{"previa":"...","perfilLocal":"...","perfilVisitante":"...","pronostico":"...","picksIA":"...","valueAnalysis":"..."}
 
-    const userPrompt = `Analiza el partido: ${local} vs ${visit}.
+INSTRUCCIONES POR CAMPO:
+- previa: estado de forma reciente, bajas conocidas, contexto del partido, importancia
+- perfilLocal: estilo, tendencias en casa, datos de disparos/corners/tarjetas, fortalezas y debilidades
+- perfilVisitante: igual pero como visitante
+- pronostico: resultado más probable con % estimado, mercado más seguro y por qué
+- picksIA: lista los 3 mejores picks con formato "Pick · Línea · Justificación en 1 línea". Incluye cuota sugerida mínima.
+- valueAnalysis: para cada cuota ingresada, indica si hay value (modelo > implied) o no, y cuál es el mejor value del partido`;
 
-Datos del sistema de análisis:
-- ${oddsCtx}
-${goalsCtx ? `- Mercado goles: ${goalsCtx}` : ""}
-${cornersCtx ? `- Mercado corners: ${cornersCtx}` : ""}
-${cardsCtx ? `- Mercado tarjetas: ${cardsCtx}` : ""}
+    const userPrompt = `Analiza: ${local} vs ${visit}
 
-Proporciona:
-1. PREVIA: Estado de forma reciente, contexto, bajas conocidas, importancia del partido
-2. PERFIL LOCAL (${local}): Estilo de juego, tendencias, rendimiento en casa
-3. PERFIL VISITANTE (${visit}): Estilo de juego, tendencias, rendimiento fuera  
-4. PRONÓSTICO: Resultado más probable con razonamiento
-5. PICKS IA: Picks concretos para goles over/under, corners y resultado con justificación
-6. VALUE: Basándote en las cuotas dadas, ¿qué mercados tienen value real?`;
+DATOS DEL SISTEMA:
+${oddsCtx}
+${goalsCtx ? `Goles: ${goalsCtx}` : ""}
+${cornersCtx ? `Corners: ${cornersCtx}` : ""}
+${cardsCtx ? `Tarjetas: ${cardsCtx}` : ""}
+${localCtx ? `\nForma reciente:\n${localCtx}` : ""}
+${visitCtx ? `${visitCtx}` : ""}
+
+Perfil del partido: ${matchProfile.type}
+Proyección goles: ${projection.expectedGoals.toFixed(1)} | Corners: ${projection.expectedCorners.toFixed(1)} | Tarjetas: ${adjustedCardsExpected.toFixed(1)}`;
 
     try {
-      const tools = useWebSearch ? [{
-        type: "web_search_20250305",
-        name: "web_search",
-      }] : undefined;
-
+      const tools = useWebSearch ? [{ type: "web_search_20250305", name: "web_search" }] : undefined;
       setAiStatus("loading_ai");
 
       const response = await fetch("/api/ai-analysis", {
@@ -3484,53 +3556,43 @@ Proporciona:
 
       const data = await response.json();
 
-      // Extraer texto de todos los bloques (incluyendo tool_result si usó web search)
       const fullText = (data.content as Array<{ type: string; text?: string }>)
         .map((block) => (block.type === "text" ? block.text ?? "" : ""))
         .filter(Boolean)
         .join("\n");
 
-      // Parser robusto: limpia backticks, intenta parsear, y si falla extrae campo a campo
       const clean = fullText.replace(/```json|```/g, "").trim();
 
       let parsed: AIAnalysis;
       try {
         parsed = JSON.parse(clean) as AIAnalysis;
       } catch {
-        // JSON cortado: extraer cada campo con regex
         const extract = (key: string): string => {
-          // Busca "key": "valor" — captura hasta la siguiente clave o fin
           const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\[\\s\\S])*)"`, "s");
           const m = clean.match(re);
           if (m) return m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
-          // Intento alternativo: captura texto hasta próxima clave conocida
-          const keys = ["previa","perfilLocal","perfilVisitante","pronostico","picksIA","valueAnalysis"];
+          const keys = ["previa", "perfilLocal", "perfilVisitante", "pronostico", "picksIA", "valueAnalysis"];
           const idx = keys.indexOf(key);
           const nextKey = keys[idx + 1];
           const re2 = nextKey
             ? new RegExp(`"${key}"\\s*:\\s*"([\\s\\S]*?)"\\s*,?\\s*"${nextKey}"`, "s")
             : new RegExp(`"${key}"\\s*:\\s*"([\\s\\S]*?)"\\s*[,}]?\\s*$`, "s");
           const m2 = clean.match(re2);
-          return m2 ? m2[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim() : "(sin datos — respuesta incompleta)";
+          return m2 ? m2[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim() : "(sin datos)";
         };
-
         parsed = {
-          previa:           extract("previa"),
-          perfilLocal:      extract("perfilLocal"),
-          perfilVisitante:  extract("perfilVisitante"),
-          pronostico:       extract("pronostico"),
-          picksIA:          extract("picksIA"),
-          valueAnalysis:    extract("valueAnalysis"),
+          previa: extract("previa"),
+          perfilLocal: extract("perfilLocal"),
+          perfilVisitante: extract("perfilVisitante"),
+          pronostico: extract("pronostico"),
+          picksIA: extract("picksIA"),
+          valueAnalysis: extract("valueAnalysis"),
           usedWeb: useWebSearch,
           generatedAt: new Date().toISOString(),
         };
       }
 
-      setAiAnalysis({
-        ...parsed,
-        usedWeb: useWebSearch,
-        generatedAt: new Date().toISOString(),
-      });
+      setAiAnalysis({ ...parsed, usedWeb: useWebSearch, generatedAt: new Date().toISOString() });
       setAiStatus("done");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error desconocido";
@@ -4265,6 +4327,22 @@ setIndicators(importedIndicators);
               </button>
             </div>
           )}
+
+<div className="flex flex-wrap gap-2">
+  <button
+    onClick={() => autoFillFromAPIFootball(5)}
+    disabled={apiFootballStatus === "loading" || !match.local || !match.visitante}
+    className="rounded-2xl border border-emerald-300/30 bg-emerald-400/15 px-4 py-3 font-black text-emerald-100 disabled:opacity-50"
+  >
+    {apiFootballStatus === "loading" ? "⏳ Cargando datos..." : "⚽ Auto-Fill API-Football"}
+  </button>
+  {apiFootballStatus === "done" && (
+    <span className="self-center text-xs text-emerald-300">✅ Datos cargados automáticamente</span>
+  )}
+  {apiFootballStatus === "error" && (
+    <span className="self-center text-xs text-rose-300">❌ {apiFootballError}</span>
+  )}
+</div>
 
           <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/35 p-4">
             <p className="mb-3 text-sm font-black text-slate-100">🎨 Colores visuales para banner/escudos</p>
