@@ -3461,7 +3461,8 @@ const autoFillFromAPIFootball = async (count: number = 5) => {
     alert(`✅ Se agregaron ${toAdd.length} indicadores automáticos desde los registros.`);
   };
 
-   const runAIAnalysis = async () => {
+ 
+  const runAIAnalysis = async () => {
     const local = match.local.trim();
     const visit = match.visitante.trim();
     if (!local || !visit) {
@@ -3474,6 +3475,7 @@ const autoFillFromAPIFootball = async (count: number = 5) => {
     setAiAnalysis(null);
     setShowAI(true);
 
+    // ── Contexto de cuotas ───────────────────────────────────────────────
     const hasOdds = match.oddLocal || match.oddDraw || match.oddVisit;
     const oddsCtx = hasOdds
       ? `Cuotas 1X2: Local ${match.oddLocal || "—"} / Empate ${match.oddDraw || "—"} / Visitante ${match.oddVisit || "—"}.`
@@ -3488,53 +3490,66 @@ const autoFillFromAPIFootball = async (count: number = 5) => {
       ? `Over ${houseMarkets.cardsOverLine} tarjetas @${houseMarkets.cardsOverOdd} / Under @${houseMarkets.cardsUnderOdd}.`
       : "";
 
-    // Resumen de forma reciente con nuevos campos
+    // ── Resumen de forma reciente manual (si el usuario ya cargó datos) ──
     const summarizeRecent = (rows: RecentRow[], label: string) => {
       const valid = rows.filter((r) => r.goalsFor !== "" || r.goalsAgainst !== "");
       if (!valid.length) return "";
-      const avgGoalsFor = (valid.reduce((a, r) => a + Number(r.goalsFor || 0), 0) / valid.length).toFixed(1);
-      const avgGoalsAgainst = (valid.reduce((a, r) => a + Number(r.goalsAgainst || 0), 0) / valid.length).toFixed(1);
-      const avgCorners = (valid.reduce((a, r) => a + Number(r.cornersFor || 0), 0) / valid.length).toFixed(1);
-      const avgCards = (valid.reduce((a, r) => a + Number(r.cardsFor || 0), 0) / valid.length).toFixed(1);
-      const avgShots = (valid.reduce((a, r) => a + Number(r.shotsTotal || 0), 0) / valid.length).toFixed(1);
-      const avgShotsOT = (valid.reduce((a, r) => a + Number(r.shotsOnTarget || 0), 0) / valid.length).toFixed(1);
-      const avgFouls = (valid.reduce((a, r) => a + Number(r.fouls || 0), 0) / valid.length).toFixed(1);
+      const avg = (fn: (r: RecentRow) => number) =>
+        (valid.reduce((a, r) => a + fn(r), 0) / valid.length).toFixed(1);
       const btts = valid.filter((r) => Number(r.goalsFor) > 0 && Number(r.goalsAgainst) > 0).length;
-      return `${label}: GF ${avgGoalsFor} GC ${avgGoalsAgainst} | Corners ${avgCorners} | Tarjetas ${avgCards} | Disparos ${avgShots} (a puerta ${avgShotsOT}) | Faltas ${avgFouls} | BTTS ${btts}/${valid.length}`;
+      return `${label}: GF ${avg((r) => Number(r.goalsFor || 0))} GC ${avg((r) => Number(r.goalsAgainst || 0))} | Corners ${avg((r) => Number(r.cornersFor || 0))} | Tarjetas ${avg((r) => Number(r.cardsFor || 0))} | Disparos ${avg((r) => Number(r.shotsTotal || 0))} (a puerta ${avg((r) => Number(r.shotsOnTarget || 0))}) | Faltas ${avg((r) => Number(r.fouls || 0))} | BTTS ${btts}/${valid.length}`;
     };
 
     const localCtx = summarizeRecent(localRecent, `${local} como local`);
     const visitCtx = summarizeRecent(visitRecent, `${visit} como visitante`);
+    const hasManualData = Boolean(localCtx || visitCtx);
 
+    // ── System prompt ────────────────────────────────────────────────────
     const systemPrompt = `Eres un analista profesional de fútbol y apuestas deportivas. Respondes SIEMPRE en español.
+Tienes acceso a búsqueda web. ÚSALA para buscar información actualizada del partido.
+
+PASOS OBLIGATORIOS antes de responder:
+1. Busca en web: "${local} vs ${visit} últimos 5 partidos como local 2025"
+2. Busca en web: "${visit} últimos 5 partidos como visitante 2025"
+3. Busca en web: "${local} vs ${visit} previa bajas lesiones 2025"
+4. Con toda esa info, responde en JSON.
+
 Responde ÚNICAMENTE con un objeto JSON válido, sin texto extra, sin markdown, sin backticks.
-Sé CONCRETO y DIRECTO: máximo 100 palabras por campo. Usa los datos reales del sistema.
 JSON con exactamente estas claves (todas obligatorias):
-{"previa":"...","perfilLocal":"...","perfilVisitante":"...","pronostico":"...","picksIA":"...","valueAnalysis":"..."}
+{"previa":"...","perfilLocal":"...","perfilVisitante":"...","pronostico":"...","picksIA":"...","valueAnalysis":"...","datosLocal":"...","datosVisitante":"..."}
 
 INSTRUCCIONES POR CAMPO:
-- previa: estado de forma reciente, bajas conocidas, contexto del partido, importancia
-- perfilLocal: estilo, tendencias en casa, datos de disparos/corners/tarjetas, fortalezas y debilidades
-- perfilVisitante: igual pero como visitante
-- pronostico: resultado más probable con % estimado, mercado más seguro y por qué
-- picksIA: lista los 3 mejores picks con formato "Pick · Línea · Justificación en 1 línea". Incluye cuota sugerida mínima.
-- valueAnalysis: para cada cuota ingresada, indica si hay value (modelo > implied) o no, y cuál es el mejor value del partido`;
+- previa: contexto del partido, importancia, bajas confirmadas, motivación de cada equipo (usa info web)
+- perfilLocal: últimos 5 partidos como LOCAL con goles, corners, tarjetas reales encontrados en web. Formato: "J1: 2-1 (C:8, T:3) | J2: 1-0 (C:6, T:2) | ..."
+- perfilVisitante: igual pero últimos 5 como VISITANTE con datos reales de web
+- pronostico: resultado más probable con % estimado basado en los datos reales encontrados
+- picksIA: los 3 mejores picks con formato "✅ Pick · Línea · Justificación". Incluye cuota sugerida mínima de valor
+- valueAnalysis: para cada cuota ingresada por el usuario, indica si hay value real o no
+- datosLocal: resumen numérico encontrado en web: promedio goles/corners/tarjetas últimos 5 partidos en casa
+- datosVisitante: igual para el visitante fuera de casa`;
 
-    const userPrompt = `Analiza: ${local} vs ${visit}
+    // ── User prompt ──────────────────────────────────────────────────────
+    const userPrompt = `Analiza el partido: ${local} vs ${visit}
 
-DATOS DEL SISTEMA:
+CUOTAS INGRESADAS POR EL USUARIO:
 ${oddsCtx}
 ${goalsCtx ? `Goles: ${goalsCtx}` : ""}
 ${cornersCtx ? `Corners: ${cornersCtx}` : ""}
 ${cardsCtx ? `Tarjetas: ${cardsCtx}` : ""}
-${localCtx ? `\nForma reciente:\n${localCtx}` : ""}
-${visitCtx ? `${visitCtx}` : ""}
 
+${hasManualData ? `DATOS MANUALES YA CARGADOS (úsalos como base, complementa con web):
+${localCtx || "Sin datos manuales del local"}
+${visitCtx || "Sin datos manuales del visitante"}` : "El usuario NO ha cargado datos manuales. DEBES buscar en web los últimos 5 partidos de cada equipo en su condición (local/visitante) y extraer: goles, corners, tarjetas, resultado."}
+
+PROYECCIONES DEL MOTOR:
 Perfil del partido: ${matchProfile.type}
-Proyección goles: ${projection.expectedGoals.toFixed(1)} | Corners: ${projection.expectedCorners.toFixed(1)} | Tarjetas: ${adjustedCardsExpected.toFixed(1)}`;
+Goles esperados: ${projection.expectedGoals.toFixed(1)} | Corners: ${projection.expectedCorners.toFixed(1)} | Tarjetas: ${adjustedCardsExpected.toFixed(1)}
+
+IMPORTANTE: Busca los datos reales en web. No inventes estadísticas. Si no encuentras datos de corners o tarjetas, indícalo y usa lo que sí encuentres.`;
 
     try {
-      const tools = useWebSearch ? [{ type: "web_search_20250305", name: "web_search" }] : undefined;
+      // Siempre usamos web search para buscar datos automáticamente
+      const tools = [{ type: "web_search_20250305", name: "web_search" }];
       setAiStatus("loading_ai");
 
       const response = await fetch("/api/ai-analysis", {
@@ -3542,10 +3557,10 @@ Proyección goles: ${projection.expectedGoals.toFixed(1)} | Corners: ${projectio
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
-          max_tokens: 2000,
+          max_tokens: 3000,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
-          ...(tools ? { tools } : {}),
+          tools,
         }),
       });
 
@@ -3571,7 +3586,7 @@ Proyección goles: ${projection.expectedGoals.toFixed(1)} | Corners: ${projectio
           const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\[\\s\\S])*)"`, "s");
           const m = clean.match(re);
           if (m) return m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
-          const keys = ["previa", "perfilLocal", "perfilVisitante", "pronostico", "picksIA", "valueAnalysis"];
+          const keys = ["previa", "perfilLocal", "perfilVisitante", "pronostico", "picksIA", "valueAnalysis", "datosLocal", "datosVisitante"];
           const idx = keys.indexOf(key);
           const nextKey = keys[idx + 1];
           const re2 = nextKey
@@ -3587,12 +3602,12 @@ Proyección goles: ${projection.expectedGoals.toFixed(1)} | Corners: ${projectio
           pronostico: extract("pronostico"),
           picksIA: extract("picksIA"),
           valueAnalysis: extract("valueAnalysis"),
-          usedWeb: useWebSearch,
+          usedWeb: true,
           generatedAt: new Date().toISOString(),
         };
       }
 
-      setAiAnalysis({ ...parsed, usedWeb: useWebSearch, generatedAt: new Date().toISOString() });
+      setAiAnalysis({ ...parsed, usedWeb: true, generatedAt: new Date().toISOString() });
       setAiStatus("done");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error desconocido";
