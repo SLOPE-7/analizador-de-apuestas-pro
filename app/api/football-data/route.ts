@@ -1,84 +1,14 @@
 // app/api/football-data/route.ts
-// Conecta con API-Football (rapidapi.com) para obtener estadísticas automáticas
-// Necesitas: RAPIDAPI_KEY en tus variables de entorno (Vercel + .env.local)
+// API de api-sports.io (api-football.com) — NO RapidAPI
 
 import { NextRequest, NextResponse } from "next/server";
 
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY!;
-const BASE_URL = "https://api-football-v1.p.rapidapi.com/v3";
+const API_KEY = process.env.API_FOOTBALL_KEY!;
+const BASE_URL = "https://v3.football.api-sports.io";
 
 const headers = {
-  "X-RapidAPI-Key": RAPIDAPI_KEY,
-  "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com",
+  "x-apisports-key": API_KEY,
 };
-
-// Busca el ID del equipo por nombre
-async function searchTeam(name: string): Promise<{ id: number; name: string; logo: string } | null> {
-  const res = await fetch(`${BASE_URL}/teams?search=${encodeURIComponent(name)}`, { headers });
-  const data = await res.json();
-  const team = data?.response?.[0]?.team;
-  if (!team) return null;
-  return { id: team.id, name: team.name, logo: team.logo };
-}
-
-// Obtiene los últimos N partidos de un equipo (local o visitante)
-async function getLastMatches(
-  teamId: number,
-  condition: "home" | "away",
-  count: number,
-  season: number
-): Promise<MatchStat[]> {
-  const res = await fetch(
-    `${BASE_URL}/fixtures?team=${teamId}&season=${season}&status=FT&last=${count * 2}`,
-    { headers }
-  );
-  const data = await res.json();
-  const fixtures = data?.response ?? [];
-
-  const filtered = fixtures.filter((f: FixtureResponse) => {
-    if (condition === "home") return f.teams.home.id === teamId;
-    return f.teams.away.id === teamId;
-  });
-
-  const result: MatchStat[] = [];
-
-  for (const f of filtered.slice(0, count)) {
-    const fixtureId = f.fixture.id;
-    const isHome = f.teams.home.id === teamId;
-
-    // Obtener estadísticas del partido
-    const statsRes = await fetch(`${BASE_URL}/fixtures/statistics?fixture=${fixtureId}&team=${teamId}`, { headers });
-    const statsData = await statsRes.json();
-    const stats = statsData?.response?.[0]?.statistics ?? [];
-
-    const getStat = (type: string): number => {
-      const found = stats.find((s: { type: string; value: string | number | null }) => s.type === type);
-      return Number(found?.value ?? 0) || 0;
-    };
-
-    const goalsFor = isHome ? f.goals.home : f.goals.away;
-    const goalsAgainst = isHome ? f.goals.away : f.goals.home;
-
-    result.push({
-      fixtureId,
-      date: f.fixture.date,
-      opponent: isHome ? f.teams.away.name : f.teams.home.name,
-      goalsFor: goalsFor ?? 0,
-      goalsAgainst: goalsAgainst ?? 0,
-      cornersFor: getStat("Corner Kicks"),
-      cornersAgainst: 0, // Se calcula por diferencia si se obtienen stats del rival
-      cardsFor: getStat("Yellow Cards") + getStat("Red Cards"),
-      cardsAgainst: 0,
-      shotsTotal: getStat("Total Shots"),
-      shotsOnTarget: getStat("Shots on Goal"),
-      fouls: getStat("Fouls"),
-      btts: (goalsFor ?? 0) > 0 && (goalsAgainst ?? 0) > 0,
-      result: (goalsFor ?? 0) > (goalsAgainst ?? 0) ? "G" : (goalsFor ?? 0) < (goalsAgainst ?? 0) ? "P" : "E",
-    });
-  }
-
-  return result;
-}
 
 type MatchStat = {
   fixtureId: number;
@@ -99,15 +29,95 @@ type MatchStat = {
 
 type FixtureResponse = {
   fixture: { id: number; date: string };
-  teams: { home: { id: number; name: string }; away: { id: number; name: string } };
+  teams: {
+    home: { id: number; name: string };
+    away: { id: number; name: string };
+  };
   goals: { home: number | null; away: number | null };
 };
 
+// Busca el equipo por nombre
+async function searchTeam(name: string): Promise<{ id: number; name: string } | null> {
+  const res = await fetch(`${BASE_URL}/teams?search=${encodeURIComponent(name)}`, { headers });
+  const data = await res.json();
+  
+  // Debug: retorna toda la respuesta para ver qué llega
+  if (!data?.response?.length) {
+    throw new Error(`Sin resultados para "${name}". Respuesta API: ${JSON.stringify(data).slice(0, 300)}`);
+  }
+  
+  const team = data.response[0].team;
+  return { id: team.id, name: team.name };
+}
+
+// Obtiene stat específica de un array de estadísticas
+function getStat(stats: Array<{ type: string; value: string | number | null }>, type: string): number {
+  const found = stats.find((s) => s.type === type);
+  return Number(found?.value ?? 0) || 0;
+}
+
+// Obtiene los últimos partidos como local o visitante
+async function getLastMatches(
+  teamId: number,
+  condition: "home" | "away",
+  count: number,
+  season: number
+): Promise<MatchStat[]> {
+  const res = await fetch(
+    `${BASE_URL}/fixtures?team=${teamId}&season=${season}&status=FT&last=${count * 3}`,
+    { headers }
+  );
+  const data = await res.json();
+  const fixtures: FixtureResponse[] = data?.response ?? [];
+
+  // Filtra solo los partidos en la condición correcta
+  const filtered = fixtures.filter((f) =>
+    condition === "home" ? f.teams.home.id === teamId : f.teams.away.id === teamId
+  );
+
+  const result: MatchStat[] = [];
+
+  for (const f of filtered.slice(0, count)) {
+    const fixtureId = f.fixture.id;
+    const isHome = f.teams.home.id === teamId;
+
+    // Estadísticas del equipo en ese partido
+    const statsRes = await fetch(
+      `${BASE_URL}/fixtures/statistics?fixture=${fixtureId}&team=${teamId}`,
+      { headers }
+    );
+    const statsData = await statsRes.json();
+    const stats = statsData?.response?.[0]?.statistics ?? [];
+
+    const goalsFor = isHome ? (f.goals.home ?? 0) : (f.goals.away ?? 0);
+    const goalsAgainst = isHome ? (f.goals.away ?? 0) : (f.goals.home ?? 0);
+
+    result.push({
+      fixtureId,
+      date: f.fixture.date,
+      opponent: isHome ? f.teams.away.name : f.teams.home.name,
+      goalsFor,
+      goalsAgainst,
+      cornersFor: getStat(stats, "Corner Kicks"),
+      cornersAgainst: 0,
+      cardsFor: getStat(stats, "Yellow Cards") + getStat(stats, "Red Cards"),
+      cardsAgainst: 0,
+      shotsTotal: getStat(stats, "Total Shots"),
+      shotsOnTarget: getStat(stats, "Shots on Goal"),
+      fouls: getStat(stats, "Fouls"),
+      btts: goalsFor > 0 && goalsAgainst > 0,
+      result: goalsFor > goalsAgainst ? "G" : goalsFor < goalsAgainst ? "P" : "E",
+    });
+  }
+
+  return result;
+}
+
 export async function POST(req: NextRequest) {
   try {
-    if (!RAPIDAPI_KEY) {
+    if (!API_KEY) {
       return NextResponse.json(
-        { error: "RAPIDAPI_KEY no configurada en variables de entorno" },
+        { error: "API_FOOTBALL_KEY no configurada en variables de entorno" },
         { status: 500 }
       );
     }
@@ -121,17 +131,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Buscar IDs de ambos equipos en paralelo
+    // Buscar equipos en paralelo
     const [localInfo, visitInfo] = await Promise.all([
       searchTeam(localTeam),
       searchTeam(visitTeam),
     ]);
 
     if (!localInfo) {
-      return NextResponse.json({ error: `Equipo no encontrado: ${localTeam}` }, { status: 404 });
+      return NextResponse.json(
+        { error: `Equipo no encontrado: ${localTeam}` },
+        { status: 404 }
+      );
     }
     if (!visitInfo) {
-      return NextResponse.json({ error: `Equipo no encontrado: ${visitTeam}` }, { status: 404 });
+      return NextResponse.json(
+        { error: `Equipo no encontrado: ${visitTeam}` },
+        { status: 404 }
+      );
     }
 
     // Obtener partidos en paralelo
