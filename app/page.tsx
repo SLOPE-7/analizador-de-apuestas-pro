@@ -324,6 +324,35 @@ type AIAnalysis = {
   usedWeb: boolean;
   generatedAt: string;
 };
+
+// ── MOTOR IA: picks estructurados ────────────────────────────────────────────
+type AIPickStatus = "pending_odd" | "confirmed" | "discarded";
+type AIPick = {
+  id: string;
+  market: string;          // "over_2_5" | "corners_over_10_5" | etc.
+  label: string;           // "Más de 2.5 goles"
+  line: string;            // "2.5"
+  reasoning: string;       // Por qué la IA lo sugiere
+  confidence: number;      // 0-100 según la IA
+  priority: "alta" | "media" | "baja";
+  // Usuario rellena:
+  houseOdd: string;
+  status: AIPickStatus;
+  // Segunda pasada IA:
+  valueVerdict: string;    // "✅ Tiene value" | "❌ Sin value" | ""
+  edgePct: number;         // ventaja real %
+  kellyStakeAmt: number;   // stake recomendado
+};
+
+type AIMotorState = {
+  status: "idle" | "searching" | "analyzing" | "awaiting_odds" | "verifying" | "done" | "error";
+  matchName: string;
+  competition: string;
+  picks: AIPick[];
+  context: string;         // resumen del contexto encontrado por la IA
+  pronostico: string;
+  errorMsg: string;
+};
 type SavedAnalysis = {
   id: string;
   savedAt: string;
@@ -2038,9 +2067,28 @@ export default function Page() {
   const [aiStatus, setAiStatus] = useState<AIAnalysisStatus>("idle");
   const [aiError, setAiError] = useState("");
   const [showAI, setShowAI] = useState(false);
- const [useWebSearch, setUseWebSearch] = useState(true);
+  const [useWebSearch, setUseWebSearch] = useState(true);
+  // ── MOTOR IA ─────────────────────────────────────────────────────────────
+  const [aiMotor, setAiMotor] = useState<AIMotorState>({
+    status: "idle", matchName: "", competition: "Liga",
+    picks: [], context: "", pronostico: "", errorMsg: "",
+  });
+  const [showToolsPanel, setShowToolsPanel] = useState(false);
+  const [retryCountdown, setRetryCountdown] = useState(0);
+  const [retryAction, setRetryAction] = useState<"runAI" | "verify" | null>(null);
   const [apiFootballStatus, setApiFootballStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [apiFootballError, setApiFootballError] = useState("");
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+  bankroll: false,
+  colores: false,
+  mercados: false,
+  eliminacion: false,
+  arbitro: false,
+});
+
+const toggleSection = (key: string) => {
+  setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+};
 
 const autoFillFromAPIFootball = async (count: number = 5) => {
     const local = match.local.trim();
@@ -3462,6 +3510,246 @@ const autoFillFromAPIFootball = async (count: number = 5) => {
   };
 
  
+  // ── HELPER: countdown para error 429 ────────────────────────────────────
+  const startRetryCountdown = (seconds: number, action: "runAI" | "verify") => {
+    setRetryCountdown(seconds);
+    setRetryAction(action);
+    const interval = setInterval(() => {
+      setRetryCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setRetryAction(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  // ── MOTOR IA: primera pasada — busca datos y genera picks ───────────────
+  const runAIMotor = async () => {
+    const local = match.local.trim();
+    const visit = match.visitante.trim();
+    if (!local || !visit) { alert("Escribe los nombres de ambos equipos primero."); return; }
+
+    setAiMotor((prev) => ({ ...prev, status: "searching", matchName: `${local} vs ${visit}`, picks: [], context: "", pronostico: "", errorMsg: "" }));
+
+    const competition = aiMotor.competition;
+    const systemPrompt = `Eres un analista de fútbol y apuestas deportivas de élite. Respondes SOLO en JSON válido, sin markdown, sin backticks. Eres muy específico con datos reales.`;
+
+    const userPrompt = `Analiza el partido: ${local} vs ${visit} (${competition}).
+
+BUSCA EN LA WEB:
+- Forma reciente de cada equipo (últimos 5-6 partidos): goles, corners, tarjetas, remates
+- Bajas importantes, jugadores sancionados, lesionados
+- Estadísticas de corners y tarjetas por partido de cada equipo
+- Historial enfrentamientos directos recientes
+- Contexto: importancia del partido, posición en tabla, motivación
+
+Genera los MEJORES picks apostables para este partido.
+
+Responde SOLO con este JSON (sin texto extra):
+{
+  "context": "resumen conciso de los datos encontrados: forma, bajas, stats clave de cada equipo",
+  "pronostico": "pronóstico del partido en 2-3 líneas",
+  "picks": [
+    {
+      "market": "over_2_5",
+      "label": "Más de 2.5 goles",
+      "line": "2.5",
+      "reasoning": "por qué este pick tiene sentido con los datos",
+      "confidence": 78,
+      "priority": "alta"
+    }
+  ]
+}
+
+Genera entre 4 y 7 picks ordenados por prioridad. Mercados posibles: over_2_5, under_2_5, over_3_5, under_3_5, btts_yes, btts_no, over_9_5_corners, over_10_5_corners, under_9_5_corners, under_10_5_corners, over_4_5_cards, under_4_5_cards, local_win, visitante_win, empate, dc_1x, dc_x2, dc_12.`;
+
+    try {
+      const res = await fetch("/api/ai-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 2000,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
+        throw new Error(err.error?.message || `Error ${res.status}`);
+      }
+
+      const data = await res.json() as { content: Array<{ type: string; text?: string }> };
+      const fullText = data.content.map((b) => b.type === "text" ? (b.text ?? "") : "").filter(Boolean).join("\n");
+      const clean = fullText.replace(/```json|```/g, "").trim();
+
+      let parsed: { context: string; pronostico: string; picks: Omit<AIPick, "id" | "houseOdd" | "status" | "valueVerdict" | "edgePct" | "kellyStakeAmt">[] };
+      try {
+        // Intenta parsear directo
+        parsed = JSON.parse(clean);
+      } catch (_e) {
+        // Busca el bloque JSON más grande (de { hasta }) dentro del texto
+        const jsonMatch = clean.match(/\{[\s\S]*"picks"\s*:\s*\[[\s\S]*\]\s*\}/);
+        if (jsonMatch) {
+          try { parsed = JSON.parse(jsonMatch[0]); }
+          catch (_e2) { parsed = { context: "Sin contexto", pronostico: "", picks: [] }; }
+        } else {
+          const ctx = clean.match(/"context"\s*:\s*"([\s\S]*?)"\s*,\s*"pronostico"/)?.[1] ?? "Sin contexto";
+          const pro = clean.match(/"pronostico"\s*:\s*"([\s\S]*?)"\s*,\s*"picks"/)?.[1] ?? "";
+          parsed = { context: ctx, pronostico: pro, picks: [] };
+        }
+      }
+
+      const picks: AIPick[] = (parsed.picks ?? []).map((p) => ({
+        ...p,
+        id: makeId(),
+        houseOdd: "",
+        status: "pending_odd" as AIPickStatus,
+        valueVerdict: "",
+        edgePct: 0,
+        kellyStakeAmt: 0,
+      }));
+
+      setAiMotor((prev) => ({
+        ...prev,
+        status: "awaiting_odds",
+        context: parsed.context ?? "",
+        pronostico: parsed.pronostico ?? "",
+        picks,
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error desconocido";
+      const is429 = msg.includes("429") || msg.toLowerCase().includes("rate limit");
+      setAiMotor((prev) => ({
+        ...prev,
+        status: "error",
+        errorMsg: is429 ? "Limite de API alcanzado (429). Espera el contador y reintenta." : msg,
+      }));
+      if (is429) startRetryCountdown(30, "runAI");
+    }
+  };
+
+  // ── MOTOR IA: segunda pasada — verifica value con las cuotas ingresadas ──
+  const verifyOddsWithAI = async () => {
+    const picksWithOdd = aiMotor.picks.filter((p) => toNumber(p.houseOdd) > 1);
+    if (!picksWithOdd.length) { alert("Ingresa al menos una cuota para verificar el value."); return; }
+
+    setAiMotor((prev) => ({ ...prev, status: "verifying" }));
+
+    const bank = bankrollStats.currentBank;
+    const picksContext = picksWithOdd.map((p) =>
+      `- ${p.label} (${p.line}): cuota ${p.houseOdd}, confianza IA ${p.confidence}%, razonamiento: ${p.reasoning}`
+    ).join("\n");
+
+    const systemPrompt = `Eres un analista de value betting. Respondes SOLO en JSON válido sin markdown.`;
+    const userPrompt = `Partido: ${aiMotor.matchName}
+
+Picks con cuotas ingresadas por el usuario:
+${picksContext}
+
+Bank actual: ${bank > 0 ? formatMoney(bank) : "No definido"}
+
+Para cada pick calcula:
+1. Probabilidad implícita de la cuota (1/cuota * 100)
+2. Si tu confianza supera esa probabilidad → hay value real
+3. Stake óptimo con Kelly fraccionado al 50%
+
+Responde SOLO con:
+{
+  "verifications": [
+    {
+      "label": "Más de 2.5 goles",
+      "hasValue": true,
+      "edgePct": 12.5,
+      "verdict": "✅ Value real: tu modelo estima 78% vs 65% implícita de la casa",
+      "kellySuggestion": "Apostar 4.2% del bank (X dinero)",
+      "recommendation": "confirmed"
+    }
+  ]
+}
+
+recommendation debe ser "confirmed" si hay value ≥5%, "marginal" si hay 1-4%, "discarded" si no hay value.`;
+
+    try {
+      const res = await fetch("/api/ai-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 1500,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
+        }),
+      });
+
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json() as { content: Array<{ type: string; text?: string }> };
+      const fullText = data.content.map((b) => b.type === "text" ? (b.text ?? "") : "").filter(Boolean).join("\n");
+      const clean = fullText.replace(/```json|```/g, "").trim();
+
+      let parsed: { verifications: Array<{ label: string; hasValue: boolean; edgePct: number; verdict: string; kellySuggestion: string; recommendation: string }> };
+      try { parsed = JSON.parse(clean); }
+      catch (_e) { parsed = { verifications: [] }; }
+
+      setAiMotor((prev) => ({
+        ...prev,
+        status: "done",
+        picks: prev.picks.map((pick) => {
+          const v = parsed.verifications.find((vf) => vf.label === pick.label || pick.label.includes(vf.label));
+          if (!v) return pick;
+          return {
+            ...pick,
+            valueVerdict: v.verdict,
+            edgePct: v.edgePct,
+            kellyStakeAmt: bank > 0 ? bank * (v.edgePct / 100) * 0.5 : 0,
+            status: v.recommendation === "confirmed" ? "confirmed" : v.recommendation === "marginal" ? "pending_odd" : "discarded",
+          };
+        }),
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error desconocido";
+      const is429 = msg.includes("429") || msg.toLowerCase().includes("rate limit");
+      setAiMotor((prev) => ({
+        ...prev,
+        status: is429 ? "awaiting_odds" : "error",
+        errorMsg: is429 ? "Limite de API alcanzado (429). Espera el contador y reintenta." : msg,
+      }));
+      if (is429) startRetryCountdown(30, "verify");
+    }
+  };
+
+  const updateAIPickOdd = (id: string, odd: string) => {
+    setAiMotor((prev) => ({ ...prev, picks: prev.picks.map((p) => p.id === id ? { ...p, houseOdd: odd } : p) }));
+  };
+
+  const discardAIPick = (id: string) => {
+    setAiMotor((prev) => ({ ...prev, picks: prev.picks.map((p) => p.id === id ? { ...p, status: "discarded" } : p) }));
+  };
+
+  const sendAIPickToBankroll = (pick: AIPick) => {
+    if (toNumber(pick.houseOdd) <= 1) { alert("Ingresa la cuota primero."); return; }
+    const newBet: BankBet = {
+      id: makeId(),
+      date: new Date().toISOString().slice(0, 10),
+      matchName: aiMotor.matchName,
+      pick: `${pick.label}${pick.line ? ` · ${pick.line}` : ""}`,
+      market: pick.market,
+      stake: pick.kellyStakeAmt > 0 ? pick.kellyStakeAmt.toFixed(2) : "",
+      odd: pick.houseOdd,
+      status: "pending",
+      source: "app",
+      notes: `IA: ${pick.reasoning.slice(0, 80)}`,
+    };
+    setBankroll((prev) => ({ ...prev, bets: [newBet, ...prev.bets] }));
+    setAiMotor((prev) => ({ ...prev, picks: prev.picks.map((p) => p.id === pick.id ? { ...p, status: "confirmed" } : p) }));
+    alert(`✅ Apuesta registrada en bankroll: ${newBet.pick}`);
+  };
+
   const runAIAnalysis = async () => {
     const local = match.local.trim();
     const visit = match.visitante.trim();
@@ -4158,8 +4446,233 @@ setIndicators(importedIndicators);
       <div className="relative z-10 mx-auto max-w-6xl px-4 py-6 pb-24">
         <header className="mb-6">
           <h1 className="text-3xl font-black tracking-tight sm:text-4xl">🔥ANALIZADOR RAPIDO H2H KAL🔥</h1>
-          <p className="mt-1 text-sm text-slate-300">Rachas + registros reales + líneas de la casa + árbitro + detector anti-casa</p>
+          <p className="mt-1 text-sm text-slate-300">Motor IA · Picks inteligentes · Value real · Kelly automático</p>
         </header>
+
+        {/* ══════════════════════════════════════════════════════════════════
+            MOTOR IA — SECCIÓN PRINCIPAL
+        ══════════════════════════════════════════════════════════════════ */}
+        <section className="mb-6 overflow-hidden rounded-[2rem] border-2 border-sky-400/40 bg-gradient-to-br from-sky-500/20 via-slate-900/90 to-violet-500/20 p-1 shadow-2xl shadow-sky-500/20 backdrop-blur-xl">
+          <div className="rounded-[1.8rem] bg-slate-950/80 p-5">
+
+            {/* Header */}
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.35em] text-sky-300/80">Motor principal</p>
+                <h2 className="mt-1 text-3xl font-black">🤖 Análisis IA del partido</h2>
+                <p className="mt-1 text-sm text-slate-400">La IA busca los datos, analiza ambos equipos y genera los mejores picks. Tú solo pones las cuotas.</p>
+              </div>
+              {aiMotor.status !== "idle" && (
+                <button onClick={() => setAiMotor({ status: "idle", matchName: "", competition: "Liga", picks: [], context: "", pronostico: "", errorMsg: "" })}
+                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-slate-300">
+                  🔄 Nuevo partido
+                </button>
+              )}
+            </div>
+
+            {/* Inputs del partido */}
+            {(aiMotor.status === "idle" || aiMotor.status === "error") && (
+              <div className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <input className={inputClass} placeholder="🏠 Equipo local (ej: Barcelona)" value={match.local} onChange={(e) => setMatch({ ...match, local: e.target.value })} />
+                  <input className={inputClass} placeholder="✈️ Equipo visitante (ej: Real Madrid)" value={match.visitante} onChange={(e) => setMatch({ ...match, visitante: e.target.value })} />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {["Liga", "Champions", "Copa", "Eliminatoria", "Amistoso"].map((c) => (
+                    <button key={c} onClick={() => setAiMotor((prev) => ({ ...prev, competition: c }))}
+                      className={`rounded-xl px-3 py-2 text-xs font-black ${aiMotor.competition === c ? "bg-sky-400 text-sky-950" : "border border-white/10 bg-white/5 text-slate-300"}`}>
+                      {c}
+                    </button>
+                  ))}
+                </div>
+                {aiMotor.status === "error" && (
+                  <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-3">
+                    <p className="text-sm font-black text-rose-100">❌ {aiMotor.errorMsg}</p>
+                    {retryCountdown > 0 && retryAction === "runAI" && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-700">
+                          <div className="h-full rounded-full bg-amber-400 transition-all duration-1000"
+                            style={{ width: `${(retryCountdown / 30) * 100}%` }} />
+                        </div>
+                        <span className="text-xs font-black text-amber-300 tabular-nums">{retryCountdown}s</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <button onClick={runAIMotor}
+                  disabled={!match.local.trim() || !match.visitante.trim() || (retryCountdown > 0 && retryAction === "runAI")}
+                  className="w-full rounded-2xl bg-gradient-to-r from-sky-400 to-violet-400 py-4 font-black text-slate-950 shadow-xl shadow-sky-500/30 disabled:opacity-40 text-lg">
+                  {retryCountdown > 0 && retryAction === "runAI"
+                    ? `⏳ Espera ${retryCountdown}s para reintentar...`
+                    : aiMotor.status === "error" ? "🔄 Reintentar análisis" : "⚡ Analizar partido con IA"}
+                </button>
+              </div>
+            )}
+
+            {/* Loading states */}
+            {(aiMotor.status === "searching" || aiMotor.status === "analyzing" || aiMotor.status === "verifying") && (
+              <div className="space-y-4 py-6 text-center">
+                <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-sky-400 border-t-transparent" />
+                <p className="font-black text-sky-200 text-lg">
+                  {aiMotor.status === "searching" ? "🌐 Buscando datos en la web..." :
+                   aiMotor.status === "analyzing" ? "🤖 Analizando partido..." :
+                   "🔍 Verificando value de las cuotas..."}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {aiMotor.status === "searching" ? "Forma reciente, bajas, estadísticas de corners y tarjetas..." :
+                   aiMotor.status === "verifying" ? "Calculando edge real y stake Kelly óptimo..." : ""}
+                </p>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                  <div className="h-full animate-pulse rounded-full bg-gradient-to-r from-sky-400 to-violet-400"
+                    style={{ width: aiMotor.status === "searching" ? "35%" : aiMotor.status === "verifying" ? "85%" : "60%" }} />
+                </div>
+              </div>
+            )}
+
+            {/* Resultado: contexto + picks */}
+            {(aiMotor.status === "awaiting_odds" || aiMotor.status === "done") && (
+              <div className="space-y-4">
+                {/* Contexto encontrado */}
+                <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-4">
+                  <p className="mb-1 text-xs font-black uppercase tracking-widest text-sky-200">📋 Datos encontrados</p>
+                  <p className="text-sm leading-relaxed text-slate-200">{aiMotor.context}</p>
+                  {aiMotor.pronostico && (
+                    <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-400/10 p-3">
+                      <p className="text-xs font-black text-amber-200 mb-1">🎯 Pronóstico</p>
+                      <p className="text-sm text-slate-200">{aiMotor.pronostico}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Picks */}
+                <div>
+                  <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-300">
+                    ⚡ Picks sugeridos — {aiMotor.status === "awaiting_odds" ? "Ingresa las cuotas de tu casa de apuestas" : "Análisis de value completado"}
+                  </p>
+                  <div className="space-y-3">
+                    {aiMotor.picks.filter((p) => p.status !== "discarded").map((pick) => (
+                      <div key={pick.id} className={`rounded-2xl border p-4 transition-all ${
+                        pick.status === "confirmed" ? "border-emerald-300/40 bg-emerald-400/10" :
+                        pick.status === "discarded" ? "border-slate-300/10 bg-slate-800/20 opacity-50" :
+                        pick.priority === "alta" ? "border-sky-300/30 bg-sky-400/10" :
+                        pick.priority === "media" ? "border-amber-300/20 bg-amber-400/8" :
+                        "border-white/10 bg-white/5"}`}>
+
+                        <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${
+                                pick.priority === "alta" ? "bg-sky-400/30 text-sky-100" :
+                                pick.priority === "media" ? "bg-amber-400/30 text-amber-100" :
+                                "bg-slate-400/20 text-slate-300"}`}>
+                                {pick.priority === "alta" ? "🔥 ALTA" : pick.priority === "media" ? "🟡 MEDIA" : "🔵 BAJA"}
+                              </span>
+                              <span className="text-xs text-slate-400">Confianza IA: {pick.confidence}%</span>
+                              {pick.status === "confirmed" && <span className="text-xs font-black text-emerald-300">✅ Confirmado con value</span>}
+                            </div>
+                            <p className="mt-1 text-lg font-black">{pick.label}{pick.line ? ` · ${pick.line}` : ""}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">{pick.reasoning}</p>
+                          </div>
+                          <button onClick={() => discardAIPick(pick.id)} className="text-xs text-slate-500 hover:text-rose-300">✕ Descartar</button>
+                        </div>
+
+                        {/* Cuota input */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex items-center gap-2 flex-1">
+                            <input
+                              className="w-32 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-sky-400"
+                              placeholder="Cuota (ej: 1.85)"
+                              inputMode="decimal"
+                              value={pick.houseOdd}
+                              onChange={(e) => updateAIPickOdd(pick.id, e.target.value)}
+                            />
+                            {toNumber(pick.houseOdd) > 1 && (
+                              <span className="text-xs text-slate-400">
+                                Prob. implícita: {(100 / toNumber(pick.houseOdd)).toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                          {pick.status === "confirmed" && pick.kellyStakeAmt > 0 && (
+                            <button onClick={() => sendAIPickToBankroll(pick)}
+                              className="rounded-xl bg-emerald-400 px-3 py-2 text-xs font-black text-emerald-950">
+                              💰 Apostar {formatMoney(pick.kellyStakeAmt)}
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Veredicto de value */}
+                        {pick.valueVerdict && (
+                          <div className={`mt-2 rounded-xl border px-3 py-2 text-xs font-bold ${
+                            pick.status === "confirmed" ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-200" :
+                            "border-rose-300/30 bg-rose-400/10 text-rose-200"}`}>
+                            {pick.valueVerdict}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Botón segunda pasada */}
+                {aiMotor.status === "awaiting_odds" && aiMotor.picks.some((p) => toNumber(p.houseOdd) > 1) && (
+                  <div className="space-y-2">
+                    {retryCountdown > 0 && retryAction === "verify" && (
+                      <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-3">
+                        <p className="text-xs font-black text-amber-200">⏳ Límite de API alcanzado — reintentando en {retryCountdown}s</p>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-700">
+                          <div className="h-full rounded-full bg-amber-400 transition-all duration-1000"
+                            style={{ width: `${(retryCountdown / 30) * 100}%` }} />
+                        </div>
+                      </div>
+                    )}
+                    <button onClick={verifyOddsWithAI}
+                      disabled={retryCountdown > 0 && retryAction === "verify"}
+                      className="w-full rounded-2xl bg-gradient-to-r from-emerald-400 to-teal-400 py-4 font-black text-emerald-950 shadow-xl shadow-emerald-500/20 text-lg disabled:opacity-40 disabled:cursor-not-allowed">
+                      {retryCountdown > 0 && retryAction === "verify"
+                        ? `⏳ Espera ${retryCountdown}s...`
+                        : `🔍 Verificar value con IA (${aiMotor.picks.filter((p) => toNumber(p.houseOdd) > 1).length} picks con cuota)`}
+                    </button>
+                  </div>
+                )}
+
+                {/* Resumen done */}
+                {aiMotor.status === "done" && (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-3 text-center">
+                      <p className="text-2xl font-black text-emerald-100">{aiMotor.picks.filter((p) => p.status === "confirmed").length}</p>
+                      <p className="text-xs text-slate-400">Con value real ✅</p>
+                    </div>
+                    <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-3 text-center">
+                      <p className="text-2xl font-black text-amber-100">{aiMotor.picks.filter((p) => p.status === "pending_odd" && p.valueVerdict).length}</p>
+                      <p className="text-xs text-slate-400">Value marginal 🟡</p>
+                    </div>
+                    <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-3 text-center">
+                      <p className="text-2xl font-black text-rose-100">{aiMotor.picks.filter((p) => p.status === "discarded").length}</p>
+                      <p className="text-xs text-slate-400">Descartados ❌</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* ══════════════════════════════════════════════════════════════════
+            HERRAMIENTAS AVANZADAS — PANEL COMPACTO DESPLEGABLE
+        ══════════════════════════════════════════════════════════════════ */}
+        <div className="mb-6">
+          <button
+            onClick={() => setShowToolsPanel((v) => !v)}
+            className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-5 py-4 font-black text-slate-300 backdrop-blur-xl"
+          >
+            <span>⚙️ Herramientas avanzadas (análisis estadístico, bankroll, historial, Kelly, calibración)</span>
+            <span className="text-xl">{showToolsPanel ? "▲" : "▼"}</span>
+          </button>
+        </div>
+
+        {showToolsPanel && (
+          <div className="space-y-5">
+
 
         <section className="mb-5 overflow-hidden rounded-[2rem] border border-emerald-300/20 bg-gradient-to-br from-emerald-400/15 via-slate-900/75 to-sky-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
           <div className="rounded-[1.8rem] bg-slate-950/50 p-5">
@@ -6053,36 +6566,92 @@ setIndicators(importedIndicators);
           </div>
         </section>
 
-        {match.local && match.visitante ? (
-          <section
-            className="mb-5 overflow-hidden rounded-3xl border border-white/10 p-1 shadow-2xl shadow-black/40 backdrop-blur-xl"
-            style={{ background: `linear-gradient(120deg, ${match.localColor1}55, rgba(15,23,42,.85) 40%, rgba(15,23,42,.85) 60%, ${match.visitColor1}55)` }}
+{match.local && match.visitante ? (
+  <section className="mb-5 overflow-hidden rounded-[2rem] border border-emerald-300/20 bg-gradient-to-br from-emerald-400/15 via-slate-900/75 to-sky-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
+    <div className="rounded-[1.8rem] bg-slate-950/50">
+      <button
+        onClick={() => toggleSection("bankroll")}
+        className="flex w-full items-center justify-between p-5 text-left"
+      >
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.35em] text-emerald-200/80">
+            Control real de dinero
+          </p>
+          <h2 className="mt-1 text-3xl font-black">
+            💼 Bankroll tracker
+          </h2>
+          <p className="mt-1 text-sm text-slate-300">
+            Este bloque NO se borra con Limpiar. Solo con Reset bankroll.
+          </p>
+        </div>
+
+        <span className="text-3xl text-emerald-300">
+          {openSections.bankroll ? "▲" : "▼"}
+        </span>
+      </button>
+
+      {openSections.bankroll && (
+        <div className="p-5 pt-0">
+          <div
+            className="rounded-[1.5rem] border border-white/10 p-1"
+            style={{
+              background: `linear-gradient(
+                120deg,
+                ${match.localColor1}55,
+                rgba(15,23,42,.85) 40%,
+                rgba(15,23,42,.85) 60%,
+                ${match.visitColor1}55
+              )`,
+            }}
           >
             <div className="rounded-[1.35rem] bg-slate-950/45 p-5 text-center">
-              <p className="mb-3 text-xs font-bold uppercase tracking-[0.35em] text-slate-200">Partido analizado</p>
+              <p className="mb-3 text-xs font-bold uppercase tracking-[0.35em] text-slate-200">
+                Partido analizado
+              </p>
+
               <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
-                <TeamBadge name={match.local} color1={match.localColor1} color2={match.localColor2} />
+                <TeamBadge
+                  name={match.local}
+                  color1={match.localColor1}
+                  color2={match.localColor2}
+                />
+
                 <div className="text-3xl font-black tracking-wide text-white sm:text-5xl">
                   {match.local}
                   <span className="mx-3 text-slate-400">vs</span>
                   {match.visitante}
                 </div>
-                <TeamBadge name={match.visitante} color1={match.visitColor1} color2={match.visitColor2} />
+
+                <TeamBadge
+                  name={match.visitante}
+                  color1={match.visitColor1}
+                  color2={match.visitColor2}
+                />
               </div>
+
               <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs text-slate-200">
-                <span className="rounded-full bg-white/10 px-3 py-1">1: {match.oddLocal || "—"}</span>
-                <span className="rounded-full bg-white/10 px-3 py-1">X: {match.oddDraw || "—"}</span>
-                <span className="rounded-full bg-white/10 px-3 py-1">2: {match.oddVisit || "—"}</span>
+                <span className="rounded-full bg-white/10 px-3 py-1">
+                  1: {match.oddLocal || "—"}
+                </span>
+
+                <span className="rounded-full bg-white/10 px-3 py-1">
+                  X: {match.oddDraw || "—"}
+                </span>
+
+                <span className="rounded-full bg-white/10 px-3 py-1">
+                  2: {match.oddVisit || "—"}
+                </span>
               </div>
             </div>
-          </section>
-        ) : null}
-
+          </div>
+        </div>
+      )}
+    </div>
+  </section>
+) : null}
+          </div>
+        )}
       </div>
-      
     </main>
-    
   );
-
-  
 }
