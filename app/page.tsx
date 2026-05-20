@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
-
+ 
 // ── UTILS ────────────────────────────────────────────────────────────────────
 const makeId = () => Math.random().toString(36).slice(2, 10);
 const toNum = (v) => { const n = parseFloat(String(v || "").replace(",", ".")); return Number.isFinite(n) ? n : 0; };
