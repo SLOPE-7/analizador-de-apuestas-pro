@@ -1,6657 +1,952 @@
 "use client";
-
-import React, { useEffect, useMemo, useRef, useState } from "react";
-
-type TeamSide = "local" | "visitante" | "h2h" | "ambos";
-type IndicatorPeriod = "full" | "first" | "second" | "h2h";
-type MatchResult = "" | "G" | "E" | "P";
-type Grade = "safe" | "reasonable" | "risky";
-type MatchProfileType = "abierto" | "cerrado" | "trampa" | "equilibrado";
-type MarketGroup = "goals" | "corners" | "cards";
-type BackgroundMode = "team" | "stadium" | "neon" | "dark";
-type TrapLevel = "valor_real" | "linea_comoda" | "linea_estrecha" | "linea_sospechosa" | "trampa_probable" | "neutral";
-type EliminationLeg = "none" | "first" | "second";
-type EliminationSide = "none" | "local" | "visitante";
-type RefereeStrictness = "none" | "low" | "medium" | "high";
-type FocusMarket = "winner" | "doubleChance" | "goals" | "corners" | "cards";
-
-type Indicator = {
-  id: string;
-  team: TeamSide;
-  period: IndicatorPeriod;
-  market: string;
-  line: string;
-  record: string;
-  houseOdd: string;
-};
-
-type Match = {
-  local: string;
-  visitante: string;
-  oddLocal: string;
-  oddDraw: string;
-  oddVisit: string;
-  localColor1: string;
-  localColor2: string;
-  visitColor1: string;
-  visitColor2: string;
-  backgroundMode: BackgroundMode;
-  backgroundImage: string;
-};
-
-type RecentRow = {
-  id: string;
-  goalsFor: string;
-  goalsAgainst: string;
-  cornersFor: string;
-  cornersAgainst: string;
-  cardsFor: string;
-  cardsAgainst: string;
-  shotsTotal: string;
-  shotsOnTarget: string;
-  fouls: string;
-};
-
-type HouseMarket = {
-  goalsOverLine: string;
-  goalsOverOdd: string;
-  goalsUnderLine: string;
-  goalsUnderOdd: string;
-  cornersOverLine: string;
-  cornersOverOdd: string;
-  cornersUnderLine: string;
-  cornersUnderOdd: string;
-  cardsOverLine: string;
-  cardsOverOdd: string;
-  cardsUnderLine: string;
-  cardsUnderOdd: string;
-  dcLocalDrawOdd: string;
-  dcDrawVisitOdd: string;
-  dcLocalVisitOdd: string;
-  handicapLocalLine: string;
-  handicapLocalOdd: string;
-  handicapVisitLine: string;
-  handicapVisitOdd: string;
-};
-
-type BetStatus = "pending" | "won" | "lost" | "void";
-type BetSource = "app" | "manual";
-
-type BankBet = {
-  id: string;
-  date: string;
-  matchName: string;
-  pick: string;
-  market: string;
-  stake: string;
-  odd: string;
-  status: BetStatus;
-  source: BetSource;
-  notes: string;
-};
-
-type BankrollState = {
-  initialBank: string;
-  bets: BankBet[];
-};
-
-type EliminationContext = {
-  enabled: boolean;
-  leg: EliminationLeg;
-  advantageTeam: EliminationSide;
-  leadGoals: string;
-  pressureTeam: EliminationSide;
-};
-
-type RefereeContext = {
-  yellowAvg: string;
-  redAvg: string;
-  strictness: RefereeStrictness;
-};
-
-type MarketFocusState = {
-  winner: boolean;
-  doubleChance: boolean;
-  goals: boolean;
-  corners: boolean;
-  cards: boolean;
-  all: boolean;
-  recentCount: string;
-};
-
-type DominanceContext = {
-  goalsOverLine: string;
-  goalsOverOdd: string;
-  goalsUnderLine: string;
-  goalsUnderOdd: string;
-  localGoalsOverLine: string;
-  localGoalsOverOdd: string;
-  localGoalsUnderLine: string;
-  localGoalsUnderOdd: string;
-  visitGoalsOverLine: string;
-  visitGoalsOverOdd: string;
-  visitGoalsUnderLine: string;
-  visitGoalsUnderOdd: string;
-  cornersOverLine: string;
-  cornersOverOdd: string;
-  cornersUnderLine: string;
-  cornersUnderOdd: string;
-  localCornersOverLine: string;
-  localCornersOverOdd: string;
-  localCornersUnderLine: string;
-  localCornersUnderOdd: string;
-  visitCornersOverLine: string;
-  visitCornersOverOdd: string;
-  visitCornersUnderLine: string;
-  visitCornersUnderOdd: string;
-  cardsOverLine: string;
-  cardsOverOdd: string;
-  cardsUnderLine: string;
-  cardsUnderOdd: string;
-  localCardsOverLine: string;
-  localCardsOverOdd: string;
-  localCardsUnderLine: string;
-  localCardsUnderOdd: string;
-  visitCardsOverLine: string;
-  visitCardsOverOdd: string;
-  visitCardsUnderLine: string;
-  visitCardsUnderOdd: string;
-};
-
-type DailyPick = {
-  id: string;
-  createdAt: string;
-  matchName: string;
-  label: string;
-  line: string;
-  marketValue: string;
-  odd: number;
-  score: number;
-  tier: string;
-  grade: Grade;
-  source: "SofaScore" | "Casa";
-  riskFlags: string[];
-  uniqueKey: string;
-};
-
-type DayPlanGroup = {
-  title: string;
-  subtitle: string;
-  picks: DailyPick[];
-  tone: "safe" | "reasonable" | "risky" | "discard";
-};
-
-type ParlayPickForDay = {
-  key: string;
-  label: string;
-  marketValue: string;
-  line: string;
-  score: number;
-  odd: number;
-  tier: string;
-  grade: Grade;
-  riskFlags: string[];
-  source: "SofaScore" | "Casa";
-};
-
-type ResultPick = {
-  key: string;
-  label: string;
-  marketValue: string;
-  line: string;
-  confidence: number;
-  recentScore: number;
-  blendedScore: number;
-  count: number;
-  grade: Grade;
-  tier: string;
-  avgOdd: number;
-  implied: number;
-  value: number;
-  riskFlags: string[];
-  sources: Indicator[];
-};
-
-type HousePick = {
-  key: string;
-  label: string;
-  marketValue: string;
-  line: string;
-  odd: number;
-  implied: number;
-  modelScore: number;
-  value: number;
-  grade: Grade;
-  tier: string;
-  riskFlags: string[];
-  trapLevel?: TrapLevel;
-  trapLabel?: string;
-  margin?: number;
-};
-
-
-type HouseFieldMap =
-  | { lineField: keyof HouseMarket; oddField: keyof HouseMarket }
-  | { oddField: keyof HouseMarket };
-
-type ExportShape = {
-  version: number;
-  exportedAt: string;
-  match: Match;
-  indicators: Indicator[];
-  localRecent: RecentRow[];
-  visitRecent: RecentRow[];
-  houseMarkets: HouseMarket;
-  eliminationContext?: EliminationContext;
-  refereeContext?: RefereeContext;
-  dominanceContext?: DominanceContext;
-  marketFocus?: MarketFocusState;
-};
-
-// ── MEJORA: Resultado real del partido para calibración ──────────────────────
-type MatchOutcome = {
-  id: string;
-  date: string;
-  matchName: string;
-  predictedPicks: { label: string; marketValue: string; line: string; score: number; grade: Grade }[];
-  actualGoals: string;        // "2-1" por ejemplo
-  actualCorners: string;      // total real
-  actualCards: string;        // total real
-  winner: "local" | "visitante" | "empate" | "";
-  notes: string;
-};
-
-type CalibrationState = {
-  outcomes: MatchOutcome[];
-};
-
-const STORAGE_KEY = "analizador_pro_h2h_casa_v4";
-const BANKROLL_STORAGE_KEY = "bankroll_tracker_h2h_v1";
-const DAILY_PICKS_STORAGE_KEY = "apuestas_del_dia_h2h_v1";
-const CALIBRATION_STORAGE_KEY = "calibracion_picks_v1";
-const ANALYSIS_HISTORY_KEY = "historial_analisis_v1";
-const TEAM_MEMORY_KEY = "memoria_equipos_v1";
-
-// ── 1. MEMORIA DE EQUIPOS ────────────────────────────────────────────────────
-type TeamCondition = "local" | "visitante";
-type TeamMemoryEntry = {
-  id: string;
-  name: string;
-  condition: TeamCondition;
-  updatedAt: string;
-  rows: RecentRow[];
-  quickText: string; // texto rápido usado para llenar
-};
-type TeamMemoryState = { entries: TeamMemoryEntry[] };
-
-// ── 2. DETECTOR DE LÍNEA MOVIDA ──────────────────────────────────────────────
-type LineMovement = {
-  market: string;       // "goals_over" | "corners_over" | etc.
-  label: string;
-  lineValue: string;
-  oddBefore: string;    // cuota original (apertura)
-  oddNow: string;       // cuota actual
-};
-
-// ── 3. SCORE DE CONFIANZA ────────────────────────────────────────────────────
-type ConfidenceScore = {
-  total: number;        // 0-100
-  grade: "alta" | "media" | "baja";
-  breakdown: { label: string; points: number; max: number; ok: boolean }[];
-  message: string;
-};
-
-// ── 4. PANEL PRE-APUESTA ─────────────────────────────────────────────────────
-type PreBetPick = {
-  label: string;
-  line: string;
-  score: number;
-  odd: number;
-  grade: Grade;
-  marketValue: string;
-  source: "SofaScore" | "Casa";
-};
-
-// ── ANÁLISIS IA ──────────────────────────────────────────────────────────────
-type AIAnalysisStatus = "idle" | "loading_web" | "loading_ai" | "done" | "error";
-type AIAnalysis = {
-  previa: string;
-  perfilLocal: string;
-  perfilVisitante: string;
-  pronostico: string;
-  picksIA: string;
-  valueAnalysis: string;
-  usedWeb: boolean;
-  generatedAt: string;
-};
-
-// ── MOTOR IA: picks estructurados ────────────────────────────────────────────
-type AIPickStatus = "pending_odd" | "confirmed" | "discarded";
-type AIPick = {
-  id: string;
-  market: string;          // "over_2_5" | "corners_over_10_5" | etc.
-  label: string;           // "Más de 2.5 goles"
-  line: string;            // "2.5"
-  reasoning: string;       // Por qué la IA lo sugiere
-  confidence: number;      // 0-100 según la IA
-  priority: "alta" | "media" | "baja";
-  // Usuario rellena:
-  houseOdd: string;
-  status: AIPickStatus;
-  // Segunda pasada IA:
-  valueVerdict: string;    // "✅ Tiene value" | "❌ Sin value" | ""
-  edgePct: number;         // ventaja real %
-  kellyStakeAmt: number;   // stake recomendado
-};
-
-type AIMotorState = {
-  status: "idle" | "searching" | "analyzing" | "awaiting_odds" | "verifying" | "done" | "error";
-  matchName: string;
-  competition: string;
-  picks: AIPick[];
-  context: string;         // resumen del contexto encontrado por la IA
-  pronostico: string;
-  errorMsg: string;
-};
-type SavedAnalysis = {
-  id: string;
-  savedAt: string;
-  matchName: string;
-  profile: string;
-  topPicks: { label: string; score: number; grade: Grade }[];
-  snapshot: Partial<ExportShape>;
-};
-
-type AnalysisHistory = {
-  items: SavedAnalysis[];
-};
-
-const MARKET_OPTIONS = [
-  // Rachas rápidas: no piden línea ni cuota. Solo registro X/Total.
-  { label: "Victorias", value: "victorias", line: "", kind: "streak" },
-  { label: "Sin victorias", value: "sin_victorias", line: "", kind: "streak" },
-  { label: "Derrotas", value: "derrotas", line: "", kind: "streak" },
-  { label: "Sin derrotas", value: "sin_derrotas", line: "", kind: "streak" },
-  { label: "Ninguna portería a cero", value: "no_clean", line: "Sí", kind: "streak" },
-  { label: "Sin goles recibidos", value: "clean_sheet", line: "", kind: "streak" },
-  { label: "El primero en marcar", value: "first_score", line: "", kind: "streak" },
-  { label: "El primero en encajar", value: "first_concede", line: "", kind: "streak" },
-  { label: "Primer tiempo perdedor", value: "first_half_loser", line: "1T", kind: "streak" },
-
-  // Mercados apostables: mantienen línea, registro X/Total y cuota de casa.
-  { label: "Menos de 2.5 goles", value: "under_2_5", line: "2.5", kind: "bet" },
-  { label: "Más de 2.5 goles", value: "over_2_5", line: "2.5", kind: "bet" },
-  { label: "Más de 4.5 tarjetas", value: "over_4_5_cards", line: "4.5", kind: "bet" },
-  { label: "Menos de 4.5 tarjetas", value: "under_4_5_cards", line: "4.5", kind: "bet" },
-  { label: "Más de 10.5 corners", value: "over_10_5_corners", line: "10.5", kind: "bet" },
-  { label: "Menos de 10.5 corners", value: "under_10_5_corners", line: "10.5", kind: "bet" },
-  { label: "Ambos equipos marcarán", value: "btts", line: "Sí", kind: "bet" },
-  { label: "Ganador del primer tiempo", value: "first_half_winner", line: "1T", kind: "bet" },
-];
-
-
-
-const STREAK_MARKETS = new Set(["victorias", "sin_victorias", "derrotas", "sin_derrotas", "no_clean", "clean_sheet", "first_score", "first_concede", "first_half_loser"]);
-const NO_ODD_MARKETS = new Set(["victorias", "sin_victorias", "derrotas", "sin_derrotas", "no_clean", "clean_sheet", "first_score", "first_concede", "first_half_loser"]);
-const RECORD_NUMBER_OPTIONS = Array.from({ length: 16 }, (_, i) => String(i));
-
-// ── ENTRADA RÁPIDA: Forma reciente ───────────────────────────────────────────
-// Formato: "GF-GC" o "GF-GC/CF-CC" o "GF-GC/CF-CC/TF-TC"
-// Ejemplos válidos: "2-1"  "1-0/5-3"  "2-1/8-4/2-1"
-// Separa partidos con espacio o coma: "2-1 0-0 3-2/6-4"
-function parseQuickRows(text: string, count: number): RecentRow[] {
-  const tokens = text.trim().split(/[\s,]+/).filter(Boolean);
-  const base: RecentRow[] = Array.from({ length: count }, () => emptyRecentRow());
-  tokens.slice(0, count).forEach((token, i) => {
-    const segs = token.split("/");
-    const goals = segs[0]?.split("-");
-    const corners = segs[1]?.split("-");
-    const cards = segs[2]?.split("-");
-    const gf = Number(goals?.[0]); const gc = Number(goals?.[1]);
-    if (!Number.isFinite(gf) || !Number.isFinite(gc)) return;
-    base[i] = {
-      ...base[i],
-      goalsFor: String(gf), goalsAgainst: String(gc),
-      cornersFor: corners?.[0] !== undefined && Number.isFinite(Number(corners[0])) ? String(Number(corners[0])) : "",
-      cornersAgainst: corners?.[1] !== undefined && Number.isFinite(Number(corners[1])) ? String(Number(corners[1])) : "",
-      cardsFor: cards?.[0] !== undefined && Number.isFinite(Number(cards[0])) ? String(Number(cards[0])) : "",
-      cardsAgainst: cards?.[1] !== undefined && Number.isFinite(Number(cards[1])) ? String(Number(cards[1])) : "",
-    };
-  });
-  return base;
-}
-
-// ── ENTRADA RÁPIDA: Mercados de la casa ──────────────────────────────────────
-// Formato: "overLine overOdd underLine underOdd" por mercado, separados por |
-// Ej: "2.5 1.85 2.5 1.95 | 9.5 1.90 9.5 1.90 | 4.5 1.75 4.5 2.00 | 1X 1.30 X2 1.45"
-// Cada bloque: goles | corners | tarjetas | doble oportunidad
-function parseQuickHouse(text: string): Partial<HouseMarket> {
-  const blocks = text.split("|").map((b) => b.trim());
-  const result: Partial<HouseMarket> = {};
-  const parseBlock = (block: string) => block.trim().split(/\s+/).filter(Boolean);
-
-  // Goles
-  if (blocks[0]) {
-    const p = parseBlock(blocks[0]);
-    if (p[0]) result.goalsOverLine = p[0];
-    if (p[1]) result.goalsOverOdd = p[1];
-    if (p[2]) result.goalsUnderLine = p[2];
-    if (p[3]) result.goalsUnderOdd = p[3];
-  }
-  // Corners
-  if (blocks[1]) {
-    const p = parseBlock(blocks[1]);
-    if (p[0]) result.cornersOverLine = p[0];
-    if (p[1]) result.cornersOverOdd = p[1];
-    if (p[2]) result.cornersUnderLine = p[2];
-    if (p[3]) result.cornersUnderOdd = p[3];
-  }
-  // Tarjetas
-  if (blocks[2]) {
-    const p = parseBlock(blocks[2]);
-    if (p[0]) result.cardsOverLine = p[0];
-    if (p[1]) result.cardsOverOdd = p[1];
-    if (p[2]) result.cardsUnderLine = p[2];
-    if (p[3]) result.cardsUnderOdd = p[3];
-  }
-  // Doble oportunidad (1X cuota | X2 cuota | 12 cuota)
-  if (blocks[3]) {
-    const p = parseBlock(blocks[3]);
-    if (p[1]) result.dcLocalDrawOdd = p[1];
-    if (p[3]) result.dcDrawVisitOdd = p[3];
-    if (p[5]) result.dcLocalVisitOdd = p[5];
-  }
-  return result;
-}
-
-function isStreakIndicatorMarket(marketValue: string) {
-  return STREAK_MARKETS.has(getMarketValue(marketValue));
-}
-
-function shouldShowIndicatorOdd(marketValue: string) {
-  return Boolean(getMarketValue(marketValue)) && !NO_ODD_MARKETS.has(getMarketValue(marketValue));
-}
-
-function shouldShowIndicatorLine(marketValue: string) {
-  return Boolean(getMarketValue(marketValue)) && !STREAK_MARKETS.has(getMarketValue(marketValue));
-}
-
-function splitRecordValue(record: string) {
-  const clean = String(record || "").trim().replace(/\s+/g, "");
-  const [hits, total] = clean.split("/");
-  return { hits: hits || "", total: total || "" };
-}
-
-function joinRecordValue(hits: string, total: string) {
-  if (hits === "" && total === "") return "";
-  return `${hits || "0"}/${total || "0"}`;
-}
-
-const TEAM_OPTIONS: { label: string; value: TeamSide }[] = [
-  { label: "🏠 Local", value: "local" },
-  { label: "✈️ Visitante", value: "visitante" },
-  { label: "🤝 H2H", value: "h2h" },
-  { label: "🔥 Ambos", value: "ambos" },
-];
-
-const PERIOD_OPTIONS: { label: string; value: IndicatorPeriod }[] = [
-  { label: "⏱️ Tiempo completo", value: "full" },
-  { label: "1️⃣ 1er tiempo", value: "first" },
-  { label: "2️⃣ 2do tiempo", value: "second" },
-  { label: "🤝 H2H", value: "h2h" },
-];
-
-const NUMBER_OPTIONS = (max: number) => Array.from({ length: max + 1 }, (_, index) => String(index));
-const LEAD_GOAL_OPTIONS = ["0", "1", "2", "3", "4", "5", "6"];
-const INDICATOR_BULK_OPTIONS = Array.from({ length: 20 }, (_, index) => String(index + 1));
-const AVG_YELLOW_OPTIONS = Array.from({ length: 181 }, (_, index) => (index * 0.05).toFixed(2));
-const AVG_RED_OPTIONS = Array.from({ length: 61 }, (_, index) => (index * 0.05).toFixed(2));
-const REFEREE_STRICTNESS_OPTIONS: { label: string; value: RefereeStrictness }[] = [
-  { label: "Sin dato", value: "none" },
-  { label: "Bajo", value: "low" },
-  { label: "Medio", value: "medium" },
-  { label: "Alto", value: "high" },
-];
-const GOAL_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"];
-const CORNER_OVER_LINES = ["4.5", "5.5", "6.5", "7.5", "8.5", "9.5", "10.5"];
-const CORNER_UNDER_LINES = ["16.5", "15.5", "14.5", "13.5", "12.5", "11.5", "10.5", "9.5", "8.5", "7.5", "6.5", "5.5"];
-const CARD_LINES = ["1.5", "2.5", "3.5", "4.5", "5.5", "6.5"];
-const TEAM_GOAL_LINES = ["0.5", "1.5", "2.5", "3.5"];
-const TEAM_CORNER_LINES = ["1.5", "2.5", "3.5", "4.5", "5.5", "6.5", "7.5"];
-const TEAM_CARD_LINES = ["0.5", "1.5", "2.5", "3.5", "4.5", "5.5"];
-const RECENT_MATCH_COUNT_OPTIONS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
-const FOCUS_OPTIONS: { key: keyof Omit<MarketFocusState, "recentCount">; label: string; help: string }[] = [
-  { key: "winner", label: "🏆 Ganador", help: "1X2 y ganador directo" },
-  { key: "doubleChance", label: "🛡️ Doble oportunidad", help: "1X, X2, 12 y handicap" },
-  { key: "goals", label: "⚽ Goles", help: "GF/GC, líneas y picks de goles" },
-  { key: "corners", label: "🚩 Corners", help: "CF/CC, líneas y dominancia de corners" },
-  { key: "cards", label: "🟨 Tarjetas", help: "TF/TC, árbitro y líneas de tarjetas" },
-  { key: "all", label: "📊 Todos", help: "Muestra todos los mercados" },
-];
-const HANDICAP_LINES = ["+0.5", "+1.5", "+2.5", "+3.5", "-0.5", "-1.5", "-2.5", "-3.5"];
-const TEAM_COLOR_PRESETS = [
-  { label: "Man City", local1: "#6CABDD", local2: "#ffffff", visit1: "#6CABDD", visit2: "#ffffff" },
-  { label: "Barcelona", local1: "#A50044", local2: "#004D98", visit1: "#A50044", visit2: "#004D98" },
-  { label: "Real Madrid", local1: "#ffffff", local2: "#facc15", visit1: "#ffffff", visit2: "#facc15" },
-  { label: "PSG", local1: "#004170", local2: "#DA291C", visit1: "#004170", visit2: "#DA291C" },
-  { label: "Bayern", local1: "#DC052D", local2: "#0066B2", visit1: "#DC052D", visit2: "#0066B2" },
-  { label: "Flamengo", local1: "#D50000", local2: "#111111", visit1: "#D50000", visit2: "#111111" },
-];
-
-const BACKGROUND_PRESETS = [
-  { label: "Estadio nocturno", value: "https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&w=1800&q=80" },
-  { label: "Luces estadio", value: "https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&w=1800&q=80" },
-  { label: "Césped", value: "https://images.unsplash.com/photo-1575361204480-aadea25e6e68?auto=format&fit=crop&w=1800&q=80" },
-];
-
-
-function makeId() {
-  return Math.random().toString(36).slice(2, 10);
-}
-
-function emptyRecentRow(): RecentRow {
-  return {
-    id: makeId(),
-    goalsFor: "",
-    goalsAgainst: "",
-    cornersFor: "",
-    cornersAgainst: "",
-    cardsFor: "",
-    cardsAgainst: "",
-    shotsTotal: "",
-    shotsOnTarget: "",
-    fouls: "",
-  };
-}
-
-function createRecentRows() {
-  return Array.from({ length: 3 }, () => emptyRecentRow());
-}
-
-function emptyMatch(): Match {
-  return {
-    local: "", visitante: "", oddLocal: "", oddDraw: "", oddVisit: "",
-    localColor1: "#38bdf8", localColor2: "#ffffff",
-    visitColor1: "#ef4444", visitColor2: "#111827",
-    backgroundMode: "team", backgroundImage: "",
-  };
-}
-
-function emptyHouseMarkets(): HouseMarket {
-  return {
-    goalsOverLine: "1.5",
-    goalsOverOdd: "",
-    goalsUnderLine: "4.5",
-    goalsUnderOdd: "",
-    cornersOverLine: "8.5",
-    cornersOverOdd: "",
-    cornersUnderLine: "10.5",
-    cornersUnderOdd: "",
-    cardsOverLine: "2.5",
-    cardsOverOdd: "",
-    cardsUnderLine: "4.5",
-    cardsUnderOdd: "",
-    dcLocalDrawOdd: "",
-    dcDrawVisitOdd: "",
-    dcLocalVisitOdd: "",
-    handicapLocalLine: "+1.5",
-    handicapLocalOdd: "",
-    handicapVisitLine: "+1.5",
-    handicapVisitOdd: "",
-  };
-}
-
-function emptyEliminationContext(): EliminationContext {
-  return {
-    enabled: false,
-    leg: "none",
-    advantageTeam: "none",
-    leadGoals: "0",
-    pressureTeam: "none",
-  };
-}
-
-function emptyRefereeContext(): RefereeContext {
-  return {
-    yellowAvg: "",
-    redAvg: "",
-    strictness: "none",
-  };
-}
-
-function emptyMarketFocus(): MarketFocusState {
-  return {
-    winner: true,
-    doubleChance: true,
-    goals: true,
-    corners: true,
-    cards: true,
-    all: true,
-    recentCount: "3",
-  };
-}
-
-function emptyDominanceContext(): DominanceContext {
-  return {
-    goalsOverLine: "1.5",
-    goalsOverOdd: "",
-    goalsUnderLine: "4.5",
-    goalsUnderOdd: "",
-    localGoalsOverLine: "0.5",
-    localGoalsOverOdd: "",
-    localGoalsUnderLine: "2.5",
-    localGoalsUnderOdd: "",
-    visitGoalsOverLine: "0.5",
-    visitGoalsOverOdd: "",
-    visitGoalsUnderLine: "2.5",
-    visitGoalsUnderOdd: "",
-    cornersOverLine: "6.5",
-    cornersOverOdd: "",
-    cornersUnderLine: "11.5",
-    cornersUnderOdd: "",
-    localCornersOverLine: "2.5",
-    localCornersOverOdd: "",
-    localCornersUnderLine: "6.5",
-    localCornersUnderOdd: "",
-    visitCornersOverLine: "2.5",
-    visitCornersOverOdd: "",
-    visitCornersUnderLine: "6.5",
-    visitCornersUnderOdd: "",
-    cardsOverLine: "2.5",
-    cardsOverOdd: "",
-    cardsUnderLine: "5.5",
-    cardsUnderOdd: "",
-    localCardsOverLine: "0.5",
-    localCardsOverOdd: "",
-    localCardsUnderLine: "3.5",
-    localCardsUnderOdd: "",
-    visitCardsOverLine: "0.5",
-    visitCardsOverOdd: "",
-    visitCardsUnderLine: "3.5",
-    visitCardsUnderOdd: "",
-  };
-}
-
-type DominancePick = {
-  key: string;
-  label: string;
-  score: number;
-  odd: number;
-  grade: Grade;
-  reason: string;
-  risk: string;
-};
-
-function getDependencyLabel(localValue: number, visitValue: number) {
-  const total = localValue + visitValue;
-  if (total <= 0) return { label: "Sin datos", tone: "neutral", share: 0 };
-  const share = Math.max(localValue, visitValue) / total;
-  if (share >= 0.76) return { label: "🔴 Mercado dependiente de un solo equipo", tone: "danger", share };
-  if (share >= 0.64) return { label: "🟡 Dominancia marcada", tone: "warning", share };
-  return { label: "🟢 Mercado equilibrado", tone: "safe", share };
-}
-
-function sideExpectedValues(projection: ReturnType<typeof buildProjection>, adjustedCardsExpected: number) {
-  const localGoals = average([projection.local.goalsForAvg, projection.visit.goalsAgainstAvg].filter((n) => n > 0));
-  const visitGoals = average([projection.visit.goalsForAvg, projection.local.goalsAgainstAvg].filter((n) => n > 0));
-  const rawCardsTotal = projection.localCardsExpected + projection.visitCardsExpected;
-  const localCardShare = rawCardsTotal > 0 ? projection.localCardsExpected / rawCardsTotal : 0.5;
-  const visitCardShare = 1 - localCardShare;
-  return {
-    localGoals,
-    visitGoals,
-    totalGoals: localGoals + visitGoals,
-    localCorners: projection.localCornersExpected,
-    visitCorners: projection.visitCornersExpected,
-    totalCorners: projection.expectedCorners,
-    localCards: adjustedCardsExpected * localCardShare,
-    visitCards: adjustedCardsExpected * visitCardShare,
-    totalCards: adjustedCardsExpected,
-  };
-}
-
-function buildDominanceAnalysis(
-  dominance: DominanceContext,
-  projection: ReturnType<typeof buildProjection>,
-  adjustedCardsExpected: number,
-  match: Match,
-  hasMinimumData: boolean
-) {
-  const values = sideExpectedValues(projection, adjustedCardsExpected);
-  const goalsDependency = getDependencyLabel(values.localGoals, values.visitGoals);
-  const cornersDependency = getDependencyLabel(values.localCorners, values.visitCorners);
-  const cardsDependency = getDependencyLabel(values.localCards, values.visitCards);
-  const picks: DominancePick[] = [];
-
-  const addPick = (key: string, label: string, expected: number, line: string, direction: "over" | "under", oddRaw: string, scale: number, dependencyShare: number, reason: string) => {
-    const odd = toNumber(oddRaw);
-    const base = probabilityByLine(expected, toNumber(line), direction, scale);
-    const dependencyPenalty = direction === "over" && dependencyShare >= 0.72 ? 13 : direction === "over" && dependencyShare >= 0.64 ? 7 : 0;
-    const score = clamp(base - dependencyPenalty, 0, 100);
-    const flags: string[] = [];
-    if (dependencyPenalty >= 10) flags.push("Depende demasiado de un solo equipo.");
-    if (Math.abs(expected - toNumber(line)) <= (scale <= 2.2 ? 0.35 : scale <= 3.6 ? 0.8 : 1.4)) flags.push("Línea estrecha: no combinar fuerte.");
-    if (odd > 1 && score - impliedProb(odd) < 0) flags.push("La cuota no acompaña del todo.");
-    const grade = getGrade(score, flags);
-    if (score >= 58) picks.push({ key, label, score, odd, grade, reason, risk: flags.length ? flags.join(" ") : "Lectura limpia." });
-  };
-
-  if (hasMinimumData) {
-    addPick("dom_goals_over", `Más de ${dominance.goalsOverLine} goles`, values.totalGoals, dominance.goalsOverLine, "over", dominance.goalsOverOdd, 2.1, goalsDependency.share, "Total de goles sostenido por ambos ataques/defensas recientes.");
-    addPick("dom_goals_under", `Menos de ${dominance.goalsUnderLine} goles`, values.totalGoals, dominance.goalsUnderLine, "under", dominance.goalsUnderOdd, 2.1, goalsDependency.share, "Under validado contra producción esperada total.");
-    addPick("dom_local_goals_over", `${match.local || "Local"} más de ${dominance.localGoalsOverLine} goles`, values.localGoals, dominance.localGoalsOverLine, "over", dominance.localGoalsOverOdd, 1.5, 0.5, "Producción ofensiva local vs goles concedidos del visitante.");
-    addPick("dom_visit_goals_over", `${match.visitante || "Visitante"} más de ${dominance.visitGoalsOverLine} goles`, values.visitGoals, dominance.visitGoalsOverLine, "over", dominance.visitGoalsOverOdd, 1.5, 0.5, "Producción ofensiva visitante vs goles concedidos del local.");
-    addPick("dom_local_goals_under", `${match.local || "Local"} menos de ${dominance.localGoalsUnderLine} goles`, values.localGoals, dominance.localGoalsUnderLine, "under", dominance.localGoalsUnderOdd, 1.5, 0.5, "Techo goleador del local.");
-    addPick("dom_visit_goals_under", `${match.visitante || "Visitante"} menos de ${dominance.visitGoalsUnderLine} goles`, values.visitGoals, dominance.visitGoalsUnderLine, "under", dominance.visitGoalsUnderOdd, 1.5, 0.5, "Techo goleador del visitante.");
-
-    addPick("dom_corners_over", `Más de ${dominance.cornersOverLine} corners`, values.totalCorners, dominance.cornersOverLine, "over", dominance.cornersOverOdd, 5.2, cornersDependency.share, "Total de corners comparando generación propia y corners concedidos.");
-    addPick("dom_corners_under", `Menos de ${dominance.cornersUnderLine} corners`, values.totalCorners, dominance.cornersUnderLine, "under", dominance.cornersUnderOdd, 5.2, cornersDependency.share, "Under de corners validado por total esperado.");
-    addPick("dom_local_corners_over", `${match.local || "Local"} más de ${dominance.localCornersOverLine} corners`, values.localCorners, dominance.localCornersOverLine, "over", dominance.localCornersOverOdd, 3.2, 0.5, "Corners esperados del local.");
-    addPick("dom_visit_corners_over", `${match.visitante || "Visitante"} más de ${dominance.visitCornersOverLine} corners`, values.visitCorners, dominance.visitCornersOverLine, "over", dominance.visitCornersOverOdd, 3.2, 0.5, "Corners esperados del visitante.");
-    addPick("dom_local_corners_under", `${match.local || "Local"} menos de ${dominance.localCornersUnderLine} corners`, values.localCorners, dominance.localCornersUnderLine, "under", dominance.localCornersUnderOdd, 3.2, 0.5, "Techo de corners del local.");
-    addPick("dom_visit_corners_under", `${match.visitante || "Visitante"} menos de ${dominance.visitCornersUnderLine} corners`, values.visitCorners, dominance.visitCornersUnderLine, "under", dominance.visitCornersUnderOdd, 3.2, 0.5, "Techo de corners del visitante.");
-
-    addPick("dom_cards_over", `Más de ${dominance.cardsOverLine} tarjetas`, values.totalCards, dominance.cardsOverLine, "over", dominance.cardsOverOdd, 3.4, cardsDependency.share, "Tarjetas totales incluyendo árbitro y registros.");
-    addPick("dom_cards_under", `Menos de ${dominance.cardsUnderLine} tarjetas`, values.totalCards, dominance.cardsUnderLine, "under", dominance.cardsUnderOdd, 3.4, cardsDependency.share, "Under tarjetas contra promedio ajustado por árbitro.");
-    addPick("dom_local_cards_over", `${match.local || "Local"} más de ${dominance.localCardsOverLine} tarjetas`, values.localCards, dominance.localCardsOverLine, "over", dominance.localCardsOverOdd, 2.2, 0.5, "Tarjetas esperadas del local.");
-    addPick("dom_visit_cards_over", `${match.visitante || "Visitante"} más de ${dominance.visitCardsOverLine} tarjetas`, values.visitCards, dominance.visitCardsOverLine, "over", dominance.visitCardsOverOdd, 2.2, 0.5, "Tarjetas esperadas del visitante.");
-    addPick("dom_local_cards_under", `${match.local || "Local"} menos de ${dominance.localCardsUnderLine} tarjetas`, values.localCards, dominance.localCardsUnderLine, "under", dominance.localCardsUnderOdd, 2.2, 0.5, "Techo de tarjetas del local.");
-    addPick("dom_visit_cards_under", `${match.visitante || "Visitante"} menos de ${dominance.visitCardsUnderLine} tarjetas`, values.visitCards, dominance.visitCardsUnderLine, "under", dominance.visitCardsUnderOdd, 2.2, 0.5, "Techo de tarjetas del visitante.");
-  }
-
-  const dominators: string[] = [];
-  if (values.localCorners - values.visitCorners >= 2) dominators.push(`${match.local || "Local"} domina corners (${values.localCorners.toFixed(1)} vs ${values.visitCorners.toFixed(1)}).`);
-  if (values.visitCorners - values.localCorners >= 2) dominators.push(`${match.visitante || "Visitante"} domina corners (${values.visitCorners.toFixed(1)} vs ${values.localCorners.toFixed(1)}).`);
-  if (values.localGoals - values.visitGoals >= 0.7) dominators.push(`${match.local || "Local"} domina gol esperado (${values.localGoals.toFixed(1)} vs ${values.visitGoals.toFixed(1)}).`);
-  if (values.visitGoals - values.localGoals >= 0.7) dominators.push(`${match.visitante || "Visitante"} domina gol esperado (${values.visitGoals.toFixed(1)} vs ${values.localGoals.toFixed(1)}).`);
-  if (values.localCards - values.visitCards >= 0.8) dominators.push(`${match.local || "Local"} carga más riesgo de tarjetas (${values.localCards.toFixed(1)} vs ${values.visitCards.toFixed(1)}).`);
-  if (values.visitCards - values.localCards >= 0.8) dominators.push(`${match.visitante || "Visitante"} carga más riesgo de tarjetas (${values.visitCards.toFixed(1)} vs ${values.localCards.toFixed(1)}).`);
-
-  return {
-    values,
-    dependencies: { goals: goalsDependency, corners: cornersDependency, cards: cardsDependency },
-    dominators,
-    picks: picks.sort((a, b) => b.score - a.score).slice(0, 10),
-  };
-}
-
-function getRefereeCardAdjustment(referee: RefereeContext) {
-  const yellow = toNumber(referee.yellowAvg);
-  const red = toNumber(referee.redAvg);
-  let score = 0;
-  let expectedBoost = 0;
-  const notes: string[] = [];
-
-  if (yellow >= 5.2) {
-    score += 10;
-    expectedBoost += 0.8;
-    notes.push("Árbitro tarjetero: sube over tarjetas y baja under corto.");
-  } else if (yellow >= 4.4) {
-    score += 6;
-    expectedBoost += 0.45;
-    notes.push("Árbitro medio/alto en amarillas: tarjetas con apoyo extra.");
-  } else if (yellow > 0 && yellow <= 3.2) {
-    score -= 8;
-    expectedBoost -= 0.45;
-    notes.push("Árbitro permisivo: cuidado con over de tarjetas.");
-  }
-
-  if (red >= 0.30) {
-    score += 4;
-    expectedBoost += 0.35;
-    notes.push("Promedio de rojas alto: sube el riesgo disciplinario del partido.");
-  } else if (red > 0 && red <= 0.10) {
-    expectedBoost -= 0.1;
-  }
-
-  if (referee.strictness === "high") {
-    score += 6;
-    expectedBoost += 0.4;
-    notes.push("Rigor alto seleccionado: el motor eleva tarjetas.");
-  } else if (referee.strictness === "low") {
-    score -= 6;
-    expectedBoost -= 0.35;
-    notes.push("Rigor bajo seleccionado: el motor baja tarjetas.");
-  }
-
-  return {
-    scoreAdjustment: clamp(score, -12, 16),
-    expectedBoost: clamp(expectedBoost, -0.8, 1.4),
-    notes,
-  };
-}
-
-// ── MEJORA 1: Criterio de Kelly ──────────────────────────────────────────────
-// Calcula el % óptimo del bankroll a apostar según probabilidad real y cuota.
-// fractional = 0.5 → Kelly fraccionado (más conservador, recomendado).
-function kellyStake(probPct: number, odd: number, bankroll: number, fractional = 0.5): {
-  kellyFraction: number;
-  recommendedStake: number;
-  tier: "fuerte" | "moderado" | "minimo" | "no_apostar";
-  label: string;
-} {
-  if (!odd || odd <= 1 || probPct <= 0 || bankroll <= 0) {
-    return { kellyFraction: 0, recommendedStake: 0, tier: "no_apostar", label: "Sin datos" };
-  }
-  const p = probPct / 100;
-  const b = odd - 1;
+import { useState, useEffect, useCallback, useRef } from "react";
+
+// ── UTILS ────────────────────────────────────────────────────────────────────
+const makeId = () => Math.random().toString(36).slice(2, 10);
+const toNum = (v) => { const n = parseFloat(String(v || "").replace(",", ".")); return Number.isFinite(n) ? n : 0; };
+const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+const impliedProb = (odd) => odd > 1 ? (1 / odd) * 100 : 0;
+const fmtMoney = (v) => Number.isFinite(v) ? v.toFixed(2) : "0.00";
+const fmtPct = (v) => `${Number.isFinite(v) ? v.toFixed(1) : "0.0"}%`;
+
+function kellyStake(prob, odd, bank) {
+  if (!bank || !odd || odd <= 1 || !prob) return null;
+  const p = prob / 100;
   const q = 1 - p;
-  const rawKelly = (b * p - q) / b;
-  const fraction = Math.max(0, rawKelly) * fractional;
-  const recommendedStake = fraction * bankroll;
-  const fmt = (n: number) => Number.isFinite(n) ? n.toFixed(2) : "0.00";
-
-  let tier: "fuerte" | "moderado" | "minimo" | "no_apostar" = "no_apostar";
-  let label = "❌ No apostar (sin value)";
-  if (fraction >= 0.08) { tier = "fuerte"; label = `🔥 Stake fuerte: ${fmt(recommendedStake)} (${(fraction * 100).toFixed(1)}% bank)`; }
-  else if (fraction >= 0.04) { tier = "moderado"; label = `🟡 Stake moderado: ${fmt(recommendedStake)} (${(fraction * 100).toFixed(1)}% bank)`; }
-  else if (fraction > 0) { tier = "minimo"; label = `🟢 Stake mínimo: ${fmt(recommendedStake)} (${(fraction * 100).toFixed(1)}% bank)`; }
-
-  return { kellyFraction: fraction, recommendedStake, tier, label };
+  const b = odd - 1;
+  const kelly = (b * p - q) / b;
+  if (kelly <= 0) return { pct: 0, amount: 0, label: "❌ Sin value (Kelly negativo)", tier: "none" };
+  const frac = Math.min(kelly * 0.5, 0.12);
+  const amount = bank * frac;
+  const tier = frac >= 0.06 ? "fuerte" : frac >= 0.03 ? "moderado" : frac >= 0.01 ? "minimo" : "none";
+  const pctLabel = (frac * 100).toFixed(1);
+  return { pct: frac * 100, amount, label: `${pctLabel}% del banco → $${fmtMoney(amount)}`, tier };
 }
 
-// ── MEJORA 2: Peso por recencia ──────────────────────────────────────────────
-// Los últimos partidos pesan más. Índice 0 = más reciente.
-function buildRecentStatsWeighted(rows: RecentRow[]) {
-  const valid = countValidRows(rows);
-  if (!valid.length) return buildRecentStats(rows);
-
-  const weights = valid.map((_, i) => Math.pow(0.75, i)); // 1, 0.75, 0.56, 0.42...
-  const totalW = weights.reduce((a, b) => a + b, 0);
-
-  const wAvg = (values: number[]) => {
-    const filtered = values.map((v, i) => ({ v, w: weights[i] ?? 0 })).filter((x) => x.v >= 0);
-    const total = filtered.reduce((s, x) => s + x.w, 0);
-    if (!total) return 0;
-    return filtered.reduce((s, x) => s + x.v * x.w, 0) / total;
-  };
-
-  const goalsFor = valid.map((r) => toNumber(r.goalsFor));
-  const goalsAgainst = valid.map((r) => toNumber(r.goalsAgainst));
-  const cornersFor = valid.map((r) => toNumber(r.cornersFor));
-  const cornersAgainst = valid.map((r) => toNumber(r.cornersAgainst));
-  const cardsFor = valid.map((r) => toNumber(r.cardsFor));
-  const cardsAgainst = valid.map((r) => toNumber(r.cardsAgainst));
-
-  const btts = valid.filter((r) => toNumber(r.goalsFor) > 0 && toNumber(r.goalsAgainst) > 0).length;
-  const noClean = valid.filter((r) => toNumber(r.goalsAgainst) > 0).length;
-  const noLose = valid.filter((r) => { const res = getAutoResult(r); return res === "G" || res === "E"; }).length;
-  const noWin = valid.filter((r) => { const res = getAutoResult(r); return res === "E" || res === "P"; }).length;
-  const wins = valid.filter((r) => getAutoResult(r) === "G").length;
-  const draws = valid.filter((r) => getAutoResult(r) === "E").length;
-
-  return {
-    count: valid.length,
-    goalsForAvg: wAvg(goalsFor),
-    goalsAgainstAvg: wAvg(goalsAgainst),
-    totalGoalsAvg: wAvg(valid.map((r) => toNumber(r.goalsFor) + toNumber(r.goalsAgainst))),
-    cornersForAvg: wAvg(cornersFor),
-    cornersAgainstAvg: wAvg(cornersAgainst),
-    totalCornersAvg: wAvg(valid.map((r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst))),
-    cardsForAvg: wAvg(cardsFor),
-    cardsAgainstAvg: wAvg(cardsAgainst),
-    totalCardsAvg: wAvg(valid.map((r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst))),
-    bttsPct: valid.length ? (btts / valid.length) * 100 : 0,
-    noCleanPct: valid.length ? (noClean / valid.length) * 100 : 0,
-    noLosePct: valid.length ? (noLose / valid.length) * 100 : 0,
-    noWinPct: valid.length ? (noWin / valid.length) * 100 : 0,
-    winPct: valid.length ? (wins / valid.length) * 100 : 0,
-    drawPct: valid.length ? (draws / valid.length) * 100 : 0,
-    _totalW: totalW,
-  };
-}
-
-// ── MEJORA 3: Value Bet Estricto ─────────────────────────────────────────────
-// Devuelve detalle de si un pick tiene value real según Kelly y margen de casa.
-function strictValueBetAnalysis(modelScore: number, odd: number, bankrollAmount: number): {
-  hasValue: boolean;
-  edge: number;
-  kellyResult: ReturnType<typeof kellyStake>;
-  verdict: string;
-  verdictColor: "green" | "yellow" | "red";
-} {
+function valueAndRisk(prob, odd) {
+  if (!prob || !odd || odd <= 1) return { value: 0, ev: 0, roi: 0, color: "gray", label: "Sin datos" };
   const implied = impliedProb(odd);
-  const edge = modelScore - implied;
-  const kellyResult = kellyStake(modelScore, odd, bankrollAmount);
-
-  let verdict = "";
-  let verdictColor: "green" | "yellow" | "red" = "red";
-
-  if (odd <= 1 || implied === 0) {
-    return { hasValue: false, edge: 0, kellyResult, verdict: "Sin cuota para analizar", verdictColor: "red" };
-  }
-
-  if (edge >= 10 && kellyResult.tier !== "no_apostar") {
-    verdict = `✅ Value real: +${edge.toFixed(1)}% de ventaja sobre la casa`;
-    verdictColor = "green";
-  } else if (edge >= 4) {
-    verdict = `🟡 Value marginal: +${edge.toFixed(1)}%. Jugar solo si hay alta confianza`;
-    verdictColor = "yellow";
-  } else if (edge >= 0) {
-    verdict = `⚠️ Value casi nulo: +${edge.toFixed(1)}%. No es suficiente para apostar`;
-    verdictColor = "red";
-  } else {
-    verdict = `❌ Sin value: la casa te lleva ${Math.abs(edge).toFixed(1)}% de ventaja`;
-    verdictColor = "red";
-  }
-
-  return { hasValue: edge >= 5, edge, kellyResult, verdict, verdictColor };
+  const value = prob - implied;
+  const ev = (prob / 100) * (odd - 1) - (1 - prob / 100);
+  const roi = ev * 100;
+  const color = value >= 8 ? "green" : value >= 2 ? "yellow" : "red";
+  const label = value >= 8 ? "🟢 Value fuerte" : value >= 2 ? "🟡 Value moderado" : "🔴 Sin value / evitar";
+  return { value, ev, roi, color, label };
 }
 
-// ── MEJORA 4: Alerta de valor en parlay ──────────────────────────────────────
-function parlayValueAlert(picks: Array<{ score: number; odd: number; label: string }>): {
-  combinedOdds: number;
-  realProb: number;
-  impliedProbCasa: number;
-  edge: number;
-  hasValue: boolean;
-  message: string;
-  color: "green" | "yellow" | "red";
-} {
-  const valid = picks.filter((p) => p.odd > 1 && p.score > 0);
-  if (!valid.length) return { combinedOdds: 0, realProb: 0, impliedProbCasa: 0, edge: 0, hasValue: false, message: "Sin picks para analizar", color: "red" };
+// ── STORAGE ──────────────────────────────────────────────────────────────────
+const SK = "apuestas_ia_pro_v1";
+const BK = "bankroll_ia_pro_v1";
+const HK = "historial_ia_pro_v1";
 
-  const totalOdds = valid.reduce((acc, p) => acc * p.odd, 1);
-  // Probabilidad real combinada (independencia asumida)
-  const realProb = valid.reduce((acc, p) => acc * (p.score / 100), 1) * 100;
-  const impliedProbCasa = impliedProb(totalOdds);
-  const edge = realProb - impliedProbCasa;
-
-  let message = "";
-  let color: "green" | "yellow" | "red" = "red";
-  let hasValue = false;
-
-  if (edge >= 8) {
-    message = `✅ Parlay con value real: probabilidad real ${realProb.toFixed(1)}% vs casa ${impliedProbCasa.toFixed(1)}%. Ventaja: +${edge.toFixed(1)}%`;
-    color = "green";
-    hasValue = true;
-  } else if (edge >= 3) {
-    message = `🟡 Parlay marginal: real ${realProb.toFixed(1)}% vs casa ${impliedProbCasa.toFixed(1)}%. Ventaja mínima de +${edge.toFixed(1)}%. Controla el stake.`;
-    color = "yellow";
-    hasValue = true;
-  } else if (edge >= 0) {
-    message = `⚠️ Parlay sin value suficiente: real ${realProb.toFixed(1)}% vs casa ${impliedProbCasa.toFixed(1)}%. Solo ${edge.toFixed(1)}% de ventaja.`;
-    color = "red";
-  } else {
-    message = `❌ Parlay con value NEGATIVO: la casa gana ${Math.abs(edge).toFixed(1)}% de ventaja. No combinar estos picks.`;
-    color = "red";
-  }
-
-  return { combinedOdds: totalOdds, realProb, impliedProbCasa, edge, hasValue, message, color };
+function loadState(key, fallback) {
+  try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; } catch { return fallback; }
+}
+function saveState(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
 }
 
-// ── MEJORA 5: Calibración por historial ──────────────────────────────────────
-function emptyOutcomeDraft(): Omit<MatchOutcome, "id"> {
-  return {
-    date: new Date().toISOString().slice(0, 10),
-    matchName: "",
-    predictedPicks: [],
-    actualGoals: "",
-    actualCorners: "",
-    actualCards: "",
-    winner: "",
-    notes: "",
-  };
-}
+// ── EMPTY SHAPES ─────────────────────────────────────────────────────────────
+const emptyMatch = () => ({ local: "", visitante: "", oddLocal: "", oddDraw: "", oddVisit: "", liga: "" });
+const emptyPick = () => ({ id: makeId(), mercado: "", linea: "", tipo: "over", confianza: 0, prioridad: "media", justificacion: "", cuotaSugerida: "", cuotaCasa: "", seleccionado: false, value: 0, ev: 0, roi: 0, color: "gray", valueLabel: "Sin datos", kellyAmt: 0 });
+const emptyBet = () => ({ id: makeId(), fecha: new Date().toISOString().slice(0,10), partido: "", pick: "", mercado: "", stake: "", cuota: "", estado: "pendiente", notas: "" });
+const emptyBankroll = () => ({ inicial: "", apuestas: [] });
 
-function buildCalibrationStats(outcomes: MatchOutcome[]) {
-  if (!outcomes.length) return { total: 0, accuracy: 0, byGrade: {} as Record<string, { total: number; correct: number }> };
-  // Contar picks predichos vs resultado real (simplificado: si el pick de ganador/goles coincide)
-  let totalPicks = 0;
-  let correctPicks = 0;
-  const byGrade: Record<string, { total: number; correct: number }> = { safe: { total: 0, correct: 0 }, reasonable: { total: 0, correct: 0 }, risky: { total: 0, correct: 0 } };
-
-  outcomes.forEach((outcome) => {
-    outcome.predictedPicks.forEach((pick) => {
-      totalPicks++;
-      byGrade[pick.grade] = byGrade[pick.grade] || { total: 0, correct: 0 };
-      byGrade[pick.grade].total++;
-
-      // Verificación simple basada en mercado
-      let correct = false;
-      if (pick.marketValue === "ganador" || pick.marketValue === "victorias") {
-        if ((pick.label.toLowerCase().includes(outcome.winner === "local" ? "local" : outcome.winner === "visitante" ? "visitante" : "empate"))) correct = true;
-      } else if (pick.marketValue === "over_2_5") {
-        const goals = outcome.actualGoals.split("-").reduce((a, b) => a + toNumber(b), 0);
-        if (goals > 2.5) correct = true;
-      } else if (pick.marketValue === "under_2_5") {
-        const goals = outcome.actualGoals.split("-").reduce((a, b) => a + toNumber(b), 0);
-        if (goals < 2.5) correct = true;
-      } else if (pick.marketValue.includes("corners") && pick.marketValue.includes("over")) {
-        if (toNumber(outcome.actualCorners) > toNumber(pick.line)) correct = true;
-      } else if (pick.marketValue.includes("corners") && pick.marketValue.includes("under")) {
-        if (toNumber(outcome.actualCorners) < toNumber(pick.line)) correct = true;
-      }
-
-      if (correct) { correctPicks++; byGrade[pick.grade].correct++; }
-    });
-  });
-
-  return { total: outcomes.length, accuracy: totalPicks > 0 ? (correctPicks / totalPicks) * 100 : 0, byGrade };
-}
-
-// ── Alerta de racha negativa ────────────────────────────────────────────────
-function detectLosingStreak(bets: BankBet[]): { streak: number; alert: boolean; message: string } {
-  const settled = [...bets].filter((b) => b.status === "won" || b.status === "lost");
-  if (!settled.length) return { streak: 0, alert: false, message: "" };
-  let streak = 0;
-  for (let i = 0; i < settled.length; i++) {
-    if (settled[i].status === "lost") streak++;
-    else break;
-  }
-  const alert = streak >= 3;
-  const message = streak >= 5
-    ? `🚨 Llevas ${streak} pérdidas consecutivas. Para ya, revisa tu estrategia antes de seguir.`
-    : streak >= 3
-    ? `⚠️ Llevas ${streak} pérdidas seguidas. Considera pausar y analizar qué está fallando.`
-    : "";
-  return { streak, alert, message };
-}
-
-// ── Límite de pérdida diaria ─────────────────────────────────────────────────
-function getDailyLossInfo(bets: BankBet[], initialBank: number, limitPct: number): {
-  todayLoss: number;
-  limitAmount: number;
-  exceeded: boolean;
-  message: string;
-} {
-  const today = new Date().toISOString().slice(0, 10);
-  const todaySettled = bets.filter((b) => b.date === today && (b.status === "won" || b.status === "lost"));
-  const todayLoss = Math.abs(Math.min(0, todaySettled.reduce((sum, b) => sum + betProfit(b), 0)));
-  const limitAmount = initialBank > 0 ? (initialBank * limitPct) / 100 : 0;
-  const exceeded = limitAmount > 0 && todayLoss >= limitAmount;
-  const message = exceeded
-    ? `🚨 Límite diario alcanzado: perdiste ${formatMoney(todayLoss)} hoy (límite: ${formatMoney(limitAmount)}). No sigas apostando.`
-    : limitAmount > 0 && todayLoss >= limitAmount * 0.7
-    ? `⚠️ Cerca del límite diario: ${formatMoney(todayLoss)} de ${formatMoney(limitAmount)} perdidos hoy.`
-    : "";
-  return { todayLoss, limitAmount, exceeded, message };
-}
-
-// ── MEMORIA DE EQUIPOS: helpers ──────────────────────────────────────────────
-function emptyTeamMemory(): TeamMemoryState { return { entries: [] }; }
-
-function saveTeamToMemory(
-  memory: TeamMemoryState,
-  name: string,
-  condition: TeamCondition,
-  rows: RecentRow[],
-  quickText: string
-): TeamMemoryState {
-  const clean = name.trim().toLowerCase();
-  const existing = memory.entries.findIndex(
-    (e) => e.name.toLowerCase() === clean && e.condition === condition
-  );
-  const entry: TeamMemoryEntry = {
-    id: existing >= 0 ? memory.entries[existing].id : makeId(),
-    name: name.trim(),
-    condition,
-    updatedAt: new Date().toISOString(),
-    rows,
-    quickText,
-  };
-  const next = [...memory.entries];
-  if (existing >= 0) next[existing] = entry;
-  else next.unshift(entry);
-  return { entries: next.slice(0, 60) }; // máx 60 equipos
-}
-
-function findTeamInMemory(
-  memory: TeamMemoryState,
-  name: string,
-  condition: TeamCondition
-): TeamMemoryEntry | null {
-  if (!name.trim()) return null;
-  const clean = name.trim().toLowerCase();
-  return memory.entries.find(
-    (e) => e.name.toLowerCase() === clean && e.condition === condition
-  ) ?? null;
-}
-
-function searchTeamMemory(memory: TeamMemoryState, query: string): TeamMemoryEntry[] {
-  if (!query.trim()) return memory.entries.slice(0, 10);
-  const q = query.trim().toLowerCase();
-  return memory.entries.filter((e) => e.name.toLowerCase().includes(q)).slice(0, 8);
-}
-
-// ── DETECTOR DE LÍNEA MOVIDA ─────────────────────────────────────────────────
-function analyzeLineMovement(movements: LineMovement[]): {
-  alerts: { movement: LineMovement; pct: number; direction: "subió" | "bajó"; signal: string; color: "green" | "amber" | "red" }[];
-} {
-  const alerts = movements
-    .filter((m) => toNumber(m.oddBefore) > 1 && toNumber(m.oddNow) > 1)
-    .map((m) => {
-      const before = toNumber(m.oddBefore);
-      const now = toNumber(m.oddNow);
-      const pct = Math.abs(((now - before) / before) * 100);
-      const direction: "subió" | "bajó" = now > before ? "subió" : "bajó";
-      let signal = "";
-      let color: "green" | "amber" | "red" = "amber";
-
-      if (pct >= 12) {
-        // Movimiento muy fuerte — dinero profesional casi seguro
-        signal = direction === "bajó"
-          ? `⚡ Movimiento fuerte: la cuota bajó ${pct.toFixed(1)}%. Dinero profesional entrando en OVER/este lado.`
-          : `⚡ Movimiento fuerte: la cuota subió ${pct.toFixed(1)}%. Dinero profesional saliendo — revisar.`;
-        color = direction === "bajó" ? "green" : "red";
-      } else if (pct >= 5) {
-        signal = direction === "bajó"
-          ? `🔶 Cuota recortada ${pct.toFixed(1)}%. Señal moderada de dinero entrando.`
-          : `🔶 Cuota estirada ${pct.toFixed(1)}%. El mercado se aleja — menos value.`;
-        color = "amber";
-      } else {
-        signal = `Movimiento menor (${pct.toFixed(1)}%). Normal en mercados líquidos.`;
-        color = "amber";
-      }
-
-      return { movement: m, pct, direction, signal, color };
-    })
-    .filter((a) => a.pct >= 3) // solo movimientos relevantes
-    .sort((a, b) => b.pct - a.pct);
-
-  return { alerts };
-}
-
-// ── SCORE DE CONFIANZA ───────────────────────────────────────────────────────
-function buildConfidenceScore(
-  indicators: Indicator[],
-  localRows: RecentRow[],
-  visitRows: RecentRow[],
-  houseMarkets: HouseMarket,
-  refereeContext: RefereeContext,
-  marketFocus: MarketFocusState
-): ConfidenceScore {
-  const localValid = countValidRows(localRows).length;
-  const visitValid = countValidRows(visitRows).length;
-  const activeInds = indicators.filter((ind) => parseRecord(ind.record) > 0).length;
-  const hasOdds = hasHouseOdd(houseMarkets);
-  const hasGoalLines = toNumber(houseMarkets.goalsOverOdd) > 1 || toNumber(houseMarkets.goalsUnderOdd) > 1;
-  const hasCornersLines = toNumber(houseMarkets.cornersOverOdd) > 1 || toNumber(houseMarkets.cornersUnderOdd) > 1;
-  const hasCardsLines = toNumber(houseMarkets.cardsOverOdd) > 1 || toNumber(houseMarkets.cardsUnderOdd) > 1;
-  const hasReferee = refereeContext.strictness !== "none" || !!refereeContext.yellowAvg;
-  const focusCount = [marketFocus.goals, marketFocus.corners, marketFocus.cards, marketFocus.winner, marketFocus.doubleChance].filter(Boolean).length;
-
-  const breakdown: ConfidenceScore["breakdown"] = [
-    {
-      label: "Registros local",
-      points: localValid >= 5 ? 20 : localValid >= 3 ? 13 : localValid >= 1 ? 6 : 0,
-      max: 20,
-      ok: localValid >= 3,
-    },
-    {
-      label: "Registros visitante",
-      points: visitValid >= 5 ? 20 : visitValid >= 3 ? 13 : visitValid >= 1 ? 6 : 0,
-      max: 20,
-      ok: visitValid >= 3,
-    },
-    {
-      label: "Indicadores SofaScore",
-      points: activeInds >= 5 ? 20 : activeInds >= 3 ? 13 : activeInds >= 1 ? 6 : 0,
-      max: 20,
-      ok: activeInds >= 3,
-    },
-    {
-      label: "Cuotas de la casa",
-      points: hasGoalLines && hasCornersLines ? 20 : hasOdds ? 12 : 0,
-      max: 20,
-      ok: hasOdds,
-    },
-    {
-      label: "Árbitro y contexto",
-      points: hasReferee ? 10 : 0,
-      max: 10,
-      ok: hasReferee,
-    },
-    {
-      label: "Mercados enfocados",
-      points: focusCount >= 2 ? 10 : focusCount >= 1 ? 5 : 0,
-      max: 10,
-      ok: focusCount >= 1,
-    },
-  ];
-
-  const total = Math.min(100, breakdown.reduce((s, b) => s + b.points, 0));
-  const grade: ConfidenceScore["grade"] = total >= 70 ? "alta" : total >= 40 ? "media" : "baja";
-
-  const message = grade === "alta"
-    ? "✅ Análisis bien respaldado. Los picks tienen base sólida."
-    : grade === "media"
-    ? "🟡 Análisis parcial. Carga más datos antes de apostar fuerte."
-    : "🔴 Datos insuficientes. No apuestes con estos picks todavía.";
-
-  return { total, grade, breakdown, message };
-}
-
-function getSideName(side: EliminationSide, match: Match) {
-  if (side === "local") return match.local || "Local";
-  if (side === "visitante") return match.visitante || "Visitante";
-  return "Ninguno";
-}
-
-function isSecondLegWithLead(context: EliminationContext) {
-  return Boolean(context.enabled && context.leg === "second" && context.advantageTeam !== "none" && toNumber(context.leadGoals) > 0);
-}
-
-function emptyBankroll(): BankrollState {
-  return {
-    initialBank: "",
-    bets: [],
-  };
-}
-
-function emptyBankBet(): Omit<BankBet, "id"> {
-  return {
-    date: new Date().toISOString().slice(0, 10),
-    matchName: "",
-    pick: "",
-    market: "",
-    stake: "",
-    odd: "",
-    status: "pending",
-    source: "app",
-    notes: "",
-  };
-}
-
-function betProfit(bet: BankBet) {
-  const stake = toNumber(bet.stake);
-  const odd = toNumber(bet.odd);
-  if (bet.status === "won") return odd > 1 ? stake * (odd - 1) : 0;
-  if (bet.status === "lost") return -stake;
-  return 0;
-}
-
-function formatMoney(value: number) {
-  if (!Number.isFinite(value)) return "0.00";
-  return value.toFixed(2);
-}
-
-function formatOdd(value: number) {
-  if (!Number.isFinite(value) || value <= 1) return "Sin cuota";
-  return value.toFixed(2);
-}
-
-function dailyFamily(marketValue: string) {
-  if (marketValue.includes("corners")) return "corners";
-  if (marketValue.includes("cards")) return "cards";
-  if (["over_1_5", "over_2_5", "under_2_5", "under_4_5", "btts", "no_clean"].includes(marketValue)) return "goals";
-  if (marketValue.includes("handicap") || marketValue.includes("plus") || marketValue.includes("minus")) return "handicap";
-  if (["ganador", "empate", "local_o_empate", "visitante_o_empate", "local_o_visitante", "sin_derrotas", "sin_victorias", "derrotas", "victorias", "clean_sheet", "first_score", "first_concede", "first_half_winner", "first_half_loser"].includes(marketValue)) return "result";
-  return marketValue || "other";
-}
-
-function focusEnabled(focus: MarketFocusState, key: FocusMarket) {
-  return Boolean(focus.all || focus[key]);
-}
-
-function focusNeedsResult(focus: MarketFocusState) {
-  return Boolean(focus.all || focus.winner || focus.doubleChance || focus.goals);
-}
-
-function getMarketFocusFamily(marketValue: string): FocusMarket | "result" | "other" {
-  const value = getMarketValue(marketValue);
-  if (value.includes("corners")) return "corners";
-  if (value.includes("cards")) return "cards";
-  if (["over_0_5", "over_1_5", "over_2_5", "under_2_5", "under_3_5", "under_4_5", "under_5_5", "btts", "no_clean", "clean_sheet"].includes(value)) return "goals";
-  if (["ganador", "empate", "victorias", "sin_victorias", "derrotas", "sin_derrotas", "first_score", "first_concede", "first_half_winner", "first_half_loser", "wins_any_half"].includes(value)) return "winner";
-  if (value === "local_o_empate" || value === "visitante_o_empate" || value === "local_o_visitante" || value.includes("plus") || value.includes("minus")) return "doubleChance";
-  return "other";
-}
-
-function isMarketAllowedByFocus(marketValue: string, focus: MarketFocusState) {
-  if (focus.all) return true;
-  const family = getMarketFocusFamily(marketValue);
-  if (family === "winner") return focus.winner;
-  if (family === "doubleChance") return focus.doubleChance;
-  if (family === "goals") return focus.goals;
-  if (family === "corners") return focus.corners;
-  if (family === "cards") return focus.cards;
+// ── FILTROS DE MERCADO ───────────────────────────────────────────────────────
+const MARKET_FILTERS = ["Todos", "1X2", "Doble Oportunidad", "Goles", "Corners", "Tarjetas", "Handicap", "Remates"];
+function matchesFilter(pick, filter) {
+  if (filter === "Todos") return true;
+  const m = (pick.mercado || "").toLowerCase();
+  if (filter === "1X2") return m.includes("ganador") || m.includes("1x2") || m.includes("local") || m.includes("visitante") || m.includes("empate");
+  if (filter === "Doble Oportunidad") return m.includes("doble") || m.includes("1x") || m.includes("x2") || m.includes("12");
+  if (filter === "Goles") return m.includes("gol") || m.includes("btts") || m.includes("ambos marcan") || m.includes("over") || m.includes("under");
+  if (filter === "Corners") return m.includes("corner") || m.includes("saque");
+  if (filter === "Tarjetas") return m.includes("tarjeta") || m.includes("amarilla") || m.includes("roja");
+  if (filter === "Handicap") return m.includes("handicap") || m.includes("hándicap");
+  if (filter === "Remates") return m.includes("remate") || m.includes("shot") || m.includes("disparo");
   return true;
 }
 
-function isDominancePickAllowedByFocus(pick: DominancePick, focus: MarketFocusState) {
-  const text = `${pick.key} ${pick.label}`.toLowerCase();
-  if (focus.all) return true;
-  if (text.includes("corner")) return focus.corners;
-  if (text.includes("tarjeta")) return focus.cards;
-  if (text.includes("gol")) return focus.goals;
-  return true;
-}
-
-function hasDangerFlag(flags: string[]) {
-  return flags.some((flag) => {
-    const text = flag.toLowerCase();
-    return text.includes("zona prohibida") || text.includes("trampa") || text.includes("bloqueado") || text.includes("sin value") || text.includes("contradicción") || text.includes("freno");
-  });
-}
-
-function buildDailyPlan(picks: DailyPick[]): DayPlanGroup[] {
-  const sorted = [...picks].sort((a, b) => b.score - a.score);
-  const descartados = sorted.filter((pick) => hasDangerFlag(pick.riskFlags) || pick.grade === "risky" || pick.score < 62);
-  const vivos = sorted.filter((pick) => !descartados.some((bad) => bad.id === pick.id));
-
-  const simples = vivos.filter((pick) => {
-    const family = dailyFamily(pick.marketValue);
-    return pick.score >= 74 && (pick.odd >= 1.55 || family === "corners" || family === "cards" || pick.grade === "reasonable");
-  }).slice(0, 5);
-
-  const usedFamilies = new Set<string>();
-  const usedMatches = new Set<string>();
-  const conservador: DailyPick[] = [];
-  for (const pick of vivos) {
-    const family = dailyFamily(pick.marketValue);
-    if (conservador.length >= 3) break;
-    if (family === "cards") continue;
-    if (family === "corners" && pick.score < 88) continue;
-    if (pick.score < 82) continue;
-    if (usedFamilies.has(family)) continue;
-    if (usedMatches.has(pick.matchName)) continue;
-    conservador.push(pick);
-    usedFamilies.add(family);
-    usedMatches.add(pick.matchName);
-  }
-
-  const riesgoso = vivos
-    .filter((pick) => !conservador.some((item) => item.id === pick.id) && !simples.some((item) => item.id === pick.id))
-    .filter((pick) => pick.score >= 68)
-    .slice(0, 4);
-
-  return [
-    { title: "🟢 Simples recomendadas", subtitle: "Picks buenos para jugar solos o con stake controlado.", picks: simples, tone: "safe" },
-    { title: "🧊 Parlay conservador", subtitle: "Máximo 2–3 selecciones, familias diferentes y sin zonas trampa.", picks: conservador, tone: "reasonable" },
-    { title: "🔥 Parlay riesgoso", subtitle: "Solo si quieres cuota. No mezclar con el conservador.", picks: riesgoso, tone: "risky" },
-    { title: "⛔ Descartar / no combinar", subtitle: "Picks con señales peligrosas, trampa o poco margen.", picks: descartados, tone: "discard" },
-  ];
-}
-
-function combinedOdds(picks: Array<{ odd: number }>) {
-  const valid = picks.map((pick) => pick.odd).filter((odd) => odd > 1);
-  if (!valid.length) return 0;
-  return valid.reduce((acc, odd) => acc * odd, 1);
-}
-
-function buildBankrollStats(bankroll: BankrollState) {
-  const initialBank = toNumber(bankroll.initialBank);
-  const settled = bankroll.bets.filter((bet) => bet.status === "won" || bet.status === "lost" || bet.status === "void");
-  const decided = bankroll.bets.filter((bet) => bet.status === "won" || bet.status === "lost");
-  const wins = bankroll.bets.filter((bet) => bet.status === "won").length;
-  const losses = bankroll.bets.filter((bet) => bet.status === "lost").length;
-  const pending = bankroll.bets.filter((bet) => bet.status === "pending");
-  const totalStake = decided.reduce((sum, bet) => sum + toNumber(bet.stake), 0);
-  const pendingStake = pending.reduce((sum, bet) => sum + toNumber(bet.stake), 0);
-  const profit = bankroll.bets.reduce((sum, bet) => sum + betProfit(bet), 0);
-  const roi = totalStake > 0 ? (profit / totalStake) * 100 : 0;
-  const winrate = decided.length > 0 ? (wins / decided.length) * 100 : 0;
-  const currentBank = initialBank + profit - pendingStake;
-
-  const sourceStats = (["app", "manual"] as BetSource[]).map((source) => {
-    const sourceBets = bankroll.bets.filter((bet) => bet.source === source && (bet.status === "won" || bet.status === "lost"));
-    const sourceStake = sourceBets.reduce((sum, bet) => sum + toNumber(bet.stake), 0);
-    const sourceProfit = sourceBets.reduce((sum, bet) => sum + betProfit(bet), 0);
-    return {
-      source,
-      total: sourceBets.length,
-      wins: sourceBets.filter((bet) => bet.status === "won").length,
-      stake: sourceStake,
-      profit: sourceProfit,
-      roi: sourceStake > 0 ? (sourceProfit / sourceStake) * 100 : 0,
-    };
-  });
-
-  const byMarket = Object.values(
-    bankroll.bets.reduce<Record<string, { market: string; total: number; profit: number; stake: number }>>((acc, bet) => {
-      const key = bet.market || "Sin mercado";
-      if (!acc[key]) acc[key] = { market: key, total: 0, profit: 0, stake: 0 };
-      if (bet.status === "won" || bet.status === "lost") {
-        acc[key].total += 1;
-        acc[key].profit += betProfit(bet);
-        acc[key].stake += toNumber(bet.stake);
-      }
-      return acc;
-    }, {})
-  )
-    .filter((item) => item.total > 0)
-    .sort((a, b) => b.profit - a.profit)
-    .slice(0, 5);
-
-  const equityPoints = bankroll.bets
-    .filter((bet) => bet.status === "won" || bet.status === "lost" || bet.status === "void")
-    .reduce<number[]>((points, bet) => {
-      const last = points.length ? points[points.length - 1] : initialBank;
-      points.push(last + betProfit(bet));
-      return points;
-    }, []);
-
-  return {
-    initialBank,
-    currentBank,
-    profit,
-    roi,
-    winrate,
-    wins,
-    losses,
-    pending: pending.length,
-    pendingStake,
-    totalStake,
-    settled: settled.length,
-    decided: decided.length,
-    sourceStats,
-    byMarket,
-    equityPoints: [initialBank, ...equityPoints],
-  };
-}
-
-function toNumber(value: string) {
-  const n = Number(String(value || "").replace(",", "."));
-  return Number.isFinite(n) ? n : 0;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function parseRecord(record: string) {
-  const clean = record.trim().replace(/\s+/g, "");
-  const [a, b] = clean.split("/").map(Number);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= 0 || a < 0) return 0;
-  return clamp((a / b) * 100, 0, 100);
-}
-
-function impliedProb(odd: number) {
-  if (!Number.isFinite(odd) || odd <= 1) return 0;
-  return 100 / odd;
-}
-
-function getMarketLabel(value: string) {
-  const found = MARKET_OPTIONS.find((m) => m.value === value || m.label === value);
-  return found?.label || value || "Mercado";
-}
-
-function getMarketValue(value: string) {
-  const found = MARKET_OPTIONS.find((m) => m.value === value || m.label === value);
-  return found?.value || value;
-}
-
-function getTeamLabel(team: TeamSide, match: Match) {
-  if (team === "local") return match.local || "Local";
-  if (team === "visitante") return match.visitante || "Visitante";
-  if (team === "h2h") return "H2H";
-  return "Ambos";
-}
-
-function getPeriodLabel(period?: IndicatorPeriod) {
-  if (period === "first") return "1er tiempo";
-  if (period === "second") return "2do tiempo";
-  if (period === "h2h") return "H2H";
-  return "Tiempo completo";
-}
-
-function TeamBadge({ name, color1, color2 }: { name: string; color1: string; color2: string }) {
-  const initials = (name || "FC")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("") || "FC";
-
-  return (
-    <div
-      className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-2 border-white/30 text-xl font-black text-white shadow-xl shadow-black/40"
-      style={{ background: `linear-gradient(135deg, ${color1 || "#38bdf8"} 0%, ${color1 || "#38bdf8"} 45%, ${color2 || "#ffffff"} 45%, ${color2 || "#ffffff"} 100%)` }}
-      title={name || "Equipo"}
-    >
-      <span className="rounded-full bg-black/25 px-2 py-1 text-sm backdrop-blur">{initials}</span>
-    </div>
-  );
-}
-
-function getAutoResult(row: RecentRow): MatchResult {
-  if (row.goalsFor === "" || row.goalsAgainst === "") return "";
-  const gf = toNumber(row.goalsFor);
-  const gc = toNumber(row.goalsAgainst);
-  if (gf > gc) return "G";
-  if (gf < gc) return "P";
-  return "E";
-}
-
-function getGrade(score: number, flags: string[]): Grade {
-  const seriousFlags = flags.filter((flag) => flag.includes("Contradicción") || flag.includes("bloquea") || flag.includes("Bloqueado") || flag.includes("sin value") || flag.includes("Freno"));
-  if (score >= 84 && seriousFlags.length === 0) return "safe";
-  if (score >= 68) return "reasonable";
-  return "risky";
-}
-
-function getTierLabel(grade: Grade) {
-  if (grade === "safe") return "🟢 Pick seguro";
-  if (grade === "reasonable") return "🟡 Pick razonable";
-  return "🔴 Pick riesgoso";
-}
-
-function average(values: number[]) {
-  if (!values.length) return 0;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function countValidRows(rows: RecentRow[]) {
-  return rows.filter(
-    (row) =>
-      row.goalsFor !== "" ||
-      row.goalsAgainst !== "" ||
-      row.cornersFor !== "" ||
-      row.cornersAgainst !== "" ||
-      row.cardsFor !== "" ||
-      row.cardsAgainst !== ""
-  );
-}
-
-function buildRecentStats(rows: RecentRow[]) {
-  const valid = countValidRows(rows);
-  const goalsFor = valid.map((row) => toNumber(row.goalsFor));
-  const goalsAgainst = valid.map((row) => toNumber(row.goalsAgainst));
-  const totalGoals = valid.map((row) => toNumber(row.goalsFor) + toNumber(row.goalsAgainst));
-  const cornersFor = valid.map((row) => toNumber(row.cornersFor));
-  const cornersAgainst = valid.map((row) => toNumber(row.cornersAgainst));
-  const totalCorners = valid.map((row) => toNumber(row.cornersFor) + toNumber(row.cornersAgainst));
-  const cardsFor = valid.map((row) => toNumber(row.cardsFor));
-  const cardsAgainst = valid.map((row) => toNumber(row.cardsAgainst));
-  const totalCards = valid.map((row) => toNumber(row.cardsFor) + toNumber(row.cardsAgainst));
-
-  const btts = valid.filter((row) => toNumber(row.goalsFor) > 0 && toNumber(row.goalsAgainst) > 0).length;
-  const noClean = valid.filter((row) => toNumber(row.goalsAgainst) > 0).length;
-  const noLose = valid.filter((row) => {
-    const result = getAutoResult(row);
-    return result === "G" || result === "E";
-  }).length;
-  const noWin = valid.filter((row) => {
-    const result = getAutoResult(row);
-    return result === "E" || result === "P";
-  }).length;
-  const wins = valid.filter((row) => getAutoResult(row) === "G").length;
-  const draws = valid.filter((row) => getAutoResult(row) === "E").length;
-
-  return {
-    count: valid.length,
-    goalsForAvg: average(goalsFor),
-    goalsAgainstAvg: average(goalsAgainst),
-    totalGoalsAvg: average(totalGoals),
-    cornersForAvg: average(cornersFor),
-    cornersAgainstAvg: average(cornersAgainst),
-    totalCornersAvg: average(totalCorners),
-    cardsForAvg: average(cardsFor),
-    cardsAgainstAvg: average(cardsAgainst),
-    totalCardsAvg: average(totalCards),
-    bttsPct: valid.length ? (btts / valid.length) * 100 : 0,
-    noCleanPct: valid.length ? (noClean / valid.length) * 100 : 0,
-    noLosePct: valid.length ? (noLose / valid.length) * 100 : 0,
-    noWinPct: valid.length ? (noWin / valid.length) * 100 : 0,
-    winPct: valid.length ? (wins / valid.length) * 100 : 0,
-    drawPct: valid.length ? (draws / valid.length) * 100 : 0,
-  };
-}
-
-
-function resultBreakdown(rows: RecentRow[]) {
-  const valid = countValidRows(rows);
-  const wins = valid.filter((row) => getAutoResult(row) === "G").length;
-  const draws = valid.filter((row) => getAutoResult(row) === "E").length;
-  const losses = valid.filter((row) => getAutoResult(row) === "P").length;
-  return { count: valid.length, wins, draws, losses };
-}
-
-function handicapPct(rows: RecentRow[], handicap: number) {
-  const valid = countValidRows(rows).filter((row) => row.goalsFor !== "" && row.goalsAgainst !== "");
-  if (!valid.length) return 0;
-  const hits = valid.filter((row) => toNumber(row.goalsFor) + handicap > toNumber(row.goalsAgainst)).length;
-  return (hits / valid.length) * 100;
-}
-
-function recordStrength(count: number) {
-  if (count >= 6) return 1;
-  if (count >= 4) return 0.93;
-  if (count >= 2) return 0.82;
-  return 0.72;
-}
-
-function buildProjection(localRows: RecentRow[], visitRows: RecentRow[]) {
-  // MEJORA 2: Usar estadísticas ponderadas por recencia
-  const local = buildRecentStatsWeighted(localRows);
-  const visit = buildRecentStatsWeighted(visitRows);
-
-  const localCornersExpected = average([local.cornersForAvg, visit.cornersAgainstAvg].filter((n) => n > 0));
-  const visitCornersExpected = average([visit.cornersForAvg, local.cornersAgainstAvg].filter((n) => n > 0));
-  const expectedCorners = localCornersExpected + visitCornersExpected;
-
-  const localCardsExpected = average([local.cardsForAvg, visit.cardsAgainstAvg].filter((n) => n > 0));
-  const visitCardsExpected = average([visit.cardsForAvg, local.cardsAgainstAvg].filter((n) => n > 0));
-  const expectedCards = localCardsExpected + visitCardsExpected;
-
-  const expectedGoals = average([local.totalGoalsAvg, visit.totalGoalsAvg].filter((n) => n > 0));
-
-  return {
-    local,
-    visit,
-    localCornersExpected,
-    visitCornersExpected,
-    expectedCorners,
-    localCardsExpected,
-    visitCardsExpected,
-    expectedCards,
-    expectedGoals,
-  };
-}
-
-function getStrongSignalScore(indicators: Indicator[], markets: string[]) {
-  const hits = indicators
-    .filter((indicator) => markets.includes(getMarketValue(indicator.market)))
-    .map((indicator) => parseRecord(indicator.record))
-    .filter((score) => score > 0);
-  return hits.length ? average(hits) : 0;
-}
-
-function buildMatchProfile(indicators: Indicator[], localRows: RecentRow[], visitRows: RecentRow[]) {
-  const projection = buildProjection(localRows, visitRows);
-  const local = projection.local;
-  const visit = projection.visit;
-  const avgGoals = projection.expectedGoals;
-  const bttsRecent = average([local.bttsPct, visit.bttsPct].filter((n) => n >= 0));
-  const noCleanRecent = average([local.noCleanPct, visit.noCleanPct].filter((n) => n >= 0));
-
-  const bttsSignal = getStrongSignalScore(indicators, ["btts"]);
-  const noCleanSignal = getStrongSignalScore(indicators, ["no_clean"]);
-  const overSignal = getStrongSignalScore(indicators, ["over_1_5", "over_2_5"]);
-  const underSignal = getStrongSignalScore(indicators, ["under_2_5", "under_4_5"]);
-  const cornerUnderSignal = getStrongSignalScore(indicators, ["under_10_5_corners", "under_14_5_corners"]);
-  const cardsSignal = getStrongSignalScore(indicators, ["over_2_5_cards", "over_4_5_cards", "under_4_5_cards", "under_6_5_cards"]);
-
-  const attackingPressure = average([bttsRecent, noCleanRecent, bttsSignal, noCleanSignal, overSignal].filter((n) => n > 0));
-  const lowGoalPressure = average([underSignal, avgGoals > 0 ? clamp(90 - avgGoals * 18, 0, 100) : 0].filter((n) => n > 0));
-  const chaosScore = clamp(attackingPressure * 0.65 + Math.max(0, avgGoals - 2.2) * 14 + (noCleanSignal >= 75 ? 8 : 0), 0, 100);
-
-  let type: MatchProfileType = "equilibrado";
-  if (chaosScore >= 72 && attackingPressure >= 68) type = "abierto";
-  else if (lowGoalPressure >= 72 && attackingPressure < 58 && avgGoals <= 2.35) type = "cerrado";
-  else if (attackingPressure >= 65 && underSignal >= 65) type = "trampa";
-
-  const blockUnderGoals = type === "abierto" || type === "trampa" || ((bttsSignal >= 70 || noCleanSignal >= 70 || bttsRecent >= 65 || noCleanRecent >= 70) && underSignal >= 60);
-  const blockUnderCorners = projection.expectedCorners >= 10.8;
-  const notes: string[] = [];
-
-  if (type === "abierto") notes.push("Perfil abierto: BTTS/no portería a cero/goles recientes empujan contra unders agresivos.");
-  if (type === "cerrado") notes.push("Perfil cerrado: under goles/corners puede tener más sentido, pero evita cuotas muy bajas.");
-  if (type === "trampa") notes.push("Perfil trampa: SofaScore mezcla under con señales de gol. Evita parlay grande.");
-  if (blockUnderGoals) notes.push("Bloqueo preventivo: Under 2.5 queda castigado por señales ofensivas.");
-  if (blockUnderCorners) notes.push(`Freno de corners: los registros proyectan ${projection.expectedCorners.toFixed(1)} corners; cuidado con under 10.5.`);
-  if (cornerUnderSignal >= 70 && !blockUnderCorners) notes.push("Corners under viene mostrando estabilidad, pero se confirma contra registros.");
-  if (cardsSignal >= 70) notes.push("Tarjetas aparecen mucho: se priorizan menos para que no dominen siempre.");
-
-  return {
-    type,
-    avgGoals,
-    bttsRecent,
-    noCleanRecent,
-    attackingPressure,
-    lowGoalPressure,
-    chaosScore,
-    blockUnderGoals,
-    blockUnderCorners,
-    expectedCorners: projection.expectedCorners,
-    expectedCards: projection.expectedCards,
-    notes,
-  };
-}
-
-function isGoalMarket(marketValue: string) {
-  return ["over_1_5", "over_2_5", "under_2_5", "under_4_5", "btts", "no_clean"].includes(marketValue);
-}
-
-function isUnderGoalMarket(marketValue: string) {
-  return marketValue === "under_2_5" || marketValue === "under_4_5";
-}
-
-function isOverGoalMarket(marketValue: string) {
-  return marketValue === "over_1_5" || marketValue === "over_2_5" || marketValue === "btts" || marketValue === "no_clean";
-}
-
-function isCardMarket(marketValue: string) {
-  return marketValue.includes("cards");
-}
-
-function isCornerMarket(marketValue: string) {
-  return marketValue.includes("corners");
-}
-
-function isUnderCornerMarket(marketValue: string) {
-  return marketValue.includes("corners") && marketValue.includes("under");
-}
-
-function marketSortPenalty(marketValue: string, blendedScore: number, count: number) {
-  if (!isCardMarket(marketValue)) return 0;
-  if (blendedScore >= 90 && count >= 2) return 3;
-  if (blendedScore >= 82 && count >= 2) return 7;
-  if (blendedScore >= 75) return 10;
-  return 16;
-}
-
-function probabilityByLine(expected: number, line: number, direction: "over" | "under", scale = 1.8) {
-  if (!expected || !line) return 0;
-  const diff = direction === "over" ? expected - line : line - expected;
-  return clamp(50 + diff * (100 / (scale * 2)), 5, 95);
-}
-
-function scoreMarketFromRecent(marketValue: string, line: string, localRows: RecentRow[], visitRows: RecentRow[]) {
-  const projection = buildProjection(localRows, visitRows);
-  const local = projection.local;
-  const visit = projection.visit;
-  const totalCount = local.count + visit.count;
-
-  if (totalCount === 0) return 0;
-
-  const lineNumber = toNumber(line);
-
-  if (marketValue === "over_2_5") return probabilityByLine(projection.expectedGoals, 2.5, "over", 2.1);
-  if (marketValue === "over_1_5") return probabilityByLine(projection.expectedGoals, 1.5, "over", 2.1);
-  if (marketValue === "under_2_5") return probabilityByLine(projection.expectedGoals, 2.5, "under", 2.1);
-  if (marketValue === "under_4_5") return probabilityByLine(projection.expectedGoals, 4.5, "under", 2.1);
-  if (marketValue === "btts") return average([local.bttsPct, visit.bttsPct].filter((n) => n >= 0));
-  if (marketValue === "no_clean") return average([local.noCleanPct, visit.noCleanPct].filter((n) => n >= 0));
-  if (marketValue.includes("corners")) {
-    if (marketValue.includes("over")) return probabilityByLine(projection.expectedCorners, lineNumber, "over", 5.2);
-    if (marketValue.includes("under")) return probabilityByLine(projection.expectedCorners, lineNumber, "under", 5.2);
-  }
-  if (isCardMarket(marketValue)) {
-    if (marketValue.includes("over")) return clamp(probabilityByLine(projection.expectedCards, lineNumber, "over", 3.4), 0, 88);
-    if (marketValue.includes("under")) return clamp(probabilityByLine(projection.expectedCards, lineNumber, "under", 3.4), 0, 88);
-  }
-  if (marketValue === "sin_derrotas") return Math.max(local.noLosePct, visit.noLosePct);
-  if (marketValue === "sin_victorias") return Math.max(local.noWinPct, visit.noWinPct);
-  if (marketValue === "derrotas") return Math.max(100 - local.noLosePct, 100 - visit.noLosePct);
-  if (marketValue === "victorias") return Math.max(local.winPct, visit.winPct);
-  if (marketValue === "clean_sheet") return Math.max(100 - local.noCleanPct, 100 - visit.noCleanPct);
-  if (marketValue === "first_score" || marketValue === "first_concede" || marketValue === "first_half_loser") return 0;
-  if (marketValue === "ganador") return Math.max(local.winPct, visit.winPct);
-  if (marketValue === "first_half_winner") return clamp(Math.max(local.winPct, visit.winPct) * 0.9, 0, 100);
-  if (marketValue === "wins_any_half") return clamp(Math.max(local.winPct, visit.winPct) * 0.95, 0, 100);
-  if (marketValue === "empate") return average([local.drawPct, visit.drawPct].filter((n) => n >= 0));
-  if (marketValue === "local_o_empate") return local.noLosePct;
-  if (marketValue === "visitante_o_empate") return visit.noLosePct;
-  if (marketValue === "local_o_visitante") return clamp(100 - average([local.drawPct, visit.drawPct].filter((n) => n >= 0)), 0, 100);
-  if (marketValue === "local_plus_1_5") return average([handicapPct(localRows, 1.5), 100 - handicapPct(visitRows, -1.5)].filter((n) => n >= 0));
-  if (marketValue === "local_plus_0_5") return local.noLosePct;
-  if (marketValue === "local_minus_0_5") return local.winPct;
-  if (marketValue === "local_minus_1_5") return handicapPct(localRows, -1.5);
-  if (marketValue === "visit_plus_1_5") return average([handicapPct(visitRows, 1.5), 100 - handicapPct(localRows, -1.5)].filter((n) => n >= 0));
-  if (marketValue === "visit_plus_0_5") return visit.noLosePct;
-  if (marketValue === "visit_minus_0_5") return visit.winPct;
-  if (marketValue === "visit_minus_1_5") return handicapPct(visitRows, -1.5);
-
+// ── BANKROLL CALCS ───────────────────────────────────────────────────────────
+function betProfit(bet) {
+  const s = toNum(bet.stake), o = toNum(bet.cuota);
+  if (bet.estado === "ganada") return o > 1 ? s * (o - 1) : 0;
+  if (bet.estado === "perdida") return -s;
   return 0;
 }
-
-function detectContradictions(picks: ResultPick[]) {
-  const strong = new Set(picks.filter((pick) => pick.blendedScore >= 60).map((pick) => pick.key));
-  const alerts: string[] = [];
-
-  if (strong.has("btts_Sí") && strong.has("under_2_5_2.5")) {
-    alerts.push("BTTS Sí + Menos de 2.5 goles: depende mucho del 1-1. Riesgo oculto.");
-  }
-  if ((strong.has("btts_Sí") || strong.has("no_clean_Sí")) && strong.has("under_2_5_2.5")) {
-    alerts.push("Hay señales de gol por ambos lados, eso bloquea un Under 2.5 agresivo.");
-  }
-  if (strong.has("over_4_5_cards_4.5") && strong.has("under_4_5_cards_4.5")) {
-    alerts.push("Tarjetas over y under en la misma línea: mercado contradictorio.");
-  }
-  if (strong.has("over_2_5_2.5") && strong.has("under_2_5_2.5")) {
-    alerts.push("Más de 2.5 y Menos de 2.5 goles al mismo tiempo: evitar goles.");
-  }
-  if (strong.has("over_10_5_corners_10.5") && strong.has("under_10_5_corners_10.5")) {
-    alerts.push("Over y Under 10.5 corners aparecen fuertes: revisar registros de corners a favor/en contra.");
-  }
-  if (strong.has("ganador_") && strong.has("empate_")) {
-    alerts.push("Ganador y empate aparecen fuertes: evitar 1X2 directo.");
-  }
-
-  return alerts;
+function bankrollStats(bankroll) {
+  const inicial = toNum(bankroll.inicial);
+  const settled = bankroll.apuestas.filter(b => b.estado === "ganada" || b.estado === "perdida");
+  const totalStaked = settled.reduce((s, b) => s + toNum(b.stake), 0);
+  const totalProfit = settled.reduce((s, b) => s + betProfit(b), 0);
+  const wins = settled.filter(b => b.estado === "ganada").length;
+  const losses = settled.filter(b => b.estado === "perdida").length;
+  const winRate = settled.length ? (wins / settled.length) * 100 : 0;
+  const roi = totalStaked > 0 ? (totalProfit / totalStaked) * 100 : 0;
+  const currentBank = inicial + totalProfit;
+  return { inicial, wins, losses, totalProfit, totalStaked, winRate, roi, currentBank, settledCount: settled.length };
 }
 
-function safeReadStorage() {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem("analizador_pro_h2h_licuadora_v2") || localStorage.getItem("analizador_pro_h2h_moderno_v1") || localStorage.getItem("simpleApp");
-    if (!raw) return null;
-    return JSON.parse(raw) as Partial<ExportShape>;
-  } catch {
-    return null;
+// ── AI PROMPT BUILDER ────────────────────────────────────────────────────────
+function buildAIPrompt(match, mode = "full") {
+  const { local, visitante, oddLocal, oddDraw, oddVisit, liga } = match;
+  if (mode === "full") {
+    return `Eres un analista experto en apuestas deportivas de fútbol. Eres crítico y conservador — no generas picks por generar, solo cuando los datos realmente lo justifican.
+
+PARTIDO: ${local} vs ${visitante}${liga ? ` (${liga})` : ""}
+CUOTAS 1X2: Local ${oddLocal || "N/D"} | Empate ${oddDraw || "N/D"} | Visitante ${oddVisit || "N/D"}
+
+Busca información reciente sobre estos equipos. Analiza con criterio ESTRICTO:
+- Si un equipo tiene pocas anotaciones recientes, NO sugieras overs de goles
+- Si los partidos recientes tienen pocos corners, NO sugieras overs de corners
+- Un under bien justificado vale más que cinco overs sin base
+- Solo sugiere picks donde la diferencia entre tu estimación y la cuota implícita sea real
+
+Responde ÚNICAMENTE con este JSON puro, sin texto antes ni después, sin backticks:
+
+{"resumen":"contexto breve del partido","formaLocal":"forma reciente de ${local} con datos concretos","formaVisitante":"forma reciente de ${visitante} con datos concretos","picks":[{"mercado":"nombre exacto del mercado","linea":"línea numérica","tipo":"over o under","confianza":72,"prioridad":"alta","justificacion":"razón específica basada en datos, menciona si es over o under y por qué","cuotaSugerida":"1.75"}],"pronostico":"resultado más probable con razonamiento","alertas":["alerta concreta si aplica"],"perfilPartido":"abierto"}
+
+REGLAS ESTRICTAS para los picks:
+- Máximo 6 picks. Calidad sobre cantidad.
+- Equilibra overs y unders según los datos reales — no pongas 5 overs si los equipos son defensivos
+- Confianza mínima para incluir un pick: 65%. Si no llegas, no lo incluyas.
+- Si el partido tiene perfil defensivo, prioriza unders y resultado exacto
+- Justificación debe mencionar datos concretos: "promedio de X goles en últimos 5 partidos"
+- Solo el JSON.`;
   }
+  return `Analista de value betting. Evalúa si hay value en estos picks.
+
+PARTIDO: ${local} vs ${visitante}
+PICKS: ${JSON.stringify(match.picks || [])}
+
+Responde SOLO con este JSON sin texto extra:
+{"evaluaciones":[{"id":"id_del_pick","tieneValue":true,"edge":5.2,"recomendacion":"✅ Tiene value","alerta":""}],"mejorPick":"id","advertencia":""}`;
 }
 
-function formatScore(score: number) {
-  return `${score.toFixed(1)}%`;
+// ── TICKET CALCS ─────────────────────────────────────────────────────────────
+function calcTicket(picks, monto, esParlay) {
+  const sel = picks.filter(p => p.seleccionado && toNum(p.cuotaCasa) > 1);
+  if (!sel.length) return { combinada: 0, potencial: 0, probReal: 0, probCasa: 0, value: 0 };
+  const combinada = sel.reduce((acc, p) => acc * toNum(p.cuotaCasa), 1);
+  const probReal = sel.reduce((acc, p) => acc * (p.confianza / 100), 1) * 100;
+  const probCasa = sel.reduce((acc, p) => acc * (impliedProb(toNum(p.cuotaCasa)) / 100), 1) * 100;
+  const montoNum = toNum(monto);
+  const potencial = esParlay ? montoNum * combinada : sel.reduce((acc, p) => acc + montoNum * toNum(p.cuotaCasa), 0);
+  const value = probReal - probCasa;
+  return { combinada, potencial, probReal, probCasa, value, count: sel.length };
 }
 
-function hasIndicatorSignal(indicators: Indicator[]) {
-  return indicators.some((indicator) => Boolean(getMarketValue(indicator.market)) && parseRecord(indicator.record) > 0);
-}
-
-function hasHouseOdd(houseMarkets: HouseMarket) {
-  return [
-    houseMarkets.goalsOverOdd,
-    houseMarkets.goalsUnderOdd,
-    houseMarkets.cornersOverOdd,
-    houseMarkets.cornersUnderOdd,
-    houseMarkets.cardsOverOdd,
-    houseMarkets.cardsUnderOdd,
-    houseMarkets.dcLocalDrawOdd,
-    houseMarkets.dcDrawVisitOdd,
-    houseMarkets.dcLocalVisitOdd,
-    houseMarkets.handicapLocalOdd,
-    houseMarkets.handicapVisitOdd,
-  ].some((odd) => toNumber(odd) > 1);
-}
-
-function marketValueFromGroup(group: MarketGroup, direction: "over" | "under", line: string) {
-  const safeLine = line.replace(".", "_");
-  if (group === "goals") return `${direction}_${safeLine}`;
-  if (group === "corners") return `${direction}_${safeLine}_corners`;
-  return `${direction}_${safeLine}_cards`;
-}
-
-function marketValueFromHandicap(side: "local" | "visit", line: string) {
-  const n = toNumber(line);
-  const safe = Math.abs(n).toString().replace(".", "_");
-  const sign = n >= 0 ? "plus" : "minus";
-  return side === "local" ? `local_${sign}_${safe}` : `visit_${sign}_${safe}`;
-}
-
-function labelFromHandicap(side: "local" | "visit", line: string, match: Match) {
-  const team = side === "local" ? match.local || "Local" : match.visitante || "Visitante";
-  return `${team} ${line} handicap`;
-}
-
-function scoreHandicapMarket(side: "local" | "visit", line: string, localRows: RecentRow[], visitRows: RecentRow[]) {
-  const handicap = toNumber(line);
-  if (side === "local") {
-    return average([handicapPct(localRows, handicap), 100 - handicapPct(visitRows, -handicap)].filter((n) => n >= 0));
-  }
-  return average([handicapPct(visitRows, handicap), 100 - handicapPct(localRows, -handicap)].filter((n) => n >= 0));
-}
-
-function labelFromHouse(group: MarketGroup, direction: "over" | "under", line: string) {
-  const label = group === "goals" ? "goles" : group === "corners" ? "corners" : "tarjetas";
-  return `${direction === "over" ? "Más" : "Menos"} de ${line} ${label}`;
-}
-
-function scoreHouseMarket(group: MarketGroup, direction: "over" | "under", line: string, localRows: RecentRow[], visitRows: RecentRow[]) {
-  const projection = buildProjection(localRows, visitRows);
-  const lineNumber = toNumber(line);
-  if (group === "goals") return probabilityByLine(projection.expectedGoals, lineNumber, direction, 2.1);
-  if (group === "corners") return probabilityByLine(projection.expectedCorners, lineNumber, direction, 5.2);
-  return clamp(probabilityByLine(projection.expectedCards, lineNumber, direction, 3.4), 0, 88);
-}
-
-function getLineTrapAssessment(
-  group: MarketGroup,
-  direction: "over" | "under",
-  line: string,
-  expected: number,
-  odd: number,
-  modelScore: number
-) {
-  const lineNumber = toNumber(line);
-  const margin = direction === "over" ? expected - lineNumber : lineNumber - expected;
-  const absMargin = Math.abs(expected - lineNumber);
-  const flags: string[] = [];
-  let adjustment = 0;
-  let level: TrapLevel = "neutral";
-  let label = "⚪ Línea neutra";
-
-  if (!expected || !lineNumber) {
-    return { level, label, margin: 0, adjustment, flags };
-  }
-
-  const tightLimit = group === "goals" ? 0.35 : group === "corners" ? 1.5 : 0.8;
-  const comfortLimit = group === "goals" ? 0.9 : group === "corners" ? 2.4 : 1.4;
-
-  if (absMargin <= tightLimit) {
-  level = "linea_estrecha";
-  label = "🚫 Zona prohibida";
-
-  adjustment -= group === "corners" ? 35 : group === "cards" ? 22 : 25;
-
-  flags.push(`🚫 ZONA PROHIBIDA: proyección ${expected.toFixed(1)} vs línea ${lineNumber.toFixed(1)}. NO jugar.`);
-}
-
-  if (group === "corners" && direction === "under" && lineNumber <= 11.5 && absMargin <= 2.0) {
-    level = "trampa_probable";
-    label = "🔴 Trampa probable";
-    adjustment -= 18;
-    flags.push("Under corners apretado: la casa suele poner esta línea al límite. Evitar como base de parlay.");
-  }
-
-  if (group === "corners" && direction === "over" && lineNumber <= 5.5 && expected < lineNumber + 2.0) {
-    level = "linea_sospechosa";
-    label = "🟠 Línea sospechosamente baja";
-    adjustment -= 14;
-    flags.push("Over corners muy bajo: puede parecer regalo, pero si la proyección no sobra, cuidado con trampa de ritmo.");
-  }
-
-  if (group === "goals" && direction === "over" && lineNumber <= 1.5 && expected < lineNumber + 0.65) {
-    level = "linea_sospechosa";
-    label = "🟠 Línea baja sospechosa";
-    adjustment -= 10;
-    flags.push("Over goles bajo: parece fácil, pero la proyección no da colchón suficiente.");
-  }
-
-  if (group === "cards" && direction === "over" && lineNumber <= 2.5 && expected < lineNumber + 1.2) {
-    level = "linea_sospechosa";
-    label = "🟠 Línea baja sospechosa";
-    adjustment -= 10;
-    flags.push("Over tarjetas bajo: sin árbitro/contexto puede ser value engañoso.");
-  }
-
-  if (margin >= comfortLimit && modelScore >= 64 && level === "neutral") {
-    level = "linea_comoda";
-    label = "🟢 Línea cómoda";
-    adjustment += 4;
-    flags.push(`Línea con colchón: proyección ${expected.toFixed(1)} vs línea ${lineNumber.toFixed(1)}.`);
-  }
-
-  if (margin >= comfortLimit + (group === "corners" ? 0.8 : 0.25) && odd > 1.35 && modelScore >= 66) {
-    level = "valor_real";
-    label = "💰 Valor real posible";
-    adjustment += 5;
-    flags.push("Valor real posible: la proyección supera la línea y la cuota no está completamente exprimida.");
-  }
-
-  return { level, label, margin, adjustment, flags };
-}
-
-function marketTrapInput(marketValue: string, line: string, projection: ReturnType<typeof buildProjection>) {
-  const lineNumber = toNumber(line);
-  if (!lineNumber) return null;
-
-  if (marketValue.includes("corners")) {
-    return {
-      group: "corners" as MarketGroup,
-      direction: marketValue.includes("over") ? "over" as const : "under" as const,
-      expected: projection.expectedCorners,
-    };
-  }
-
-  if (isCardMarket(marketValue)) {
-    return {
-      group: "cards" as MarketGroup,
-      direction: marketValue.includes("over") ? "over" as const : "under" as const,
-      expected: projection.expectedCards,
-    };
-  }
-
-  if (marketValue === "over_1_5" || marketValue === "over_2_5") {
-    return { group: "goals" as MarketGroup, direction: "over" as const, expected: projection.expectedGoals };
-  }
-
-  if (marketValue === "under_2_5" || marketValue === "under_4_5") {
-    return { group: "goals" as MarketGroup, direction: "under" as const, expected: projection.expectedGoals };
-  }
-
-  return null;
-}
-
-
-export default function Page() {
-  const importRef = useRef<HTMLInputElement | null>(null);
-  const bankrollImportRef = useRef<HTMLInputElement | null>(null);
-  const dailyPicksImportRef = useRef<HTMLInputElement | null>(null);
-
-  const [match, setMatch] = useState<Match>({
-    local: "",
-    visitante: "",
-    oddLocal: "",
-    oddDraw: "",
-    oddVisit: "",
-    localColor1: "#38bdf8",
-    localColor2: "#ffffff",
-    visitColor1: "#ef4444",
-    visitColor2: "#111827",
-    backgroundMode: "team",
-    backgroundImage: "",
-  });
-
-  const [indicators, setIndicators] = useState<Indicator[]>([]);
-  const [localRecent, setLocalRecent] = useState<RecentRow[]>(createRecentRows());
-  const [visitRecent, setVisitRecent] = useState<RecentRow[]>(createRecentRows());
-  const [houseMarkets, setHouseMarkets] = useState<HouseMarket>(emptyHouseMarkets());
-  const [eliminationContext, setEliminationContext] = useState<EliminationContext>(emptyEliminationContext());
-  const [refereeContext, setRefereeContext] = useState<RefereeContext>(emptyRefereeContext());
-  const [dominanceContext, setDominanceContext] = useState<DominanceContext>(emptyDominanceContext());
-  const [marketFocus, setMarketFocus] = useState<MarketFocusState>(emptyMarketFocus());
-  const [indicatorBulkCount, setIndicatorBulkCount] = useState("1");
-  const [bankroll, setBankroll] = useState<BankrollState>(emptyBankroll());
-  const [bankBetDraft, setBankBetDraft] = useState<Omit<BankBet, "id">>(emptyBankBet());
-  const [dailyPicks, setDailyPicks] = useState<DailyPick[]>([]);
-  const [dailyPlanGenerated, setDailyPlanGenerated] = useState(false);
-  // MEJORAS: estados nuevos
-  const [calibration, setCalibration] = useState<CalibrationState>({ outcomes: [] });
-  const [showCalibration, setShowCalibration] = useState(false);
-  const [outcomeDraft, setOutcomeDraft] = useState<Omit<MatchOutcome, "id">>(emptyOutcomeDraft());
-  const [showKellyPanel, setShowKellyPanel] = useState(false);
-  // ── NUEVOS ESTADOS ───────────────────────────────────────────────────────
-  const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistory>({ items: [] });
-  const [showHistory, setShowHistory] = useState(false);
-  const [dailyLossLimitPct, setDailyLossLimitPct] = useState("10");
-  // ── ENTRADA RÁPIDA ───────────────────────────────────────────────────────
-  const [quickLocalText, setQuickLocalText] = useState("");
-  const [quickVisitText, setQuickVisitText] = useState("");
-  const [quickHouseText, setQuickHouseText] = useState("");
-  const [showQuickEntry, setShowQuickEntry] = useState(false);
-  // ── MEMORIA DE EQUIPOS ───────────────────────────────────────────────────
-  const [teamMemory, setTeamMemory] = useState<TeamMemoryState>(emptyTeamMemory());
-  const [showMemoryLocal, setShowMemoryLocal] = useState(false);
-  const [showMemoryVisit, setShowMemoryVisit] = useState(false);
-  const [memorySearchLocal, setMemorySearchLocal] = useState("");
-  const [memorySearchVisit, setMemorySearchVisit] = useState("");
-  // ── DETECTOR DE LÍNEA MOVIDA ─────────────────────────────────────────────
-  const [lineMovements, setLineMovements] = useState<LineMovement[]>([
-    { market: "goals_over", label: "⚽ Goles Over", lineValue: "", oddBefore: "", oddNow: "" },
-    { market: "goals_under", label: "⚽ Goles Under", lineValue: "", oddBefore: "", oddNow: "" },
-    { market: "corners_over", label: "🚩 Corners Over", lineValue: "", oddBefore: "", oddNow: "" },
-    { market: "corners_under", label: "🚩 Corners Under", lineValue: "", oddBefore: "", oddNow: "" },
-    { market: "cards_over", label: "🟨 Tarjetas Over", lineValue: "", oddBefore: "", oddNow: "" },
-  ]);
-  const [showLineMovement, setShowLineMovement] = useState(false);
-  // ── PANEL PRE-APUESTA ────────────────────────────────────────────────────
-  const [showPreBet, setShowPreBet] = useState(false);
-  const [preBetPick, setPreBetPick] = useState<PreBetPick | null>(null);
-  const [preBetNote, setPreBetNote] = useState("");
-  // ── ANÁLISIS IA ──────────────────────────────────────────────────────────
-  const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null);
-  const [aiStatus, setAiStatus] = useState<AIAnalysisStatus>("idle");
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
+export default function App() {
+  // ── STATE ──────────────────────────────────────────────────────────────
+  const [match, setMatch] = useState(emptyMatch);
+  const [aiStatus, setAiStatus] = useState("idle"); // idle | loading | done | error
+  const [aiResult, setAiResult] = useState(null);
+  const [picks, setPicks] = useState([]);
+  const [marketFilter, setMarketFilter] = useState("Todos");
+  const [ticketStake, setTicketStake] = useState("10");
+  const [esParlay, setEsParlay] = useState(true);
+  const [bankroll, setBankroll] = useState(() => loadState(BK, emptyBankroll()));
+  const [betDraft, setBetDraft] = useState(emptyBet);
+  const [historial, setHistorial] = useState(() => loadState(HK, []));
+  const [activeTab, setActiveTab] = useState("analisis");
+  const [showBankHistory, setShowBankHistory] = useState(false);
+  const [showHistorial, setShowHistorial] = useState(false);
+  const [verifyingValue, setVerifyingValue] = useState(false);
+  const [expertMode, setExpertMode] = useState(false);
+  const [dailyLossLimit, setDailyLossLimit] = useState("20");
   const [aiError, setAiError] = useState("");
-  const [showAI, setShowAI] = useState(false);
-  const [useWebSearch, setUseWebSearch] = useState(true);
-  // ── MOTOR IA ─────────────────────────────────────────────────────────────
-  const [aiMotor, setAiMotor] = useState<AIMotorState>({
-    status: "idle", matchName: "", competition: "Liga",
-    picks: [], context: "", pronostico: "", errorMsg: "",
-  });
-  const [showToolsPanel, setShowToolsPanel] = useState(false);
-  const [retryCountdown, setRetryCountdown] = useState(0);
-  const [retryAction, setRetryAction] = useState<"runAI" | "verify" | null>(null);
-  const [apiFootballStatus, setApiFootballStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
-  const [apiFootballError, setApiFootballError] = useState("");
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
-  bankroll: false,
-  colores: false,
-  mercados: false,
-  eliminacion: false,
-  arbitro: false,
-});
+  const resultsRef = useRef(null);
 
-const toggleSection = (key: string) => {
-  setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
-};
+  useEffect(() => { saveState(BK, bankroll); }, [bankroll]);
+  useEffect(() => { saveState(HK, historial); }, [historial]);
 
-const autoFillFromAPIFootball = async (count: number = 5) => {
-    const local = match.local.trim();
-    const visit = match.visitante.trim();
-    if (!local || !visit) {
-      alert("Escribe el nombre de ambos equipos primero.");
+  // ── AI ANALYSIS (agentic loop handles web_search tool_use turns) ──────
+  const runAIAnalysis = useCallback(async () => {
+    if (!match.local.trim() || !match.visitante.trim()) {
+      setAiError("Ingresa ambos equipos para analizar.");
       return;
     }
-    setApiFootballStatus("loading");
-    setApiFootballError("");
+    setAiStatus("loading");
+    setAiError("");
+    setAiResult(null);
+    setPicks([]);
     try {
-      const res = await fetch("/api/football-data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ localTeam: local, visitTeam: visit, matchCount: count, season: 2025 }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
-
-      const toRows = (matches: Array<{
-        goalsFor: number; goalsAgainst: number;
-        cornersFor: number; cornersAgainst: number;
-        cardsFor: number; cardsAgainst: number;
-        shotsTotal: number; shotsOnTarget: number; fouls: number;
-      }>): RecentRow[] =>
-        matches.map((m) => ({
-          id: makeId(),
-          goalsFor: String(m.goalsFor),
-          goalsAgainst: String(m.goalsAgainst),
-          cornersFor: String(m.cornersFor),
-          cornersAgainst: String(m.cornersAgainst),
-          cardsFor: String(m.cardsFor),
-          cardsAgainst: String(m.cardsAgainst),
-          shotsTotal: String(m.shotsTotal),
-          shotsOnTarget: String(m.shotsOnTarget),
-          fouls: String(m.fouls),
-        }));
-
-      if (data.local?.matches?.length) setLocalRecent(toRows(data.local.matches));
-      if (data.visitante?.matches?.length) setVisitRecent(toRows(data.visitante.matches));
-      setApiFootballStatus("done");
-      alert(`✅ Datos cargados: ${data.local.matches.length} partidos del local, ${data.visitante.matches.length} del visitante.`);
-    } catch (err) {
-      setApiFootballError(err instanceof Error ? err.message : "Error desconocido");
-      setApiFootballStatus("error");
-    }
-  };
-
-  const bankrollStats = useMemo(() => buildBankrollStats(bankroll), [bankroll]);
-  const dailyPlan = useMemo(() => buildDailyPlan(dailyPicks), [dailyPicks]);
-
-  const isPickInDaily = (pick: ParlayPickForDay) => {
-    const matchName = `${match.local || "Local"} vs ${match.visitante || "Visitante"}`;
-    const uniqueKey = `${matchName}__${pick.key}`;
-    return dailyPicks.some((item) => item.uniqueKey === uniqueKey);
-  };
-
-  const addPickToDaily = (pick: ParlayPickForDay) => {
-    const matchName = `${match.local || "Local"} vs ${match.visitante || "Visitante"}`;
-    const uniqueKey = `${matchName}__${pick.key}`;
-    if (dailyPicks.some((item) => item.uniqueKey === uniqueKey)) {
-      alert("Ese pick ya está en apuestas del día.");
-      return;
-    }
-    const nextPick: DailyPick = {
-      id: makeId(),
-      createdAt: new Date().toISOString(),
-      matchName,
-      label: pick.label,
-      line: pick.line || "",
-      marketValue: pick.marketValue || "",
-      odd: Number.isFinite(pick.odd) ? pick.odd : 0,
-      score: pick.score || 0,
-      tier: pick.tier || "",
-      grade: pick.grade || "reasonable",
-      source: pick.source,
-      riskFlags: Array.isArray(pick.riskFlags) ? pick.riskFlags : [],
-      uniqueKey,
-    };
-    setDailyPicks((prev) => [nextPick, ...prev]);
-    setDailyPlanGenerated(false);
-  };
-
-  const removeDailyPick = (id: string) => {
-    setDailyPicks((prev) => prev.filter((pick) => pick.id !== id));
-    setDailyPlanGenerated(false);
-  };
-
-  const clearDailyPicks = () => {
-    if (!confirm("¿Limpiar solo las apuestas del día?")) return;
-    setDailyPicks([]);
-    setDailyPlanGenerated(false);
-    if (typeof window !== "undefined") localStorage.removeItem(DAILY_PICKS_STORAGE_KEY);
-  };
-
-  const exportDailyPicks = () => {
-    const data = { version: 1, exportedAt: new Date().toISOString(), dailyPicks };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `apuestas_del_dia_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const importDailyPicks = (file: File | null) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(String(reader.result)) as ({ dailyPicks?: DailyPick[] } | DailyPick[]);
-        const incoming = Array.isArray(data) ? data : Array.isArray(data.dailyPicks) ? data.dailyPicks : [];
-        setDailyPicks(incoming.map((pick) => ({
-          id: pick.id || makeId(),
-          createdAt: pick.createdAt || new Date().toISOString(),
-          matchName: pick.matchName || "Partido",
-          label: pick.label || "Pick",
-          line: pick.line || "",
-          marketValue: pick.marketValue || "",
-          odd: Number.isFinite(Number(pick.odd)) ? Number(pick.odd) : 0,
-          score: Number.isFinite(Number(pick.score)) ? Number(pick.score) : 0,
-          tier: pick.tier || "",
-          grade: (pick.grade as Grade) || "reasonable",
-          source: (pick.source as "SofaScore" | "Casa") || "Casa",
-          riskFlags: Array.isArray(pick.riskFlags) ? pick.riskFlags : [],
-          uniqueKey: pick.uniqueKey || `${pick.matchName || "Partido"}__${pick.label || "Pick"}_${pick.line || ""}`,
-        })));
-        setDailyPlanGenerated(false);
-        alert("📨 Apuestas del día importadas");
-      } catch {
-        alert("❌ No pude importar ese archivo. Usa un JSON exportado por la app.");
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const addBankBet = () => {
-    if (!bankBetDraft.matchName.trim() || !bankBetDraft.pick.trim() || toNumber(bankBetDraft.stake) <= 0 || toNumber(bankBetDraft.odd) <= 1) {
-      alert("Completa partido, pick, monto apostado y cuota mayor a 1.00");
-      return;
-    }
-    const nextBet: BankBet = { ...bankBetDraft, id: makeId() };
-    setBankroll((prev) => ({ ...prev, bets: [nextBet, ...prev.bets] }));
-    setBankBetDraft(emptyBankBet());
-  };
-
-  const updateBankBetStatus = (id: string, status: BetStatus) => {
-    setBankroll((prev) => ({
-      ...prev,
-      bets: prev.bets.map((bet) => (bet.id === id ? { ...bet, status } : bet)),
-    }));
-  };
-
-  const deleteBankBet = (id: string) => {
-    if (!confirm("¿Eliminar este registro del historial?")) return;
-    setBankroll((prev) => ({ ...prev, bets: prev.bets.filter((bet) => bet.id !== id) }));
-  };
-
-  const resetBankroll = () => {
-    if (!confirm("Esto borra SOLO el historial de bankroll. ¿Continuar?")) return;
-    if (typeof window !== "undefined") localStorage.removeItem(BANKROLL_STORAGE_KEY);
-    setBankroll(emptyBankroll());
-    setBankBetDraft(emptyBankBet());
-  };
-
-  const exportBankroll = () => {
-    const data = { version: 1, exportedAt: new Date().toISOString(), bankroll };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `bankroll_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const importBankroll = (file: File | null) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(String(reader.result)) as ({ bankroll?: Partial<BankrollState> } & Partial<BankrollState>);
-        const incoming: Partial<BankrollState> = data.bankroll || data;
-        setBankroll({
-          initialBank: typeof incoming.initialBank === "string" ? incoming.initialBank : "",
-          bets: Array.isArray(incoming.bets)
-            ? incoming.bets.map((bet) => ({
-                id: bet.id || makeId(),
-                date: bet.date || new Date().toISOString().slice(0, 10),
-                matchName: bet.matchName || "",
-                pick: bet.pick || "",
-                market: bet.market || "",
-                stake: bet.stake || "",
-                odd: bet.odd || "",
-                status: (bet.status as BetStatus) || "pending",
-                source: (bet.source as BetSource) || "app",
-                notes: bet.notes || "",
-              }))
-            : [],
-        });
-        alert("📨 Bankroll importado");
-      } catch {
-        alert("❌ No pude importar ese bankroll. Usa un JSON exportado por la app.");
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const createEmptyIndicator = (): Indicator => ({ id: makeId(), team: "ambos", period: "full", market: "", line: "", record: "", houseOdd: "" });
-
-  const addIndicator = () => {
-    setIndicators((prev) => [...prev, createEmptyIndicator()]);
-  };
-
-  const addMultipleIndicators = () => {
-    const count = clamp(Number(indicatorBulkCount) || 1, 1, 20);
-    setIndicators((prev) => [...prev, ...Array.from({ length: count }, () => createEmptyIndicator())]);
-  };
-
-  const getHouseFieldsForIndicator = (marketInput: string, lineInput: string): HouseFieldMap | null => {
-    const marketValue = getMarketValue(marketInput);
-    const line = String(lineInput || "").trim();
-    if (!marketValue) return null;
-
-    if (marketValue === "local_o_empate") {
-      return { oddField: "dcLocalDrawOdd" as const };
-    }
-    if (marketValue === "visitante_o_empate") {
-      return { oddField: "dcDrawVisitOdd" as const };
-    }
-    if (marketValue === "local_o_visitante") {
-      return { oddField: "dcLocalVisitOdd" as const };
-    }
-
-    if (marketValue.startsWith("local_plus_") || marketValue.startsWith("local_minus_")) {
-      return { lineField: "handicapLocalLine" as const, oddField: "handicapLocalOdd" as const };
-    }
-    if (marketValue.startsWith("visit_plus_") || marketValue.startsWith("visit_minus_")) {
-      return { lineField: "handicapVisitLine" as const, oddField: "handicapVisitOdd" as const };
-    }
-
-    if (!line) return null;
-
-    if (marketValue.startsWith("over_") && !marketValue.includes("corners") && !marketValue.includes("cards")) {
-      return { lineField: "goalsOverLine" as const, oddField: "goalsOverOdd" as const };
-    }
-    if (marketValue.startsWith("under_") && !marketValue.includes("corners") && !marketValue.includes("cards")) {
-      return { lineField: "goalsUnderLine" as const, oddField: "goalsUnderOdd" as const };
-    }
-    if (marketValue.includes("corners") && marketValue.includes("over")) {
-      return { lineField: "cornersOverLine" as const, oddField: "cornersOverOdd" as const };
-    }
-    if (marketValue.includes("corners") && marketValue.includes("under")) {
-      return { lineField: "cornersUnderLine" as const, oddField: "cornersUnderOdd" as const };
-    }
-    if (marketValue.includes("cards") && marketValue.includes("over")) {
-      return { lineField: "cardsOverLine" as const, oddField: "cardsOverOdd" as const };
-    }
-    if (marketValue.includes("cards") && marketValue.includes("under")) {
-      return { lineField: "cardsUnderLine" as const, oddField: "cardsUnderOdd" as const };
-    }
-    return null;
-  };
-
-  const findHouseOddForIndicator = (marketInput: string, lineInput: string) => {
-    const fields = getHouseFieldsForIndicator(marketInput, lineInput);
-    const line = String(lineInput || "").trim();
-    if (!fields) return "";
-    if (!("lineField" in fields)) return String(houseMarkets[fields.oddField] || "");
-    if (!line) return "";
-    return line === String(houseMarkets[fields.lineField] || "").trim() ? String(houseMarkets[fields.oddField] || "") : "";
-  };
-
-  const updateIndicator = (id: string, field: keyof Indicator, value: string) => {
-    setIndicators((prev) =>
-      prev.map((indicator) => {
-        if (indicator.id !== id) return indicator;
-
-        const next: Indicator = { ...indicator, [field]: value };
-        if (field === "market") {
-          const selected = MARKET_OPTIONS.find((option) => option.value === value || option.label === value);
-          next.market = selected?.value || value;
-          next.line = selected?.line || "";
-          if (isStreakIndicatorMarket(next.market)) next.houseOdd = "";
-        }
-
-        if (field === "market" || field === "line") {
-          if (isStreakIndicatorMarket(next.market)) {
-            next.line = "";
-            next.houseOdd = "";
-          } else {
-            const autoOdd = findHouseOddForIndicator(next.market, next.line);
-            if (autoOdd) next.houseOdd = autoOdd;
-          }
-        }
-
-        return next;
-      })
-    );
-  };
-
-  const updateIndicatorMarket = (id: string, marketValue: string) => {
-    const selected = MARKET_OPTIONS.find((option) => option.value === marketValue);
-    setIndicators((prev) =>
-      prev.map((indicator) => {
-        if (indicator.id !== id) return indicator;
-        const next: Indicator = {
-          ...indicator,
-          market: selected?.value || "",
-          line: selected?.line || "",
-          houseOdd: isStreakIndicatorMarket(selected?.value || "") ? "" : indicator.houseOdd,
-        };
-        if (isStreakIndicatorMarket(next.market)) {
-          next.line = "";
-          next.houseOdd = "";
-        } else {
-          const autoOdd = findHouseOddForIndicator(next.market, next.line);
-          if (autoOdd) next.houseOdd = autoOdd;
-        }
-        return next;
-      })
-    );
-  };
-
-  const removeIndicator = (id: string) => {
-    setIndicators((prev) => prev.filter((indicator) => indicator.id !== id));
-  };
-
-  const updateRecent = (side: "local" | "visitante", id: string, field: keyof RecentRow, value: string) => {
-    const setter = side === "local" ? setLocalRecent : setVisitRecent;
-    setter((prev) => prev.map((row) => (row.id === id ? { ...row, [field]: value } : row)));
-  };
-
-  const addRecentRow = (side: "local" | "visitante") => {
-    const setter = side === "local" ? setLocalRecent : setVisitRecent;
-    setter((prev) => [...prev, emptyRecentRow()]);
-  };
-
-  const resizeRecentRows = (countRaw: string) => {
-    const count = clamp(Number(countRaw) || 3, 1, 10);
-    const resize = (rows: RecentRow[]) => {
-      if (rows.length === count) return rows;
-      if (rows.length > count) return rows.slice(0, count);
-      return [...rows, ...Array.from({ length: count - rows.length }, () => emptyRecentRow())];
-    };
-    setLocalRecent((prev) => resize(prev));
-    setVisitRecent((prev) => resize(prev));
-  };
-
-  const updateMarketFocus = (key: keyof Omit<MarketFocusState, "recentCount">, value: boolean) => {
-    setMarketFocus((prev) => {
-      if (key === "all") {
-        return { ...prev, all: value, winner: value, doubleChance: value, goals: value, corners: value, cards: value };
-      }
-      const next = { ...prev, [key]: value, all: false };
-      const allSelected = next.winner && next.doubleChance && next.goals && next.corners && next.cards;
-      return { ...next, all: allSelected };
-    });
-  };
-
-  const updateRecentCount = (value: string) => {
-    setMarketFocus((prev) => ({ ...prev, recentCount: value }));
-    resizeRecentRows(value);
-  };
-
-  const projection = useMemo(() => buildProjection(localRecent, visitRecent), [localRecent, visitRecent]);
-  const refereeCardAdjustment = useMemo(() => getRefereeCardAdjustment(refereeContext), [refereeContext]);
-  const adjustedCardsExpected = useMemo(() => clamp(projection.expectedCards + refereeCardAdjustment.expectedBoost, 0, 12), [projection.expectedCards, refereeCardAdjustment.expectedBoost]);
-  const activeIndicators = useMemo(() => indicators.filter((indicator) => isMarketAllowedByFocus(indicator.market, marketFocus)), [indicators, marketFocus]);
-
-  // ── Filtro estricto de apostabilidad ─────────────────────────────────────
-  // Solo entran en picks, parlay y proMode los indicadores que tienen:
-  // 1. Mercado apostable (no es racha/streak)
-  // 2. Cuota real de casa ingresada (>1)
-  const activeIndicatorsWithOdd = useMemo(() => activeIndicators.filter((ind) => {
-    const mv = getMarketValue(ind.market);
-    if (!mv) return false;
-    if (STREAK_MARKETS.has(mv)) return false;      // rachas → nunca apostables
-    return toNumber(ind.houseOdd) > 1;             // debe tener cuota real
-  }), [activeIndicators]);
-  const matchProfile = useMemo(() => buildMatchProfile(activeIndicators, localRecent, visitRecent), [activeIndicators, localRecent, visitRecent]);
-  const totalRecentCount = useMemo(() => countValidRows(localRecent).length + countValidRows(visitRecent).length, [localRecent, visitRecent]);
-  const hasMinimumData = useMemo(() => {
-    const hasTeams = Boolean(match.local.trim()) && Boolean(match.visitante.trim());
-    const hasSignals = hasIndicatorSignal(activeIndicators) || totalRecentCount >= 2 || hasHouseOdd(houseMarkets);
-    return hasTeams && hasSignals;
-  }, [match.local, match.visitante, activeIndicators, totalRecentCount, houseMarkets]);
-  const dominanceAnalysis = useMemo(() => buildDominanceAnalysis(dominanceContext, projection, adjustedCardsExpected, match, hasMinimumData), [dominanceContext, projection, adjustedCardsExpected, match, hasMinimumData]);
-  const focusedDominancePicks = useMemo(() => dominanceAnalysis.picks.filter((pick) => isDominancePickAllowedByFocus(pick, marketFocus)), [dominanceAnalysis.picks, marketFocus]);
-
-  const housePicks = useMemo<HousePick[]>(() => {
-    const candidates: Array<{ group: MarketGroup; direction: "over" | "under"; line: string; odd: string }> = [
-      { group: "goals", direction: "over", line: houseMarkets.goalsOverLine, odd: houseMarkets.goalsOverOdd },
-      { group: "goals", direction: "under", line: houseMarkets.goalsUnderLine, odd: houseMarkets.goalsUnderOdd },
-      { group: "corners", direction: "over", line: houseMarkets.cornersOverLine, odd: houseMarkets.cornersOverOdd },
-      { group: "corners", direction: "under", line: houseMarkets.cornersUnderLine, odd: houseMarkets.cornersUnderOdd },
-      { group: "cards", direction: "over", line: houseMarkets.cardsOverLine, odd: houseMarkets.cardsOverOdd },
-      { group: "cards", direction: "under", line: houseMarkets.cardsUnderLine, odd: houseMarkets.cardsUnderOdd },
-    ];
-
-    const local = projection.local;
-    const visit = projection.visit;
-    const totalRecords = (local.count || 0) + (visit.count || 0);
-
-    if (!hasMinimumData || totalRecords < 2) {
-      return [];
-    }
-
-    const marketLinePicks = candidates
-      .filter((candidate) => candidate.line)
-      .filter((candidate) => focusEnabled(marketFocus, candidate.group === "goals" ? "goals" : candidate.group === "corners" ? "corners" : "cards"))
-      .map((candidate) => {
-        const odd = toNumber(candidate.odd);
-        const implied = impliedProb(odd);
-        let modelScore = scoreHouseMarket(candidate.group, candidate.direction, candidate.line, localRecent, visitRecent);
-        const marketValue = marketValueFromGroup(candidate.group, candidate.direction, candidate.line);
-        const riskFlags: string[] = [];
-
-        if (isSecondLegWithLead(eliminationContext)) {
-          const lead = toNumber(eliminationContext.leadGoals);
-          if (candidate.group === "goals" && candidate.direction === "over" && toNumber(candidate.line) >= 2.5) {
-            modelScore = clamp(modelScore - (lead >= 2 ? 18 : 12), 0, 100);
-            riskFlags.push("Contexto de vuelta: hay ventaja global. El over agresivo baja porque el equipo con ventaja puede administrar.");
-          }
-          if (candidate.group === "goals" && candidate.direction === "under" && toNumber(candidate.line) >= 4.5) {
-            modelScore = clamp(modelScore + 8, 0, 100);
-            riskFlags.push("Contexto de vuelta: under amplio gana valor por gestión del resultado global.");
-          }
-          if (candidate.group === "cards" && candidate.direction === "over" && toNumber(candidate.line) <= 4.5) {
-            modelScore = clamp(modelScore + 7, 0, 100);
-            riskFlags.push("Contexto de eliminación: presión alta puede subir tarjetas.");
-          }
-          if (candidate.group === "cards" && candidate.direction === "under" && toNumber(candidate.line) <= 4.5) {
-            modelScore = clamp(modelScore - 6, 0, 100);
-            riskFlags.push("Contexto de eliminación: cuidado con under de tarjetas corto.");
-          }
-        }
-
-        if (candidate.group === "cards") {
-          const refBoost = refereeCardAdjustment.scoreAdjustment;
-          if (refBoost !== 0) {
-            modelScore = clamp(modelScore + (candidate.direction === "over" ? refBoost : -refBoost * 0.65), 0, 100);
-            riskFlags.push(...refereeCardAdjustment.notes);
-          }
-        }
-
-        if (candidate.group === "corners" && candidate.direction === "under" && toNumber(candidate.line) <= 10.5 && projection.expectedCorners >= 10.8) {
-          modelScore = clamp(modelScore - 22, 0, 100);
-          riskFlags.push(`Freno under corners: registros proyectan ${projection.expectedCorners.toFixed(1)} corners.`);
-        }
-        if (candidate.group === "corners" && candidate.direction === "over" && projection.expectedCorners >= toNumber(candidate.line) + 1) {
-          modelScore = clamp(modelScore + 8, 0, 100);
-        }
-        if (candidate.group === "goals" && candidate.direction === "under" && matchProfile.blockUnderGoals) {
-          modelScore = clamp(modelScore - 18, 0, 100);
-          riskFlags.push("Bloqueado/castigado: perfil ofensivo contra under de goles.");
-        }
-        if (candidate.group === "cards") {
-          modelScore = clamp(modelScore - 8, 0, 100);
-          riskFlags.push("Tarjetas dependen de árbitro/contexto: bajar stake.");
-        }
-
-        const expectedForTrap = candidate.group === "goals" ? projection.expectedGoals : candidate.group === "corners" ? projection.expectedCorners : adjustedCardsExpected;
-        const trap = getLineTrapAssessment(candidate.group, candidate.direction, candidate.line, expectedForTrap, odd, modelScore);
-        modelScore = clamp(modelScore + trap.adjustment, 0, 100);
-        riskFlags.push(...trap.flags);
-
-        if (implied > 0 && modelScore - implied < 0) riskFlags.push("La cuota no acompaña: sin value claro.");
-
-        const value = implied > 0 ? modelScore - implied : 0;
-        const grade = getGrade(modelScore, riskFlags);
-        return {
-          key: `house_${candidate.group}_${candidate.direction}_${candidate.line}`,
-          label: labelFromHouse(candidate.group, candidate.direction, candidate.line),
-          marketValue,
-          line: candidate.line,
-          odd,
-          implied,
-          modelScore,
-          value,
-          grade,
-          tier: getTierLabel(grade),
-          riskFlags,
-          trapLevel: trap.level,
-          trapLabel: trap.label,
-          margin: trap.margin,
-        };
-      });
-
-    const strength = recordStrength(totalRecords);
-    const selectedLocalHandicapLine = houseMarkets.handicapLocalLine || "+1.5";
-    const selectedVisitHandicapLine = houseMarkets.handicapVisitLine || "+1.5";
-
-    const resultCandidates: Array<{ label: string; marketValue: string; line: string; score: number; odd: number }> = [
-      { label: `${match.local || "Local"} gana`, marketValue: "ganador", line: "1", score: clamp((local.winPct * 0.6 + visit.noWinPct * 0.4) * strength, 0, 100), odd: toNumber(match.oddLocal) },
-      { label: `${match.visitante || "Visitante"} gana`, marketValue: "ganador", line: "2", score: clamp((visit.winPct * 0.6 + local.noWinPct * 0.4) * strength, 0, 100), odd: toNumber(match.oddVisit) },
-      { label: "Empate", marketValue: "empate", line: "X", score: clamp(average([local.drawPct, visit.drawPct]) * strength, 0, 100), odd: toNumber(match.oddDraw) },
-      { label: `${match.local || "Local"} o empate`, marketValue: "local_o_empate", line: "1X", score: clamp((local.noLosePct * 0.65 + visit.noWinPct * 0.35) * strength, 0, 100), odd: toNumber(houseMarkets.dcLocalDrawOdd) },
-      { label: `Empate o ${match.visitante || "Visitante"}`, marketValue: "visitante_o_empate", line: "X2", score: clamp((visit.noLosePct * 0.65 + local.noWinPct * 0.35) * strength, 0, 100), odd: toNumber(houseMarkets.dcDrawVisitOdd) },
-      { label: `${match.local || "Local"} o ${match.visitante || "Visitante"}`, marketValue: "local_o_visitante", line: "12", score: clamp((100 - average([local.drawPct, visit.drawPct])) * strength, 0, 100), odd: toNumber(houseMarkets.dcLocalVisitOdd) },
-      { label: labelFromHandicap("local", selectedLocalHandicapLine, match), marketValue: marketValueFromHandicap("local", selectedLocalHandicapLine), line: selectedLocalHandicapLine, score: clamp(scoreHandicapMarket("local", selectedLocalHandicapLine, localRecent, visitRecent) * strength, 0, 100), odd: toNumber(houseMarkets.handicapLocalOdd) },
-      { label: labelFromHandicap("visit", selectedVisitHandicapLine, match), marketValue: marketValueFromHandicap("visit", selectedVisitHandicapLine), line: selectedVisitHandicapLine, score: clamp(scoreHandicapMarket("visit", selectedVisitHandicapLine, localRecent, visitRecent) * strength, 0, 100), odd: toNumber(houseMarkets.handicapVisitOdd) },
-    ];
-
-    const resultPicks: HousePick[] = resultCandidates
-      .filter((candidate) => candidate.score >= 56)
-      .filter((candidate) => isMarketAllowedByFocus(candidate.marketValue, marketFocus))
-      .map((candidate) => {
-        const implied = impliedProb(candidate.odd);
-        const value = implied > 0 ? candidate.score - implied : 0;
-        const riskFlags: string[] = [];
-        if ((local.count || 0) + (visit.count || 0) < 6) riskFlags.push("Pocos registros: lectura secundaria.");
-        if (isSecondLegWithLead(eliminationContext)) {
-          if (candidate.marketValue === "ganador") riskFlags.push("Vuelta con ventaja global: ganador directo puede engañar, prioriza doble oportunidad/handicap.");
-          if (candidate.marketValue === "local_o_empate" && eliminationContext.advantageTeam === "local") candidate.score = clamp(candidate.score + 6, 0, 100);
-          if (candidate.marketValue === "visitante_o_empate" && eliminationContext.advantageTeam === "visitante") candidate.score = clamp(candidate.score + 6, 0, 100);
-          if (candidate.marketValue.includes("plus")) candidate.score = clamp(candidate.score + 4, 0, 100);
-        }
-        if ((candidate.marketValue === "ganador" || candidate.marketValue.includes("minus")) && candidate.score < 72) riskFlags.push("Ganador/handicap negativo requiere margen: riesgo medio.");
-        if (implied > 0 && value < 0) riskFlags.push("La cuota no acompaña: sin value claro.");
-        const grade = getGrade(candidate.score, riskFlags);
-        return { key: `registro_${candidate.marketValue}_${candidate.line}`, label: candidate.label, marketValue: candidate.marketValue, line: candidate.line, odd: candidate.odd, implied, modelScore: candidate.score, value, grade, tier: getTierLabel(grade), riskFlags };
-      });
-
-    return [...marketLinePicks, ...resultPicks].sort((a, b) => b.modelScore - a.modelScore);
-  }, [houseMarkets, localRecent, visitRecent, matchProfile, projection, match, eliminationContext, refereeCardAdjustment, adjustedCardsExpected, hasMinimumData, marketFocus]);
-
-  const antiCasaAlerts = useMemo(() => {
-    // Anti-Casa solo debe aparecer cuando hay datos reales:
-    // equipos + registros recientes + cuotas/líneas cargadas por el usuario.
-    // Así evitamos que después de Limpiar aparezcan lecturas con líneas default y "Sin cuota".
-    if (!hasMinimumData || totalRecentCount < 2 || !hasHouseOdd(houseMarkets)) return [];
-
-    return housePicks
-      .filter((pick) => pick.trapLevel && pick.trapLevel !== "neutral" && pick.odd > 1)
-      .slice(0, 6);
-  }, [housePicks, hasMinimumData, totalRecentCount, houseMarkets]);
-
-  const results = useMemo<ResultPick[]>(() => {
-    const grouped: Record<string, Indicator[]> = {};
-    activeIndicatorsWithOdd.forEach((indicator) => {
-      const marketValue = getMarketValue(indicator.market);
-      const pct = parseRecord(indicator.record);
-      if (!marketValue || pct <= 0) return;
-      const key = `${indicator.period || "full"}_${marketValue}_${indicator.line || ""}`;
-      if (!grouped[key]) grouped[key] = [];
-      grouped[key].push({ ...indicator, market: marketValue });
-    });
-
-    return Object.entries(grouped)
-      .map(([key, rows]) => {
-        const confidences = rows.map((row) => parseRecord(row.record)).filter((n) => n > 0);
-        const odds = rows.map((row) => toNumber(row.houseOdd)).filter((n) => n > 1);
-        const confidence = confidences.reduce((a, b) => a + b, 0) / confidences.length;
-        const avgOdd = odds.length ? odds.reduce((a, b) => a + b, 0) / odds.length : 0;
-        const implied = avgOdd > 1 ? impliedProb(avgOdd) : 0;
-        const value = implied > 0 ? confidence - implied : 0;
-        const marketValue = rows[0]?.market || "";
-        const line = rows[0]?.line || "";
-        const period = rows[0]?.period || "full";
-        const recentScore = scoreMarketFromRecent(marketValue, line, localRecent, visitRecent);
-        let blendedScore = recentScore > 0 ? confidence * 0.52 + recentScore * 0.48 : confidence;
-        const riskFlags: string[] = [];
-
-        if (period !== "full") {
-          blendedScore = clamp(blendedScore - 4, 0, 100);
-          riskFlags.push(`Periodo ${getPeriodLabel(period)}: úsalo como refuerzo para resultado/doble oportunidad/handicap.`);
-        }
-
-        if (isUnderGoalMarket(marketValue) && matchProfile.blockUnderGoals) {
-          blendedScore = clamp(blendedScore - (marketValue === "under_2_5" ? 30 : 14), 0, 100);
-          riskFlags.push("Bloqueado/castigado: hay BTTS, no clean sheet o perfil abierto contra el under de goles.");
-        }
-
-        if (isUnderCornerMarket(marketValue) && toNumber(line) <= 10.5 && projection.expectedCorners >= 10.8) {
-          blendedScore = clamp(blendedScore - 28, 0, 100);
-          riskFlags.push(`Freno under corners: registros proyectan ${projection.expectedCorners.toFixed(1)} corners.`);
-        }
-
-        if (isCornerMarket(marketValue) && marketValue.includes("over") && projection.expectedCorners >= toNumber(line) + 1) {
-          blendedScore = clamp(blendedScore + 9, 0, 100);
-        }
-
-        const trapInput = marketTrapInput(marketValue, line, projection);
-        if (trapInput) {
-          const trap = getLineTrapAssessment(trapInput.group, trapInput.direction, line, trapInput.expected, avgOdd, blendedScore);
-          blendedScore = clamp(blendedScore + trap.adjustment, 0, 100);
-          riskFlags.push(...trap.flags);
-        }
-
-        if (isOverGoalMarket(marketValue) && matchProfile.type === "abierto") {
-          blendedScore = clamp(blendedScore + 8, 0, 100);
-        }
-
-        if (isCardMarket(marketValue)) {
-          const cardPenalty = rows.length >= 2 ? 6 : 12;
-          const refBoost = refereeCardAdjustment.scoreAdjustment;
-          blendedScore = clamp(blendedScore - cardPenalty + (marketValue.includes("over") ? refBoost : -refBoost * 0.65), 0, 100);
-          riskFlags.push("Tarjetas bajan prioridad: mercado dependiente de árbitro/contexto.");
-          if (refereeCardAdjustment.notes.length) riskFlags.push(...refereeCardAdjustment.notes);
-        }
-
-        if (rows.length === 1 && confidence >= 85) riskFlags.push("Solo 1 señal: confirmar antes de jugar fuerte.");
-        if (recentScore > 0 && Math.abs(confidence - recentScore) >= 25) riskFlags.push("SofaScore y últimos registros no coinciden del todo.");
-        if (confidence >= 80 && avgOdd >= 1.85) riskFlags.push("Cuota alta para una señal fuerte: revisar alineaciones/contexto.");
-        if (implied > 0 && value < 0) riskFlags.push("La cuota no acompaña: posible pick sin value.");
-        if (confidence >= 70 && confidence < 85 && avgOdd >= 2.1) riskFlags.push("Value agresivo: buena cuota, pero riesgo medio/alto.");
-        if (isCardMarket(marketValue) && rows.length <= 1) riskFlags.push("Tarjetas con una sola señal: confirmar árbitro/contexto antes de confiar.");
-
-        // ── TECHO DE SCORE POR CALIDAD DE DATOS ──────────────────────────
-        // Un pick solo puede llegar a 100% si tiene base sólida.
-        // Sin suficientes partidos recientes o señales → techo dinámico.
-        const localValid  = countValidRows(localRecent).length;
-        const visitValid  = countValidRows(visitRecent).length;
-        const totalValid  = localValid + visitValid;
-        const signalCount = rows.length;
-
-        let scoreCeiling = 100;
-        if (totalValid < 2 && signalCount < 2) {
-          scoreCeiling = 72; // muy pocos datos
-          riskFlags.push("⚠️ Techo 72%: menos de 2 partidos recientes y 1 sola señal.");
-        } else if (totalValid < 4 && signalCount < 2) {
-          scoreCeiling = 82;
-          riskFlags.push("⚠️ Techo 82%: pocos registros recientes. Agrega más partidos para mayor fiabilidad.");
-        } else if (totalValid < 4 || signalCount < 2) {
-          scoreCeiling = 88;
-        }
-
-        if (blendedScore > scoreCeiling) {
-          blendedScore = scoreCeiling;
-        }
-
-        const grade = getGrade(blendedScore, riskFlags);
-
-        return {
-          key,
-          label: getMarketLabel(marketValue),
-          marketValue,
-          line,
-          confidence,
-          recentScore,
-          blendedScore,
-          count: rows.length,
-          grade,
-          tier: getTierLabel(grade),
-          avgOdd,
-          implied,
-          value,
-          riskFlags,
-          sources: rows,
-        };
-      })
-      .sort((a, b) => {
-        const aRank = a.blendedScore - marketSortPenalty(a.marketValue, a.blendedScore, a.count);
-        const bRank = b.blendedScore - marketSortPenalty(b.marketValue, b.blendedScore, b.count);
-        return bRank - aRank;
-      });
-  }, [activeIndicatorsWithOdd, localRecent, visitRecent, matchProfile, projection.expectedCorners, refereeCardAdjustment]);
-
-  // ── SEÑALES CRUZADAS: local × visitante ──────────────────────────────────
-  // Si ambos equipos tienen el mismo mercado con cuota, genera un pick combinado
-  // más fuerte que cualquiera de los dos por separado.
-  const crossedSignals = useMemo(() => {
-    const byMarket: Record<string, { local?: ResultPick; visitante?: ResultPick }> = {};
-    results.forEach((pick) => {
-      const teamSides = pick.sources.map((s) => s.team);
-      if (teamSides.includes("local")) {
-        if (!byMarket[pick.marketValue]) byMarket[pick.marketValue] = {};
-        byMarket[pick.marketValue].local = pick;
-      }
-      if (teamSides.includes("visitante")) {
-        if (!byMarket[pick.marketValue]) byMarket[pick.marketValue] = {};
-        byMarket[pick.marketValue].visitante = pick;
-      }
-    });
-    return Object.entries(byMarket)
-      .filter(([, sides]) => sides.local && sides.visitante)
-      .map(([market, sides]) => {
-        const avg = ((sides.local!.blendedScore + sides.visitante!.blendedScore) / 2);
-        const boosted = clamp(avg + 6, 0, 99); // +6 por confirmación cruzada
-        return {
-          market,
-          label: sides.local!.label,
-          line: sides.local!.line,
-          localScore: sides.local!.blendedScore,
-          visitScore: sides.visitante!.blendedScore,
-          combinedScore: boosted,
-          grade: getGrade(boosted, []),
-        };
-      })
-      .filter((s) => s.combinedScore >= 75)
-      .sort((a, b) => b.combinedScore - a.combinedScore);
-  }, [results]);
-
-  const contradictionAlerts = useMemo(() => detectContradictions(results), [results]);
-
-  const analysis = useMemo(() => {
-    if (!hasMinimumData) return null;
-
-    const combinedTop = [
-      ...results.map((pick) => ({ source: "SofaScore" as const, score: pick.blendedScore, label: pick.label, line: pick.line, grade: pick.grade, value: pick.value, implied: pick.implied, flags: pick.riskFlags })),
-      ...housePicks.map((pick) => ({ source: "Casa" as const, score: pick.modelScore, label: pick.label, line: pick.line, grade: pick.grade, value: pick.value, implied: pick.implied, flags: pick.riskFlags })),
-    ].sort((a, b) => b.score - a.score);
-
-    if (!combinedTop.length) return null;
-
-    const best = combinedTop[0];
-    const hasHardContradiction = contradictionAlerts.length > 0;
-
-    let decision = "⚠️ Evaluar";
-    let detail = "Hay señales, pero falta confirmar cuota o contexto.";
-
-    if (hasHardContradiction || matchProfile.type === "trampa") {
-      decision = "⚠️ JUGAR CONSERVADOR";
-      detail = "Hay contradicciones o perfil trampa. Evita parlay grande y busca línea más protegida.";
-    }
-    if (!hasHardContradiction && matchProfile.type !== "trampa" && best.grade === "safe" && (best.value >= 5 || best.implied === 0)) {
-      decision = "🔥 JUGAR";
-      detail = "La señal principal tiene buena fuerza y los registros no la contradicen.";
-    }
-    if (best.grade === "risky") {
-      decision = "❌ NO JUGAR";
-      detail = "No hay suficiente fuerza o hay demasiado riesgo oculto.";
-    }
-
-    return { best, decision, detail };
-  }, [results, housePicks, contradictionAlerts, matchProfile, hasMinimumData]);
-
-  const quickFillBankBet = () => {
-    setBankBetDraft((prev) => ({
-      ...prev,
-      matchName: `${match.local || "Local"} vs ${match.visitante || "Visitante"}`,
-      pick: analysis?.best ? `${analysis.best.label}${analysis.best.line ? ` · ${analysis.best.line}` : ""}` : prev.pick,
-      market: analysis?.best?.label || prev.market,
-      odd: analysis?.best?.implied ? (100 / analysis.best.implied).toFixed(2) : prev.odd,
-      source: "app",
-    }));
-  };
-
-  const parlaySuggestions = useMemo(() => {
-    if (!hasMinimumData) {
-      return { conservador: [], riesgoso: [] };
-    }
-
-    const familyOf = (market: string) => {
-      if (isCardMarket(market)) return "cards";
-      if (market.includes("corners")) return "corners";
-      if (isGoalMarket(market)) return "goals";
-      if (["ganador", "empate", "sin_derrotas", "sin_victorias", "derrotas", "victorias", "clean_sheet", "first_score", "first_concede", "first_half_winner", "first_half_loser", "wins_any_half", "local_o_empate", "visitante_o_empate", "local_o_visitante", "local_plus_1_5", "local_plus_0_5", "local_minus_0_5", "local_minus_1_5", "visit_plus_1_5", "visit_plus_0_5", "visit_minus_0_5", "visit_minus_1_5"].includes(market)) return "result";
-      return market;
-    };
-
-    const combined = [
-      ...results.map((pick) => ({ ...pick, score: pick.blendedScore, odd: pick.avgOdd, source: "SofaScore" as const })),
-      ...housePicks.map((pick) => ({
-        key: pick.key,
-        label: pick.label,
-        marketValue: pick.marketValue,
-        line: pick.line,
-        grade: pick.grade,
-        tier: pick.tier,
-        riskFlags: pick.riskFlags,
-        score: pick.modelScore,
-        odd: pick.odd,
-        count: 1,
-        source: "Casa" as const,
-      })),
-    ].sort((a, b) => b.score - a.score);
-
-    const build = (mode: "conservador" | "riesgoso") => {
-      const allowed: typeof combined = [];
-      const usedFamilies = new Set<string>();
-
-      for (const pick of combined) {
-        if (pick.grade === "risky") continue;
-        if (pick.riskFlags.some((flag) => flag.includes("sin value") || flag.includes("Bloqueado") || flag.includes("Freno") || flag.includes("Línea estrecha") || flag.includes("Under corners apretado") || flag.includes("sospechosa"))) continue;
-        if (isCardMarket(pick.marketValue) && (pick.score < 76 || pick.count < 2)) continue;
-        if (mode === "conservador" && (pick.marketValue === "btts" || pick.marketValue === "over_2_5" || pick.marketValue === "ganador")) continue;
-        if (mode === "conservador" && isUnderGoalMarket(pick.marketValue) && matchProfile.blockUnderGoals) continue;
-        if (mode === "conservador" && isUnderCornerMarket(pick.marketValue) && projection.expectedCorners >= 10.8) continue;
-        if (mode === "riesgoso" && !(isGoalMarket(pick.marketValue) || pick.marketValue === "ganador" || pick.marketValue === "empate" || isCornerMarket(pick.marketValue))) continue;
-        if (pick.riskFlags.some((flag) => flag.includes("ZONA PROHIBIDA"))) continue;
-
-        const family = familyOf(pick.marketValue);
-        if (usedFamilies.has(family)) continue;
-        usedFamilies.add(family);
-        allowed.push(pick);
-        if (allowed.length >= 3) break;
-      }
-      return allowed;
-    };
-
-    return {
-      conservador: build("conservador"),
-      riesgoso: build("riesgoso"),
-    };
-  }, [results, housePicks, matchProfile, projection.expectedCorners, hasMinimumData]);
-
-
-  const proMode = useMemo(() => {
-    if (!hasMinimumData) return null;
-
-    const rawPicks: ParlayPickForDay[] = [
-      ...results.map((pick) => ({
-        key: pick.key,
-        label: pick.label,
-        marketValue: pick.marketValue,
-        line: pick.line,
-        score: pick.blendedScore,
-        odd: pick.avgOdd,
-        tier: pick.tier,
-        grade: pick.grade,
-        riskFlags: pick.riskFlags,
-        source: "SofaScore" as const,
-      })),
-      ...housePicks.map((pick) => ({
-        key: pick.key,
-        label: pick.label,
-        marketValue: pick.marketValue,
-        line: pick.line,
-        score: pick.modelScore,
-        odd: pick.odd,
-        tier: pick.tier,
-        grade: pick.grade,
-        riskFlags: pick.riskFlags,
-        source: "Casa" as const,
-      })),
-    ];
-
-    const evaluated = rawPicks
-      .map((pick) => {
-        const family = dailyFamily(pick.marketValue);
-        const danger = hasDangerFlag(pick.riskFlags);
-        const isResultRisk = pick.marketValue === "ganador" || pick.marketValue.includes("minus") || pick.marketValue === "first_half_winner";
-        const isAggressiveGoal = pick.marketValue === "btts" || pick.marketValue === "over_2_5" || pick.marketValue === "under_2_5";
-        let realConfidence = pick.score;
-        const reasons: string[] = [];
-
-        if (danger) {
-          realConfidence -= 24;
-          reasons.push("Tiene alerta de trampa/value/freno: no forzar.");
-        }
-        if (matchProfile.type === "trampa") {
-          realConfidence -= 14;
-          reasons.push("Perfil trampa: bajar exposición.");
-        }
-        if (isSecondLegWithLead(eliminationContext)) {
-          const lead = toNumber(eliminationContext.leadGoals);
-          if (pick.marketValue === "over_2_5" || pick.marketValue === "btts") {
-            realConfidence -= lead >= 2 ? 16 : 10;
-            reasons.push("Vuelta con ventaja global: el equipo que va arriba puede enfriar el partido.");
-          }
-          if (pick.marketValue === "ganador" || pick.marketValue.includes("minus")) {
-            realConfidence -= 10;
-            reasons.push("Vuelta: evita ganador/handicap negativo si el global permite administrar.");
-          }
-          if (pick.marketValue.includes("plus") || pick.marketValue.includes("_o_empate")) {
-            realConfidence += 4;
-          }
-        }
-        if (matchProfile.type === "equilibrado" && isResultRisk) {
-          realConfidence -= 10;
-          reasons.push("Partido equilibrado: evitar ganador/handicap negativo como base.");
-        }
-        if (pick.marketValue === "ganador" && pick.score < 64) {
-          realConfidence -= 18;
-          reasons.push("Ganador directo bajo 64%: mejor doble oportunidad/handicap protegido.");
-        }
-        if (family === "corners" && pick.score < 88) {
-          realConfidence -= 9;
-          reasons.push("Corners requiere colchón alto; si está cerca de línea, no parlay fuerte.");
-        }
-        if (family === "cards" && pick.score < 82) {
-          realConfidence -= 10;
-          reasons.push("Tarjetas dependen de árbitro/contexto.");
-        }
-        if (pick.odd > 2.05) {
-          realConfidence -= 8;
-          reasons.push("Cuota alta: revisar por qué la casa paga tanto.");
-        }
-        if (pick.grade === "safe") realConfidence += 3;
-        if (pick.grade === "risky") realConfidence -= 16;
-        if (pick.riskFlags.some((flag) => flag.toLowerCase().includes("sin value"))) realConfidence -= 12;
-        if (pick.riskFlags.some((flag) => flag.toLowerCase().includes("zona prohibida"))) realConfidence -= 35;
-
-        realConfidence = clamp(realConfidence, 0, 99);
-
-        const hardBlock =
-          danger ||
-          pick.grade === "risky" ||
-          realConfidence < 62 ||
-          (pick.marketValue === "ganador" && pick.score < 64) ||
-          (family === "corners" && pick.riskFlags.some((flag) => flag.toLowerCase().includes("zona prohibida") || flag.toLowerCase().includes("trampa"))) ||
-          (matchProfile.type === "trampa" && isResultRisk);
-
-        const parlayAllowed =
-          !hardBlock &&
-          realConfidence >= 84 &&
-          family !== "cards" &&
-          pick.marketValue !== "ganador" &&
-          !isAggressiveGoal &&
-          !pick.marketValue.includes("minus");
-
-        const simpleAllowed = !hardBlock && realConfidence >= 72;
-
-        return { ...pick, family, realConfidence, reasons, hardBlock, parlayAllowed, simpleAllowed };
-      })
-      .sort((a, b) => b.realConfidence - a.realConfidence);
-
-    const usedFamilies = new Set<string>();
-    const proParlay = evaluated.filter((pick) => {
-      if (!pick.parlayAllowed) return false;
-      if (usedFamilies.has(pick.family)) return false;
-      usedFamilies.add(pick.family);
-      return true;
-    }).slice(0, 2);
-
-    const proSimples = evaluated
-      .filter((pick) => pick.simpleAllowed && !proParlay.some((item) => item.key === pick.key))
-      .slice(0, 4);
-
-    const bloqueados = evaluated.filter((pick) => pick.hardBlock).slice(0, 5);
-    const top = evaluated[0];
-
-    let title = "⚠️ Esperar";
-    let message = "No hay una ventaja suficientemente limpia. Mejor no forzar el partido.";
-    let tone: "green" | "yellow" | "red" = "yellow";
-
-    if (proParlay.length >= 2) {
-      title = "🟢 Modo PRO activo";
-      message = "Hay base para parlay corto. Máximo 2 selecciones y sin agregar mercados manuales.";
-      tone = "green";
-    } else if (proSimples.length >= 1) {
-      title = "🟡 Mejor simple/controlado";
-      message = "Hay lectura jugable, pero no suficientemente limpia para parlay fuerte.";
-      tone = "yellow";
-    }
-    if (!top || (top.realConfidence < 62 && proSimples.length === 0)) {
-      title = "🔴 No tocar";
-      message = "La app no encuentra lectura rentable. El mejor movimiento es no apostar.";
-      tone = "red";
-    }
-
-    return { title, message, tone, top, proParlay, proSimples, bloqueados };
-  }, [results, housePicks, matchProfile, eliminationContext, hasMinimumData]);
-
-
-  const finalReading = useMemo(() => {
-    if (!hasMinimumData) return null;
-
-    const localStats = projection.local;
-    const visitStats = projection.visit;
-    const oddLocalImp = impliedProb(toNumber(match.oddLocal));
-    const oddDrawImp = impliedProb(toNumber(match.oddDraw));
-    const oddVisitImp = impliedProb(toNumber(match.oddVisit));
-    const totalImp = oddLocalImp + oddDrawImp + oddVisitImp;
-
-    const marketLocal = totalImp > 0 ? (oddLocalImp / totalImp) * 100 : 0;
-    const marketDraw = totalImp > 0 ? (oddDrawImp / totalImp) * 100 : 0;
-    const marketVisit = totalImp > 0 ? (oddVisitImp / totalImp) * 100 : 0;
-
-    const recentLocal = clamp(localStats.winPct * 0.55 + visitStats.noWinPct * 0.25 + localStats.noLosePct * 0.2, 0, 100);
-    const recentVisit = clamp(visitStats.winPct * 0.55 + localStats.noWinPct * 0.25 + visitStats.noLosePct * 0.2, 0, 100);
-    const recentDraw = clamp(average([localStats.drawPct, visitStats.drawPct]) || 24, 5, 55);
-
-    const rawLocal = marketLocal ? marketLocal * 0.58 + recentLocal * 0.42 : recentLocal;
-    const rawDraw = marketDraw ? marketDraw * 0.58 + recentDraw * 0.42 : recentDraw;
-    const rawVisit = marketVisit ? marketVisit * 0.58 + recentVisit * 0.42 : recentVisit;
-    const totalRaw = Math.max(rawLocal + rawDraw + rawVisit, 1);
-
-    const pLocal = clamp((rawLocal / totalRaw) * 100, 1, 98);
-    const pDraw = clamp((rawDraw / totalRaw) * 100, 1, 98);
-    const pVisit = clamp((rawVisit / totalRaw) * 100, 1, 98);
-
-    const winnerOptions = [
-      { label: match.local || "Local", pct: pLocal, key: "1" },
-      { label: "Empate", pct: pDraw, key: "X" },
-      { label: match.visitante || "Visitante", pct: pVisit, key: "2" },
-    ].sort((a, b) => b.pct - a.pct);
-
-    const doubleChanceOptions = [
-      { label: `${match.local || "Local"} o empate`, pct: clamp(pLocal + pDraw, 0, 99), key: "1X" },
-      { label: `${match.visitante || "Visitante"} o empate`, pct: clamp(pVisit + pDraw, 0, 99), key: "X2" },
-      { label: `${match.local || "Local"} o ${match.visitante || "Visitante"}`, pct: clamp(pLocal + pVisit, 0, 99), key: "12" },
-    ].sort((a, b) => b.pct - a.pct);
-
-    const lineReading = (group: MarketGroup, expected: number, overLine: string, underLine: string) => {
-      const fallbackLine = group === "goals" ? "2.5" : group === "corners" ? "9.5" : "4.5";
-      const over = overLine || fallbackLine;
-      const under = underLine || fallbackLine;
-      const scale = group === "goals" ? 2.1 : group === "corners" ? 5.2 : 3.4;
-      const overPct = probabilityByLine(expected, toNumber(over), "over", scale);
-      const underPct = probabilityByLine(expected, toNumber(under), "under", scale);
-      const groupLabel = group === "goals" ? "goles" : group === "corners" ? "corners" : "tarjetas";
-      const isOver = overPct >= underPct;
-      return {
-        label: `${isOver ? "Más" : "Menos"} de ${isOver ? over : under} ${groupLabel}`,
-        pct: clamp(isOver ? overPct : underPct, 0, 99),
-        expected,
-        line: isOver ? over : under,
-        direction: isOver ? "over" : "under",
-      };
-    };
-
-    const adjustedGoalsExpected = isSecondLegWithLead(eliminationContext)
-      ? clamp(projection.expectedGoals - (toNumber(eliminationContext.leadGoals) >= 2 ? 0.65 : 0.4), 0.2, 8)
-      : projection.expectedGoals;
-    const adjustedCornersExpected = isSecondLegWithLead(eliminationContext) && eliminationContext.pressureTeam !== "none"
-      ? projection.expectedCorners + 0.35
-      : projection.expectedCorners;
-    const adjustedCardsExpected90 = isSecondLegWithLead(eliminationContext)
-      ? adjustedCardsExpected + 0.65
-      : adjustedCardsExpected;
-
-    const goals = lineReading("goals", adjustedGoalsExpected, houseMarkets.goalsOverLine, houseMarkets.goalsUnderLine);
-    const corners = lineReading("corners", adjustedCornersExpected, houseMarkets.cornersOverLine, houseMarkets.cornersUnderLine);
-    const cards = lineReading("cards", adjustedCardsExpected90, houseMarkets.cardsOverLine, houseMarkets.cardsUnderLine);
-
-    const warnings: string[] = [];
-    const tightCorners = Math.min(
-      Math.abs(projection.expectedCorners - toNumber(houseMarkets.cornersOverLine || "0")) || 99,
-      Math.abs(projection.expectedCorners - toNumber(houseMarkets.cornersUnderLine || "0")) || 99
-    );
-    const tightGoals = Math.min(
-      Math.abs(projection.expectedGoals - toNumber(houseMarkets.goalsOverLine || "0")) || 99,
-      Math.abs(projection.expectedGoals - toNumber(houseMarkets.goalsUnderLine || "0")) || 99
-    );
-    const tightCards = Math.min(
-      Math.abs(adjustedCardsExpected - toNumber(houseMarkets.cardsOverLine || "0")) || 99,
-      Math.abs(adjustedCardsExpected - toNumber(houseMarkets.cardsUnderLine || "0")) || 99
-    );
-
-    if (tightCorners <= 1.5) warnings.push("Corners cerca de la línea: no lo uses como base fuerte de parlay.");
-    if (tightGoals <= 0.35) warnings.push("Goles cerca de la línea: buscar línea más protegida.");
-    if (tightCards <= 0.8) warnings.push("Tarjetas cerca de la línea: depende mucho del árbitro/contexto.");
-    if (winnerOptions[0].pct < 48) warnings.push("1X2 parejo: mejor doble oportunidad o handicap positivo.");
-    if (matchProfile.type === "trampa") warnings.push("Perfil trampa: evita combinar demasiados mercados del mismo partido.");
-    if (isSecondLegWithLead(eliminationContext)) warnings.push(`Contexto de vuelta: ${getSideName(eliminationContext.advantageTeam, match)} llega con ventaja de ${eliminationContext.leadGoals}. Evita over agresivo y ganador directo; prioriza doble oportunidad/handicap/under amplio.`);
-    if (refereeCardAdjustment.notes.length) warnings.push(refereeCardAdjustment.notes[0]);
-
-    const message = warnings.length
-      ? warnings.join(" ")
-      : matchProfile.type === "abierto"
-        ? "Lectura abierta: prioriza goles protegidos y evita unders agresivos."
-        : matchProfile.type === "cerrado"
-          ? "Lectura cerrada: prioriza líneas con colchón y doble oportunidad."
-          : "Lectura equilibrada: mejor proteger con doble oportunidad/handicap y solo combinar líneas cómodas.";
-
-    return {
-      winner: winnerOptions[0],
-      doubleChance: doubleChanceOptions[0],
-      goals,
-      corners,
-      cards,
-      message,
-      profile: matchProfile.type,
-    };
-  }, [hasMinimumData, projection, match, houseMarkets, matchProfile, eliminationContext, adjustedCardsExpected, refereeCardAdjustment]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(BANKROLL_STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as BankrollState;
-      setBankroll({
-        initialBank: saved.initialBank || "",
-        bets: Array.isArray(saved.bets) ? saved.bets : [],
-      });
-    } catch {
-      setBankroll(emptyBankroll());
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(BANKROLL_STORAGE_KEY, JSON.stringify(bankroll));
-  }, [bankroll]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(DAILY_PICKS_STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as DailyPick[];
-      setDailyPicks(Array.isArray(saved) ? saved : []);
-    } catch {
-      setDailyPicks([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(DAILY_PICKS_STORAGE_KEY, JSON.stringify(dailyPicks));
-  }, [dailyPicks]);
-
-  useEffect(() => {
-    const saved = safeReadStorage();
-    if (!saved) return;
-
-    if (saved.match) {
-      setMatch({
-        local: saved.match.local || "",
-        visitante: saved.match.visitante || "",
-        oddLocal: saved.match.oddLocal || "",
-        oddDraw: saved.match.oddDraw || "",
-        oddVisit: saved.match.oddVisit || "",
-        localColor1: saved.match.localColor1 || "#38bdf8",
-        localColor2: saved.match.localColor2 || "#ffffff",
-        visitColor1: saved.match.visitColor1 || "#ef4444",
-        visitColor2: saved.match.visitColor2 || "#111827",
-        backgroundMode: saved.match.backgroundMode || "team",
-        backgroundImage: saved.match.backgroundImage || "",
-      });
-    }
-
-    if (Array.isArray(saved.indicators)) {
-      setIndicators(
-        saved.indicators.map((item) => ({
-          id: item.id || makeId(),
-          team: (item.team as TeamSide) || "ambos",
-          period: (item.period as IndicatorPeriod) || "full",
-          market: getMarketValue(item.market || ""),
-          line: item.line || "",
-          record: item.record || "",
-          houseOdd: item.houseOdd || "",
-        }))
-      );
-    }
-
-    const migrateRecent = (rows?: RecentRow[]) =>
-      Array.isArray(rows)
-        ? rows.map((row) => ({
-            ...emptyRecentRow(),
-            ...row,
-            cornersFor: row.cornersFor || (row as unknown as { corners?: string }).corners || "",
-            cardsFor: row.cardsFor || (row as unknown as { cards?: string }).cards || "",
-            id: row.id || makeId(),
-          }))
-        : createRecentRows();
-
-    setLocalRecent(migrateRecent(saved.localRecent));
-    setVisitRecent(migrateRecent(saved.visitRecent));
-    if (saved.houseMarkets) setHouseMarkets({ ...emptyHouseMarkets(), ...saved.houseMarkets });
-    if (saved.eliminationContext) setEliminationContext({ ...emptyEliminationContext(), ...saved.eliminationContext });
-    if (saved.refereeContext) setRefereeContext({ ...emptyRefereeContext(), ...saved.refereeContext });
-    if (saved.dominanceContext) setDominanceContext({ ...emptyDominanceContext(), ...saved.dominanceContext });
-    if (saved.marketFocus) setMarketFocus({ ...emptyMarketFocus(), ...saved.marketFocus });
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext, marketFocus }));
-  }, [match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext, marketFocus]);
-
-  useEffect(() => {
-    setIndicators((prev) =>
-      prev.map((indicator) => {
-        const autoOdd = findHouseOddForIndicator(indicator.market, indicator.line);
-        if (!autoOdd || indicator.houseOdd) return indicator;
-        return { ...indicator, houseOdd: autoOdd };
-      })
-    );
-  }, [houseMarkets]);
-
-  // Unifica Líneas reales de la casa con Dominador por etiqueta:
-  // los mercados totales de goles/corners/tarjetas se llenan una sola vez y alimentan ambos motores.
-  useEffect(() => {
-    setDominanceContext((prev) => ({
-      ...prev,
-      goalsOverLine: houseMarkets.goalsOverLine,
-      goalsOverOdd: houseMarkets.goalsOverOdd,
-      goalsUnderLine: houseMarkets.goalsUnderLine,
-      goalsUnderOdd: houseMarkets.goalsUnderOdd,
-      cornersOverLine: houseMarkets.cornersOverLine,
-      cornersOverOdd: houseMarkets.cornersOverOdd,
-      cornersUnderLine: houseMarkets.cornersUnderLine,
-      cornersUnderOdd: houseMarkets.cornersUnderOdd,
-      cardsOverLine: houseMarkets.cardsOverLine,
-      cardsOverOdd: houseMarkets.cardsOverOdd,
-      cardsUnderLine: houseMarkets.cardsUnderLine,
-      cardsUnderOdd: houseMarkets.cardsUnderOdd,
-    }));
-  }, [
-    houseMarkets.goalsOverLine,
-    houseMarkets.goalsOverOdd,
-    houseMarkets.goalsUnderLine,
-    houseMarkets.goalsUnderOdd,
-    houseMarkets.cornersOverLine,
-    houseMarkets.cornersOverOdd,
-    houseMarkets.cornersUnderLine,
-    houseMarkets.cornersUnderOdd,
-    houseMarkets.cardsOverLine,
-    houseMarkets.cardsOverOdd,
-    houseMarkets.cardsUnderLine,
-    houseMarkets.cardsUnderOdd,
-  ]);
-
-  useEffect(() => {
-    setHouseMarkets((prev) => {
-      let next = prev;
-
-      activeIndicators.forEach((indicator) => {
-        const fields = getHouseFieldsForIndicator(indicator.market, indicator.line);
-        const line = String(indicator.line || "").trim();
-        const odd = String(indicator.houseOdd || "").trim();
-        if (!fields || toNumber(odd) <= 1) return;
-        if ("lineField" in fields) {
-          if (!line) return;
-          if (String(prev[fields.lineField] || "").trim() !== line) return;
-        }
-        if (String(prev[fields.oddField] || "").trim()) return;
-
-        next = { ...next, [fields.oddField]: odd };
-      });
-
-      return next;
-    });
-  }, [indicators]);
-
-  // ── MEMORIA DE EQUIPOS: persistencia ────────────────────────────────────
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(TEAM_MEMORY_KEY);
-      if (raw) setTeamMemory(JSON.parse(raw) as TeamMemoryState);
-    } catch { /* silencioso */ }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(TEAM_MEMORY_KEY, JSON.stringify(teamMemory));
-  }, [teamMemory]);
-
-  const saveLocalToMemory = () => {
-    if (!match.local.trim()) { alert("Escribe el nombre del equipo local primero."); return; }
-    const valid = countValidRows(localRecent);
-    if (!valid.length) { alert("No hay registros del local para guardar."); return; }
-    setTeamMemory((prev) => saveTeamToMemory(prev, match.local, "local", localRecent, quickLocalText));
-    alert(`✅ ${match.local} (local) guardado en memoria.`);
-  };
-
-  const saveVisitToMemory = () => {
-    if (!match.visitante.trim()) { alert("Escribe el nombre del equipo visitante primero."); return; }
-    const valid = countValidRows(visitRecent);
-    if (!valid.length) { alert("No hay registros del visitante para guardar."); return; }
-    setTeamMemory((prev) => saveTeamToMemory(prev, match.visitante, "visitante", visitRecent, quickVisitText));
-    alert(`✅ ${match.visitante} (visitante) guardado en memoria.`);
-  };
-
-  const loadFromMemoryLocal = (entry: TeamMemoryEntry) => {
-    setLocalRecent(entry.rows.map((r) => ({ ...r, id: makeId() })));
-    if (entry.quickText) setQuickLocalText(entry.quickText);
-    setShowMemoryLocal(false);
-    setMemorySearchLocal("");
-  };
-
-  const loadFromMemoryVisit = (entry: TeamMemoryEntry) => {
-    setVisitRecent(entry.rows.map((r) => ({ ...r, id: makeId() })));
-    if (entry.quickText) setQuickVisitText(entry.quickText);
-    setShowMemoryVisit(false);
-    setMemorySearchVisit("");
-  };
-
-  const deleteFromMemory = (id: string) => {
-    setTeamMemory((prev) => ({ entries: prev.entries.filter((e) => e.id !== id) }));
-  };
-
-  // Auto-detect team in memory when match name changes
-  useEffect(() => {
-    if (!match.local.trim()) return;
-    const found = findTeamInMemory(teamMemory, match.local, "local");
-    if (found && !countValidRows(localRecent).length) {
-      setLocalRecent(found.rows.map((r) => ({ ...r, id: makeId() })));
-    }
-  }, [match.local]);
-
-  useEffect(() => {
-    if (!match.visitante.trim()) return;
-    const found = findTeamInMemory(teamMemory, match.visitante, "visitante");
-    if (found && !countValidRows(visitRecent).length) {
-      setVisitRecent(found.rows.map((r) => ({ ...r, id: makeId() })));
-    }
-  }, [match.visitante]);
-
-  // ── ENTRADA RÁPIDA: handlers ─────────────────────────────────────────────
-  const applyQuickLocal = () => {
-    if (!quickLocalText.trim()) return;
-    setLocalRecent(parseQuickRows(quickLocalText, marketFocus.recentCount ? Number(marketFocus.recentCount) : 6));
-    setQuickLocalText("");
-  };
-
-  const applyQuickVisit = () => {
-    if (!quickVisitText.trim()) return;
-    setVisitRecent(parseQuickRows(quickVisitText, marketFocus.recentCount ? Number(marketFocus.recentCount) : 6));
-    setQuickVisitText("");
-  };
-
-  const applyQuickHouse = () => {
-    if (!quickHouseText.trim()) return;
-    const parsed = parseQuickHouse(quickHouseText);
-    setHouseMarkets((prev) => ({ ...prev, ...parsed }));
-    setQuickHouseText("");
-  };
-
-  // ── AUTOFILL: genera indicadores desde la forma reciente ─────────────────
-  const autoFillIndicatorsFromRecent = () => {
-    const localStats = buildRecentStatsWeighted(localRecent);
-    const visitStats = buildRecentStatsWeighted(visitRecent);
-    if (!localStats.count && !visitStats.count) {
-      alert("Carga primero la forma reciente de al menos un equipo.");
-      return;
-    }
-    const newIndicators: Indicator[] = [];
-
-    const addIfStrong = (team: TeamSide, market: string, line: string, pct: number) => {
-      if (pct >= 60) {
-        const stats = team === "local" ? localStats : visitStats;
-        const total = stats.count;
-        const hits = Math.round((pct / 100) * total);
-        newIndicators.push({
-          id: makeId(), team, period: "full", market,
-          line, record: `${hits}/${total}`, houseOdd: "",
-        });
-      }
-    };
-
-    // ── Calcular % corners y tarjetas por equipo ─────────────────────────
-    const calcPct = (rows: RecentRow[], fn: (r: RecentRow) => boolean) => {
-      const valid = countValidRows(rows);
-      if (!valid.length) return 0;
-      return (valid.filter(fn).length / valid.length) * 100;
-    };
-
-    const localCorners10Over  = calcPct(localRecent,  (r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst) > 10.5);
-    const localCorners10Under = calcPct(localRecent,  (r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst) < 10.5 && toNumber(r.cornersFor) + toNumber(r.cornersAgainst) > 0);
-    const visitCorners10Over  = calcPct(visitRecent,  (r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst) > 10.5);
-    const visitCorners10Under = calcPct(visitRecent,  (r) => toNumber(r.cornersFor) + toNumber(r.cornersAgainst) < 10.5 && toNumber(r.cornersFor) + toNumber(r.cornersAgainst) > 0);
-
-    const localCards4Over     = calcPct(localRecent,  (r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst) > 4.5);
-    const localCards4Under    = calcPct(localRecent,  (r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst) < 4.5 && toNumber(r.cardsFor) + toNumber(r.cardsAgainst) > 0);
-    const visitCards4Over     = calcPct(visitRecent,  (r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst) > 4.5);
-    const visitCards4Under    = calcPct(visitRecent,  (r) => toNumber(r.cardsFor) + toNumber(r.cardsAgainst) < 4.5 && toNumber(r.cardsFor) + toNumber(r.cardsAgainst) > 0);
-
-    // ── Combinado local + visitante para corners y tarjetas (ambos) ──────
-    // Si ambos equipos muestran la misma tendencia, agrega indicador "ambos"
-    const combinedCorners10Over  = (localCorners10Over  + visitCorners10Over)  / 2;
-    const combinedCorners10Under = (localCorners10Under + visitCorners10Under) / 2;
-    const combinedCards4Over     = (localCards4Over     + visitCards4Over)     / 2;
-    const combinedCards4Under    = (localCards4Under    + visitCards4Under)    / 2;
-
-    // ── Local ────────────────────────────────────────────────────────────
-    if (localStats.count > 0) {
-      addIfStrong("local", "over_2_5",           "2.5",  localStats.bttsPct);
-      addIfStrong("local", "btts",               "Sí",   localStats.bttsPct);
-      addIfStrong("local", "no_clean",           "Sí",   localStats.noCleanPct);
-      addIfStrong("local", "victorias",          "",     localStats.winPct);
-      addIfStrong("local", "sin_derrotas",       "",     localStats.noLosePct);
-      addIfStrong("local", "over_10_5_corners",  "10.5", localCorners10Over);
-      addIfStrong("local", "under_10_5_corners", "10.5", localCorners10Under);
-      addIfStrong("local", "over_4_5_cards",     "4.5",  localCards4Over);
-      addIfStrong("local", "under_4_5_cards",    "4.5",  localCards4Under);
-    }
-
-    // ── Visitante ────────────────────────────────────────────────────────
-    if (visitStats.count > 0) {
-      addIfStrong("visitante", "over_2_5",           "2.5",  visitStats.bttsPct);
-      addIfStrong("visitante", "btts",               "Sí",   visitStats.bttsPct);
-      addIfStrong("visitante", "no_clean",           "Sí",   visitStats.noCleanPct);
-      addIfStrong("visitante", "victorias",          "",     visitStats.winPct);
-      addIfStrong("visitante", "sin_derrotas",       "",     visitStats.noLosePct);
-      addIfStrong("visitante", "over_10_5_corners",  "10.5", visitCorners10Over);
-      addIfStrong("visitante", "under_10_5_corners", "10.5", visitCorners10Under);
-      addIfStrong("visitante", "over_4_5_cards",     "4.5",  visitCards4Over);
-      addIfStrong("visitante", "under_4_5_cards",    "4.5",  visitCards4Under);
-    }
-
-    // ── Combinado "ambos": solo si ambos equipos muestran la señal ───────
-    if (localStats.count > 0 && visitStats.count > 0) {
-      if (combinedCorners10Over  >= 65) {
-        const hits = Math.round((combinedCorners10Over / 100) * Math.min(localStats.count, visitStats.count));
-        const total = Math.min(localStats.count, visitStats.count);
-        newIndicators.push({ id: makeId(), team: "ambos", period: "full", market: "over_10_5_corners",  line: "10.5", record: `${hits}/${total}`, houseOdd: "" });
-      }
-      if (combinedCorners10Under >= 65) {
-        const hits = Math.round((combinedCorners10Under / 100) * Math.min(localStats.count, visitStats.count));
-        const total = Math.min(localStats.count, visitStats.count);
-        newIndicators.push({ id: makeId(), team: "ambos", period: "full", market: "under_10_5_corners", line: "10.5", record: `${hits}/${total}`, houseOdd: "" });
-      }
-      if (combinedCards4Over     >= 65) {
-        const hits = Math.round((combinedCards4Over / 100) * Math.min(localStats.count, visitStats.count));
-        const total = Math.min(localStats.count, visitStats.count);
-        newIndicators.push({ id: makeId(), team: "ambos", period: "full", market: "over_4_5_cards",     line: "4.5",  record: `${hits}/${total}`, houseOdd: "" });
-      }
-      if (combinedCards4Under    >= 65) {
-        const hits = Math.round((combinedCards4Under / 100) * Math.min(localStats.count, visitStats.count));
-        const total = Math.min(localStats.count, visitStats.count);
-        newIndicators.push({ id: makeId(), team: "ambos", period: "full", market: "under_4_5_cards",    line: "4.5",  record: `${hits}/${total}`, houseOdd: "" });
-      }
-    }
-
-    if (!newIndicators.length) {
-      alert("Los registros no muestran señales fuertes (>60%). Revisa los datos o agrega más partidos.");
-      return;
-    }
-    // Deduplicar: no agregar si ya existe mismo team+market
-    const existing = new Set(indicators.map((ind) => `${ind.team}_${ind.market}`));
-    const toAdd = newIndicators.filter((ind) => !existing.has(`${ind.team}_${ind.market}`));
-    if (!toAdd.length) {
-      alert("Todos los indicadores detectados ya existen.");
-      return;
-    }
-    setIndicators((prev) => [...prev, ...toAdd]);
-    alert(`✅ Se agregaron ${toAdd.length} indicadores automáticos desde los registros.`);
-  };
-
- 
-  // ── HELPER: countdown para error 429 ────────────────────────────────────
-  const startRetryCountdown = (seconds: number, action: "runAI" | "verify") => {
-    setRetryCountdown(seconds);
-    setRetryAction(action);
-    const interval = setInterval(() => {
-      setRetryCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          setRetryAction(null);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-
-  // ── MOTOR IA: primera pasada — busca datos y genera picks ───────────────
-  const runAIMotor = async () => {
-    const local = match.local.trim();
-    const visit = match.visitante.trim();
-    if (!local || !visit) { alert("Escribe los nombres de ambos equipos primero."); return; }
-
-    setAiMotor((prev) => ({ ...prev, status: "searching", matchName: `${local} vs ${visit}`, picks: [], context: "", pronostico: "", errorMsg: "" }));
-
-    const competition = aiMotor.competition;
-    const systemPrompt = `Eres un analista de fútbol y apuestas deportivas de élite. Respondes SOLO en JSON válido, sin markdown, sin backticks. Eres muy específico con datos reales.`;
-
-    const userPrompt = `Analiza el partido: ${local} vs ${visit} (${competition}).
-
-BUSCA EN LA WEB:
-- Forma reciente de cada equipo (últimos 5-6 partidos): goles, corners, tarjetas, remates
-- Bajas importantes, jugadores sancionados, lesionados
-- Estadísticas de corners y tarjetas por partido de cada equipo
-- Historial enfrentamientos directos recientes
-- Contexto: importancia del partido, posición en tabla, motivación
-
-Genera los MEJORES picks apostables para este partido.
-
-Responde SOLO con este JSON (sin texto extra):
-{
-  "context": "resumen conciso de los datos encontrados: forma, bajas, stats clave de cada equipo",
-  "pronostico": "pronóstico del partido en 2-3 líneas",
-  "picks": [
-    {
-      "market": "over_2_5",
-      "label": "Más de 2.5 goles",
-      "line": "2.5",
-      "reasoning": "por qué este pick tiene sentido con los datos",
-      "confidence": 78,
-      "priority": "alta"
-    }
-  ]
-}
-
-Genera entre 4 y 7 picks ordenados por prioridad. Mercados posibles: over_2_5, under_2_5, over_3_5, under_3_5, btts_yes, btts_no, over_9_5_corners, over_10_5_corners, under_9_5_corners, under_10_5_corners, over_4_5_cards, under_4_5_cards, local_win, visitante_win, empate, dc_1x, dc_x2, dc_12.`;
-
-    try {
-      const res = await fetch("/api/ai-analysis", {
+      const resp = await fetch("/api/ai-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
-          max_tokens: 2000,
-          system: systemPrompt,
-          messages: [{ role: "user", content: userPrompt }],
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
+          max_tokens: 2500,
+          useWebSearch: true,
+          messages: [{ role: "user", content: buildAIPrompt(match) }],
         }),
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-        throw new Error(err.error?.message || `Error ${res.status}`);
-      }
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error?.message || `Error de API (${resp.status})`);
 
-      const data = await res.json() as { content: Array<{ type: string; text?: string }> };
-      const fullText = data.content.map((b) => b.type === "text" ? (b.text ?? "") : "").filter(Boolean).join("\n");
-      const clean = fullText.replace(/```json|```/g, "").trim();
+      // Extract text from all content blocks
+      const finalText = (data.content || [])
+        .filter((b: {type: string}) => b.type === "text")
+        .map((b: {text: string}) => b.text)
+        .join("");
 
-      let parsed: { context: string; pronostico: string; picks: Omit<AIPick, "id" | "houseOdd" | "status" | "valueVerdict" | "edgePct" | "kellyStakeAmt">[] };
+      if (!finalText) throw new Error("Sin respuesta de texto de la IA");
+
+      // DEBUG: log exactly what we got
+      console.log("=== AI RAW RESPONSE ===");
+      console.log(finalText);
+      console.log("=== END AI RESPONSE ===");
+
+      // Robust JSON extractor — finds outermost { } block
+      let parsed;
       try {
-        // Intenta parsear directo
-        parsed = JSON.parse(clean);
-      } catch (_e) {
-        // Busca el bloque JSON más grande (de { hasta }) dentro del texto
-        const jsonMatch = clean.match(/\{[\s\S]*"picks"\s*:\s*\[[\s\S]*\]\s*\}/);
-        if (jsonMatch) {
-          try { parsed = JSON.parse(jsonMatch[0]); }
-          catch (_e2) { parsed = { context: "Sin contexto", pronostico: "", picks: [] }; }
-        } else {
-          const ctx = clean.match(/"context"\s*:\s*"([\s\S]*?)"\s*,\s*"pronostico"/)?.[1] ?? "Sin contexto";
-          const pro = clean.match(/"pronostico"\s*:\s*"([\s\S]*?)"\s*,\s*"picks"/)?.[1] ?? "";
-          parsed = { context: ctx, pronostico: pro, picks: [] };
+        const cleaned = finalText.replace(/```json|```/g, "").trim();
+        const start = cleaned.indexOf("{");
+        if (start === -1) throw new Error("no_json");
+        let depth = 0, end = -1;
+        for (let ci = start; ci < cleaned.length; ci++) {
+          if (cleaned[ci] === "{") depth++;
+          else if (cleaned[ci] === "}") { depth--; if (depth === 0) { end = ci; break; } }
         }
+        if (end === -1) throw new Error("no_json");
+        parsed = JSON.parse(cleaned.slice(start, end + 1));
+      } catch (_e) {
+        throw new Error("La IA no devolvió JSON válido. Intenta de nuevo.");
       }
 
-      const picks: AIPick[] = (parsed.picks ?? []).map((p) => ({
-        ...p,
-        id: makeId(),
-        houseOdd: "",
-        status: "pending_odd" as AIPickStatus,
-        valueVerdict: "",
-        edgePct: 0,
-        kellyStakeAmt: 0,
-      }));
-
-      setAiMotor((prev) => ({
-        ...prev,
-        status: "awaiting_odds",
-        context: parsed.context ?? "",
-        pronostico: parsed.pronostico ?? "",
-        picks,
-      }));
+      setAiResult(parsed);
+      const newPicks = (parsed.picks || []).map(p => {
+        const conf = clamp(Number(p.confianza) || 50, 0, 100);
+        return { ...emptyPick(), id: makeId(), mercado: p.mercado || "", linea: p.linea || "", tipo: p.tipo || "over", confianza: conf, prioridad: p.prioridad || "media", justificacion: p.justificacion || "", cuotaSugerida: p.cuotaSugerida || "" };
+      });
+      setPicks(newPicks);
+      setAiStatus("done");
+      setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Error desconocido";
-      const is429 = msg.includes("429") || msg.toLowerCase().includes("rate limit");
-      setAiMotor((prev) => ({
-        ...prev,
-        status: "error",
-        errorMsg: is429 ? "Limite de API alcanzado (429). Espera el contador y reintenta." : msg,
-      }));
-      if (is429) startRetryCountdown(30, "runAI");
+      setAiStatus("error");
+      setAiError(String((err as Error).message || "Error desconocido"));
     }
-  };
+  }, [match]);
 
-  // ── MOTOR IA: segunda pasada — verifica value con las cuotas ingresadas ──
-  const verifyOddsWithAI = async () => {
-    const picksWithOdd = aiMotor.picks.filter((p) => toNumber(p.houseOdd) > 1);
-    if (!picksWithOdd.length) { alert("Ingresa al menos una cuota para verificar el value."); return; }
-
-    setAiMotor((prev) => ({ ...prev, status: "verifying" }));
-
-    const bank = bankrollStats.currentBank;
-    const picksContext = picksWithOdd.map((p) =>
-      `- ${p.label} (${p.line}): cuota ${p.houseOdd}, confianza IA ${p.confidence}%, razonamiento: ${p.reasoning}`
-    ).join("\n");
-
-    const systemPrompt = `Eres un analista de value betting. Respondes SOLO en JSON válido sin markdown.`;
-    const userPrompt = `Partido: ${aiMotor.matchName}
-
-Picks con cuotas ingresadas por el usuario:
-${picksContext}
-
-Bank actual: ${bank > 0 ? formatMoney(bank) : "No definido"}
-
-Para cada pick calcula:
-1. Probabilidad implícita de la cuota (1/cuota * 100)
-2. Si tu confianza supera esa probabilidad → hay value real
-3. Stake óptimo con Kelly fraccionado al 50%
-
-Responde SOLO con:
-{
-  "verifications": [
-    {
-      "label": "Más de 2.5 goles",
-      "hasValue": true,
-      "edgePct": 12.5,
-      "verdict": "✅ Value real: tu modelo estima 78% vs 65% implícita de la casa",
-      "kellySuggestion": "Apostar 4.2% del bank (X dinero)",
-      "recommendation": "confirmed"
-    }
-  ]
-}
-
-recommendation debe ser "confirmed" si hay value ≥5%, "marginal" si hay 1-4%, "discarded" si no hay value.`;
-
+  // ── VERIFY VALUE ───────────────────────────────────────────────────────
+  const verifyValue = useCallback(async () => {
+    const withOdds = picks.filter(p => toNum(p.cuotaCasa) > 1);
+    if (!withOdds.length) return;
+    setVerifyingValue(true);
     try {
-      const res = await fetch("/api/ai-analysis", {
+      const resp = await fetch("/api/ai-analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
           max_tokens: 1500,
-          system: systemPrompt,
-          messages: [{ role: "user", content: userPrompt }],
-        }),
+          useWebSearch: false,
+          messages: [{ role: "user", content: buildAIPrompt({ ...match, picks: withOdds.map(p => ({ id: p.id, mercado: p.mercado, linea: p.linea, confianza: p.confianza, cuotaCasa: p.cuotaCasa })) }, "verify") }]
+        })
       });
-
-      if (!res.ok) throw new Error(`Error ${res.status}`);
-      const data = await res.json() as { content: Array<{ type: string; text?: string }> };
-      const fullText = data.content.map((b) => b.type === "text" ? (b.text ?? "") : "").filter(Boolean).join("\n");
-      const clean = fullText.replace(/```json|```/g, "").trim();
-
-      let parsed: { verifications: Array<{ label: string; hasValue: boolean; edgePct: number; verdict: string; kellySuggestion: string; recommendation: string }> };
-      try { parsed = JSON.parse(clean); }
-      catch (_e) { parsed = { verifications: [] }; }
-
-      setAiMotor((prev) => ({
-        ...prev,
-        status: "done",
-        picks: prev.picks.map((pick) => {
-          const v = parsed.verifications.find((vf) => vf.label === pick.label || pick.label.includes(vf.label));
-          if (!v) return pick;
-          return {
-            ...pick,
-            valueVerdict: v.verdict,
-            edgePct: v.edgePct,
-            kellyStakeAmt: bank > 0 ? bank * (v.edgePct / 100) * 0.5 : 0,
-            status: v.recommendation === "confirmed" ? "confirmed" : v.recommendation === "marginal" ? "pending_odd" : "discarded",
-          };
-        }),
-      }));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Error desconocido";
-      const is429 = msg.includes("429") || msg.toLowerCase().includes("rate limit");
-      setAiMotor((prev) => ({
-        ...prev,
-        status: is429 ? "awaiting_odds" : "error",
-        errorMsg: is429 ? "Limite de API alcanzado (429). Espera el contador y reintenta." : msg,
-      }));
-      if (is429) startRetryCountdown(30, "verify");
-    }
-  };
-
-  const updateAIPickOdd = (id: string, odd: string) => {
-    setAiMotor((prev) => ({ ...prev, picks: prev.picks.map((p) => p.id === id ? { ...p, houseOdd: odd } : p) }));
-  };
-
-  const discardAIPick = (id: string) => {
-    setAiMotor((prev) => ({ ...prev, picks: prev.picks.map((p) => p.id === id ? { ...p, status: "discarded" } : p) }));
-  };
-
-  const sendAIPickToBankroll = (pick: AIPick) => {
-    if (toNumber(pick.houseOdd) <= 1) { alert("Ingresa la cuota primero."); return; }
-    const newBet: BankBet = {
-      id: makeId(),
-      date: new Date().toISOString().slice(0, 10),
-      matchName: aiMotor.matchName,
-      pick: `${pick.label}${pick.line ? ` · ${pick.line}` : ""}`,
-      market: pick.market,
-      stake: pick.kellyStakeAmt > 0 ? pick.kellyStakeAmt.toFixed(2) : "",
-      odd: pick.houseOdd,
-      status: "pending",
-      source: "app",
-      notes: `IA: ${pick.reasoning.slice(0, 80)}`,
-    };
-    setBankroll((prev) => ({ ...prev, bets: [newBet, ...prev.bets] }));
-    setAiMotor((prev) => ({ ...prev, picks: prev.picks.map((p) => p.id === pick.id ? { ...p, status: "confirmed" } : p) }));
-    alert(`✅ Apuesta registrada en bankroll: ${newBet.pick}`);
-  };
-
-  const runAIAnalysis = async () => {
-    const local = match.local.trim();
-    const visit = match.visitante.trim();
-    if (!local || !visit) {
-      alert("Escribe el nombre de ambos equipos primero.");
-      return;
-    }
-
-    setAiStatus("loading_web");
-    setAiError("");
-    setAiAnalysis(null);
-    setShowAI(true);
-
-    // ── Contexto de cuotas ───────────────────────────────────────────────
-    const hasOdds = match.oddLocal || match.oddDraw || match.oddVisit;
-    const oddsCtx = hasOdds
-      ? `Cuotas 1X2: Local ${match.oddLocal || "—"} / Empate ${match.oddDraw || "—"} / Visitante ${match.oddVisit || "—"}.`
-      : "No se han ingresado cuotas 1X2.";
-    const goalsCtx = houseMarkets.goalsOverOdd
-      ? `Over ${houseMarkets.goalsOverLine} goles @${houseMarkets.goalsOverOdd} / Under @${houseMarkets.goalsUnderOdd}.`
-      : "";
-    const cornersCtx = houseMarkets.cornersOverOdd
-      ? `Over ${houseMarkets.cornersOverLine} corners @${houseMarkets.cornersOverOdd} / Under @${houseMarkets.cornersUnderOdd}.`
-      : "";
-    const cardsCtx = houseMarkets.cardsOverOdd
-      ? `Over ${houseMarkets.cardsOverLine} tarjetas @${houseMarkets.cardsOverOdd} / Under @${houseMarkets.cardsUnderOdd}.`
-      : "";
-
-    // ── Resumen de forma reciente manual (si el usuario ya cargó datos) ──
-    const summarizeRecent = (rows: RecentRow[], label: string) => {
-      const valid = rows.filter((r) => r.goalsFor !== "" || r.goalsAgainst !== "");
-      if (!valid.length) return "";
-      const avg = (fn: (r: RecentRow) => number) =>
-        (valid.reduce((a, r) => a + fn(r), 0) / valid.length).toFixed(1);
-      const btts = valid.filter((r) => Number(r.goalsFor) > 0 && Number(r.goalsAgainst) > 0).length;
-      return `${label}: GF ${avg((r) => Number(r.goalsFor || 0))} GC ${avg((r) => Number(r.goalsAgainst || 0))} | Corners ${avg((r) => Number(r.cornersFor || 0))} | Tarjetas ${avg((r) => Number(r.cardsFor || 0))} | Disparos ${avg((r) => Number(r.shotsTotal || 0))} (a puerta ${avg((r) => Number(r.shotsOnTarget || 0))}) | Faltas ${avg((r) => Number(r.fouls || 0))} | BTTS ${btts}/${valid.length}`;
-    };
-
-    const localCtx = summarizeRecent(localRecent, `${local} como local`);
-    const visitCtx = summarizeRecent(visitRecent, `${visit} como visitante`);
-    const hasManualData = Boolean(localCtx || visitCtx);
-
-    // ── System prompt ────────────────────────────────────────────────────
-    const systemPrompt = `Eres un analista profesional de fútbol y apuestas deportivas. Respondes SIEMPRE en español.
-Tienes acceso a búsqueda web. ÚSALA para buscar información actualizada del partido.
-
-PASOS OBLIGATORIOS antes de responder:
-1. Busca en web: "${local} vs ${visit} últimos 5 partidos como local 2025"
-2. Busca en web: "${visit} últimos 5 partidos como visitante 2025"
-3. Busca en web: "${local} vs ${visit} previa bajas lesiones 2025"
-4. Con toda esa info, responde en JSON.
-
-Responde ÚNICAMENTE con un objeto JSON válido, sin texto extra, sin markdown, sin backticks.
-JSON con exactamente estas claves (todas obligatorias):
-{"previa":"...","perfilLocal":"...","perfilVisitante":"...","pronostico":"...","picksIA":"...","valueAnalysis":"...","datosLocal":"...","datosVisitante":"..."}
-
-INSTRUCCIONES POR CAMPO:
-- previa: contexto del partido, importancia, bajas confirmadas, motivación de cada equipo (usa info web)
-- perfilLocal: últimos 5 partidos como LOCAL con goles, corners, tarjetas reales encontrados en web. Formato: "J1: 2-1 (C:8, T:3) | J2: 1-0 (C:6, T:2) | ..."
-- perfilVisitante: igual pero últimos 5 como VISITANTE con datos reales de web
-- pronostico: resultado más probable con % estimado basado en los datos reales encontrados
-- picksIA: los 3 mejores picks con formato "✅ Pick · Línea · Justificación". Incluye cuota sugerida mínima de valor
-- valueAnalysis: para cada cuota ingresada por el usuario, indica si hay value real o no
-- datosLocal: resumen numérico encontrado en web: promedio goles/corners/tarjetas últimos 5 partidos en casa
-- datosVisitante: igual para el visitante fuera de casa`;
-
-    // ── User prompt ──────────────────────────────────────────────────────
-    const userPrompt = `Analiza el partido: ${local} vs ${visit}
-
-CUOTAS INGRESADAS POR EL USUARIO:
-${oddsCtx}
-${goalsCtx ? `Goles: ${goalsCtx}` : ""}
-${cornersCtx ? `Corners: ${cornersCtx}` : ""}
-${cardsCtx ? `Tarjetas: ${cardsCtx}` : ""}
-
-${hasManualData ? `DATOS MANUALES YA CARGADOS (úsalos como base, complementa con web):
-${localCtx || "Sin datos manuales del local"}
-${visitCtx || "Sin datos manuales del visitante"}` : "El usuario NO ha cargado datos manuales. DEBES buscar en web los últimos 5 partidos de cada equipo en su condición (local/visitante) y extraer: goles, corners, tarjetas, resultado."}
-
-PROYECCIONES DEL MOTOR:
-Perfil del partido: ${matchProfile.type}
-Goles esperados: ${projection.expectedGoals.toFixed(1)} | Corners: ${projection.expectedCorners.toFixed(1)} | Tarjetas: ${adjustedCardsExpected.toFixed(1)}
-
-IMPORTANTE: Busca los datos reales en web. No inventes estadísticas. Si no encuentras datos de corners o tarjetas, indícalo y usa lo que sí encuentres.`;
-
-    try {
-      // Siempre usamos web search para buscar datos automáticamente
-      const tools = [{ type: "web_search_20250305", name: "web_search" }];
-      setAiStatus("loading_ai");
-
-      const response = await fetch("/api/ai-analysis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 3000,
-          system: systemPrompt,
-          messages: [{ role: "user", content: userPrompt }],
-          tools,
-        }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error((err as { error?: { message?: string } }).error?.message || `Error ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      const fullText = (data.content as Array<{ type: string; text?: string }>)
-        .map((block) => (block.type === "text" ? block.text ?? "" : ""))
-        .filter(Boolean)
-        .join("\n");
-
-      const clean = fullText.replace(/```json|```/g, "").trim();
-
-      let parsed: AIAnalysis;
+      const data = await resp.json();
+      const textBlock = (data.content || []).find((b: {type: string}) => b.type === "text") as {text: string} | undefined;
+      if (!textBlock) throw new Error();
+      const rawText = textBlock.text.replace(/```json|```/g, "").trim();
+      let vParsed: {evaluaciones?: Array<{id: string; tieneValue: boolean; edge: number; recomendacion: string; alerta: string}>} = { evaluaciones: [] };
       try {
-        parsed = JSON.parse(clean) as AIAnalysis;
-      } catch {
-        const extract = (key: string): string => {
-          const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\[\\s\\S])*)"`, "s");
-          const m = clean.match(re);
-          if (m) return m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim();
-          const keys = ["previa", "perfilLocal", "perfilVisitante", "pronostico", "picksIA", "valueAnalysis", "datosLocal", "datosVisitante"];
-          const idx = keys.indexOf(key);
-          const nextKey = keys[idx + 1];
-          const re2 = nextKey
-            ? new RegExp(`"${key}"\\s*:\\s*"([\\s\\S]*?)"\\s*,?\\s*"${nextKey}"`, "s")
-            : new RegExp(`"${key}"\\s*:\\s*"([\\s\\S]*?)"\\s*[,}]?\\s*$`, "s");
-          const m2 = clean.match(re2);
-          return m2 ? m2[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').trim() : "(sin datos)";
-        };
-        parsed = {
-          previa: extract("previa"),
-          perfilLocal: extract("perfilLocal"),
-          perfilVisitante: extract("perfilVisitante"),
-          pronostico: extract("pronostico"),
-          picksIA: extract("picksIA"),
-          valueAnalysis: extract("valueAnalysis"),
-          usedWeb: true,
-          generatedAt: new Date().toISOString(),
-        };
-      }
-
-      setAiAnalysis({ ...parsed, usedWeb: true, generatedAt: new Date().toISOString() });
-      setAiStatus("done");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Error desconocido";
-      setAiError(msg);
-      setAiStatus("error");
-    }
-  };
-
-  // ── PANEL PRE-APUESTA: handlers ─────────────────────────────────────────
-  const openPreBet = (pick: PreBetPick) => {
-    setPreBetPick(pick);
-    setPreBetNote("");
-    setShowPreBet(true);
-    // Scroll suave al panel
-    setTimeout(() => {
-      document.getElementById("pre-bet-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    }, 100);
-  };
-
-  const sendPreBetToBankroll = (stake: number) => {
-    if (!preBetPick) return;
-    const newBet: BankBet = {
-      id: makeId(),
-      date: new Date().toISOString().slice(0, 10),
-      matchName: `${match.local || "Local"} vs ${match.visitante || "Visitante"}`,
-      pick: preBetPick.label + (preBetPick.line ? ` · ${preBetPick.line}` : ""),
-      market: preBetPick.marketValue,
-      stake: stake.toFixed(2),
-      odd: preBetPick.odd > 1 ? preBetPick.odd.toFixed(2) : "",
-      status: "pending",
-      source: "app",
-      notes: preBetNote,
-    };
-    setBankroll((prev) => ({ ...prev, bets: [newBet, ...prev.bets] }));
-    setShowPreBet(false);
-    setPreBetPick(null);
-    setPreBetNote("");
-    alert(`✅ Apuesta registrada: ${newBet.pick} · Stake: ${formatMoney(stake)}`);
-  };
-
-  const clearAll = () => {
-    if (!confirm("¿Seguro que quieres borrar todo el partido actual?")) return;
-    if (typeof window !== "undefined") {
-      // Borra cualquier guardado viejo/nuevo de esta app para que Limpiar sea total.
-      Object.keys(localStorage).forEach((key) => {
-        if (key.startsWith("analizador_") || key === STORAGE_KEY || key === "simpleApp") {
-          localStorage.removeItem(key);
-        }
-      });
-    }
-    setMatch({ local: "", visitante: "", oddLocal: "", oddDraw: "", oddVisit: "", localColor1: "#38bdf8", localColor2: "#ffffff", visitColor1: "#ef4444", visitColor2: "#111827", backgroundMode: "team", backgroundImage: "" });
-    setIndicators([]);
-    setLocalRecent(createRecentRows());
-    setVisitRecent(createRecentRows());
-    setHouseMarkets(emptyHouseMarkets());
-    setEliminationContext(emptyEliminationContext());
-    setRefereeContext(emptyRefereeContext());
-    setDominanceContext(emptyDominanceContext());
-    setMarketFocus(emptyMarketFocus());
-  };
-
-  // ── MEJORA 5: Calibración – persistencia y helpers ───────────────────────
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(CALIBRATION_STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as CalibrationState;
-      setCalibration(saved);
-    } catch { /* silencioso */ }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(calibration));
-  }, [calibration]);
-
-  const addOutcome = () => {
-    if (!outcomeDraft.matchName.trim()) { alert("Ingresa el nombre del partido."); return; }
-    const next: MatchOutcome = { ...outcomeDraft, id: makeId() };
-    setCalibration((prev) => ({ outcomes: [next, ...prev.outcomes] }));
-    setOutcomeDraft(emptyOutcomeDraft());
-  };
-
-  const deleteOutcome = (id: string) => {
-    if (!confirm("¿Eliminar este registro de resultado?")) return;
-    setCalibration((prev) => ({ outcomes: prev.outcomes.filter((o) => o.id !== id) }));
-  };
-
-  const prefillOutcomeDraft = () => {
-    const matchName = `${match.local || "Local"} vs ${match.visitante || "Visitante"}`;
-    const predictedPicks = [
-      ...results.slice(0, 3).map((p) => ({ label: p.label, marketValue: p.marketValue, line: p.line, score: p.blendedScore, grade: p.grade })),
-      ...housePicks.slice(0, 2).map((p) => ({ label: p.label, marketValue: p.marketValue, line: p.line, score: p.modelScore, grade: p.grade })),
-    ].slice(0, 5);
-    setOutcomeDraft((prev) => ({ ...prev, matchName, predictedPicks }));
-  };
-
-  const calibrationStats = useMemo(() => buildCalibrationStats(calibration.outcomes), [calibration.outcomes]);
-
-  const confidenceScore = useMemo(
-    () => buildConfidenceScore(indicators, localRecent, visitRecent, houseMarkets, refereeContext, marketFocus),
-    [indicators, localRecent, visitRecent, houseMarkets, refereeContext, marketFocus]
-  );
-
-  const lineMovementAnalysis = useMemo(() => analyzeLineMovement(lineMovements), [lineMovements]);
-
-  // ── Racha negativa y límite diario ───────────────────────────────────────
-  const losingStreak = useMemo(() => detectLosingStreak(bankroll.bets), [bankroll.bets]);
-  const dailyLossInfo = useMemo(() => getDailyLossInfo(bankroll.bets, bankrollStats.initialBank, toNumber(dailyLossLimitPct)), [bankroll.bets, bankrollStats.initialBank, dailyLossLimitPct]);
-
-  // ── Vincular bankroll con calibración: cuando se marca ganada/perdida ────
-  const updateBankBetStatusWithCalibration = (id: string, status: BetStatus) => {
-    const bet = bankroll.bets.find((b) => b.id === id);
-    setBankroll((prev) => ({
-      ...prev,
-      bets: prev.bets.map((b) => (b.id === id ? { ...b, status } : b)),
-    }));
-    // Si hay un outcome pendiente en calibración que coincida con el partido, actualizar automáticamente
-    if (bet && (status === "won" || status === "lost")) {
-      setCalibration((prev) => ({
-        outcomes: prev.outcomes.map((o) => {
-          if (o.matchName.toLowerCase() === bet.matchName.toLowerCase() && o.winner === "") {
-            return {
-              ...o,
-              notes: o.notes
-                ? o.notes
-                : `Apuesta ${status === "won" ? "ganada ✅" : "perdida ❌"}: ${bet.pick} (${bet.odd}x)`,
-            };
+        const vStart = rawText.indexOf("{");
+        if (vStart >= 0) {
+          let vDepth = 0, vEnd = -1;
+          for (let ci = vStart; ci < rawText.length; ci++) {
+            if (rawText[ci] === "{") vDepth++;
+            else if (rawText[ci] === "}") { vDepth--; if (vDepth === 0) { vEnd = ci; break; } }
           }
-          return o;
-        }),
+          if (vEnd > 0) vParsed = JSON.parse(rawText.slice(vStart, vEnd + 1));
+        }
+      } catch (_e) { /* use empty fallback */ }
+      const evals = vParsed.evaluaciones || [];
+      setPicks(prev => prev.map(p => {
+        const ev = evals.find(e => e.id === p.id);
+        if (!ev || !p.cuotaCasa) return p;
+        const vr = valueAndRisk(p.confianza, toNum(p.cuotaCasa));
+        return { ...p, ...vr, recomendacionIA: ev.recomendacion, alertaIA: ev.alerta };
       }));
-    }
+    } catch {}
+    setVerifyingValue(false);
+  }, [picks, match]);
+
+  // ── UPDATE PICK ODD ────────────────────────────────────────────────────
+  const updatePickOdd = (id, odd) => {
+    setPicks(prev => prev.map(p => {
+      if (p.id !== id) return p;
+      const vr = valueAndRisk(p.confianza, toNum(odd));
+      const bank = toNum(bankroll.inicial);
+      const stats = bankrollStats(bankroll);
+      const kb = bank > 0 ? kellyStake(p.confianza, toNum(odd), stats.currentBank || bank) : null;
+      return { ...p, cuotaCasa: odd, ...vr, kellyAmt: kb?.amount || 0, kellyLabel: kb?.label || "" };
+    }));
   };
 
-  // ── Historial de análisis: persistencia ─────────────────────────────────
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = localStorage.getItem(ANALYSIS_HISTORY_KEY);
-      if (!raw) return;
-      setAnalysisHistory(JSON.parse(raw) as AnalysisHistory);
-    } catch { /* silencioso */ }
-  }, []);
+  // ── TICKET ─────────────────────────────────────────────────────────────
+  const togglePickSel = (id) => setPicks(prev => prev.map(p => p.id === id ? { ...p, seleccionado: !p.seleccionado } : p));
+  const ticket = calcTicket(picks, ticketStake, esParlay);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(ANALYSIS_HISTORY_KEY, JSON.stringify(analysisHistory));
-  }, [analysisHistory]);
-
-  const saveToHistory = () => {
-    if (!match.local.trim() || !match.visitante.trim()) {
-      alert("Ingresa los nombres de los equipos antes de guardar en historial.");
-      return;
-    }
-    const topPicks = [
-      ...results.slice(0, 3).map((p) => ({ label: p.label + (p.line ? ` · ${p.line}` : ""), score: p.blendedScore, grade: p.grade })),
-      ...housePicks.slice(0, 2).map((p) => ({ label: p.label, score: p.modelScore, grade: p.grade })),
-    ].slice(0, 5);
-
-    const newItem: SavedAnalysis = {
+  // ── SAVE TICKET ────────────────────────────────────────────────────────
+  const saveTicket = () => {
+    const sel = picks.filter(p => p.seleccionado && toNum(p.cuotaCasa) > 1);
+    if (!sel.length) return;
+    const entry = {
       id: makeId(),
-      savedAt: new Date().toISOString(),
-      matchName: `${match.local} vs ${match.visitante}`,
-      profile: matchProfile.type,
-      topPicks,
-      snapshot: { match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext, marketFocus },
+      fecha: new Date().toISOString(),
+      partido: `${match.local} vs ${match.visitante}`,
+      picks: sel,
+      stake: ticketStake,
+      esParlay,
+      ...ticket,
+      estado: "pendiente"
     };
-    setAnalysisHistory((prev) => ({ items: [newItem, ...prev.items].slice(0, 15) }));
-    alert(`✅ Análisis de ${newItem.matchName} guardado en historial.`);
+    setHistorial(prev => [entry, ...prev].slice(0, 50));
+    // Also add to bankroll
+    const bets = sel.map(p => ({
+      ...emptyBet(),
+      id: makeId(),
+      partido: `${match.local} vs ${match.visitante}`,
+      pick: `${p.mercado} ${p.linea}`,
+      mercado: p.tipo,
+      stake: esParlay ? ticketStake : (toNum(ticketStake) / sel.length).toFixed(2),
+      cuota: p.cuotaCasa,
+      estado: "pendiente"
+    }));
+    setBankroll(prev => ({ ...prev, apuestas: [...bets, ...prev.apuestas] }));
+    alert(`✅ Ticket guardado: ${sel.length} picks`);
   };
 
-  const loadFromHistory = (item: SavedAnalysis) => {
-    if (!confirm(`¿Cargar el análisis de ${item.matchName}? Esto reemplazará el partido actual.`)) return;
-    const s = item.snapshot;
-    if (s.match) setMatch({ ...emptyMatch(), ...s.match });
-    if (Array.isArray(s.indicators)) setIndicators(s.indicators);
-    if (Array.isArray(s.localRecent)) setLocalRecent(s.localRecent);
-    if (Array.isArray(s.visitRecent)) setVisitRecent(s.visitRecent);
-    if (s.houseMarkets) setHouseMarkets({ ...emptyHouseMarkets(), ...s.houseMarkets });
-    if (s.eliminationContext) setEliminationContext({ ...emptyEliminationContext(), ...s.eliminationContext });
-    if (s.refereeContext) setRefereeContext({ ...emptyRefereeContext(), ...s.refereeContext });
-    if (s.dominanceContext) setDominanceContext({ ...emptyDominanceContext(), ...s.dominanceContext });
-    if (s.marketFocus) setMarketFocus({ ...emptyMarketFocus(), ...s.marketFocus });
-    setShowHistory(false);
-    alert(`📂 Análisis de ${item.matchName} cargado.`);
+  // ── BANKROLL ───────────────────────────────────────────────────────────
+  const addBet = () => {
+    if (!betDraft.partido.trim() || !betDraft.pick.trim() || toNum(betDraft.stake) <= 0 || toNum(betDraft.cuota) <= 1) {
+      alert("Completa: partido, pick, monto y cuota > 1"); return;
+    }
+    setBankroll(prev => ({ ...prev, apuestas: [{ ...betDraft, id: makeId() }, ...prev.apuestas] }));
+    setBetDraft(emptyBet());
+  };
+  const updateBetStatus = (id, estado) => setBankroll(prev => ({ ...prev, apuestas: prev.apuestas.map(b => b.id === id ? { ...b, estado } : b) }));
+  const deleteBet = (id) => { if (confirm("¿Eliminar apuesta?")) setBankroll(prev => ({ ...prev, apuestas: prev.apuestas.filter(b => b.id !== id) })); };
+  const stats = bankrollStats(bankroll);
+
+  // ── LOSING STREAK ─────────────────────────────────────────────────────
+  const lastSettled = bankroll.apuestas.filter(b => b.estado === "ganada" || b.estado === "perdida");
+  let streak = 0;
+  for (const b of lastSettled) { if (b.estado === "perdida") streak++; else break; }
+
+  // ── DAILY LOSS ─────────────────────────────────────────────────────────
+  const today = new Date().toISOString().slice(0, 10);
+  const todayLoss = Math.abs(Math.min(0, bankroll.apuestas.filter(b => b.fecha === today && (b.estado === "ganada" || b.estado === "perdida")).reduce((s, b) => s + betProfit(b), 0)));
+  const dailyLimitAmt = toNum(bankroll.inicial) * toNum(dailyLossLimit) / 100;
+  const dailyExceeded = dailyLimitAmt > 0 && todayLoss >= dailyLimitAmt;
+
+  // ── EXPORT ─────────────────────────────────────────────────────────────
+  const clearAll = () => {
+    if (!window.confirm("¿Limpiar partido actual? El bankroll e historial se conservan.")) return;
+    setMatch(emptyMatch());
+    setAiStatus("idle");
+    setAiResult(null);
+    setPicks([]);
+    setAiError("");
+    setMarketFilter("Todos");
+    setActiveTab("analisis");
   };
 
-  const deleteFromHistory = (id: string) => {
-    if (!confirm("¿Eliminar este análisis del historial?")) return;
-    setAnalysisHistory((prev) => ({ items: prev.items.filter((item) => item.id !== id) }));
-  };
+  const importRef = useRef<HTMLInputElement>(null);
 
-  const saveManual = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ match, indicators, localRecent, visitRecent, houseMarkets, eliminationContext, refereeContext, dominanceContext, marketFocus }));
-    alert("✅ Partido guardado");
-  };
-
-  const exportMatch = () => {
-    const fileName = `${match.local || "local"}_vs_${match.visitante || "visitante"}`
-      .replace(/[^a-zA-Z0-9_-]+/g, "_")
-      .toLowerCase();
-    const data: ExportShape = {
-      version: 5,
-      exportedAt: new Date().toISOString(),
-      match,
-      indicators,
-      localRecent,
-      visitRecent,
-      houseMarkets,
-      eliminationContext,
-      refereeContext,
-      dominanceContext,
-      marketFocus,
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${fileName}.json`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const importMatch = (file: File | null) => {
+  const importData = (file: File | null) => {
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = (e) => {
       try {
-        const data = JSON.parse(String(reader.result)) as Partial<ExportShape>;
-        if (!data.match || !Array.isArray(data.indicators)) throw new Error("Archivo inválido");
-
-        setMatch({
-          local: data.match.local || "",
-          visitante: data.match.visitante || "",
-          oddLocal: data.match.oddLocal || "",
-          oddDraw: data.match.oddDraw || "",
-          oddVisit: data.match.oddVisit || "",
-          localColor1: data.match.localColor1 || "#38bdf8",
-          localColor2: data.match.localColor2 || "#ffffff",
-          visitColor1: data.match.visitColor1 || "#ef4444",
-          visitColor2: data.match.visitColor2 || "#111827",
-          backgroundMode: data.match.backgroundMode || "team",
-          backgroundImage: data.match.backgroundImage || "",
-        });
-
-const importedIndicators: Indicator[] = Array.isArray(data.indicators)
-  ? data.indicators.map((item: Partial<Indicator>) => ({
-      id: item.id || makeId(),
-      team: (item.team as TeamSide) || "ambos",
-      period: (item.period as IndicatorPeriod) || "full",
-      market: getMarketValue(item.market || ""),
-      line: item.line || "",
-      record: item.record || "",
-      houseOdd: item.houseOdd || "",
-    }))
-  : [];
-
-setIndicators(importedIndicators);
-        setLocalRecent(Array.isArray(data.localRecent) ? data.localRecent.map((row) => ({ ...emptyRecentRow(), ...row, id: row.id || makeId() })) : createRecentRows());
-        setVisitRecent(Array.isArray(data.visitRecent) ? data.visitRecent.map((row) => ({ ...emptyRecentRow(), ...row, id: row.id || makeId() })) : createRecentRows());
-        setHouseMarkets({ ...emptyHouseMarkets(), ...(data.houseMarkets || {}) });
-        setEliminationContext({ ...emptyEliminationContext(), ...(data.eliminationContext || {}) });
-        setRefereeContext({ ...emptyRefereeContext(), ...(data.refereeContext || {}) });
-        setDominanceContext({ ...emptyDominanceContext(), ...(data.dominanceContext || {}) });
-        setMarketFocus({ ...emptyMarketFocus(), ...(data.marketFocus || {}) });
-
-        alert("📨 Partido importado");
+        const data = JSON.parse(e.target?.result as string);
+        if (data.match) setMatch({ ...emptyMatch(), ...data.match });
+        if (Array.isArray(data.picks)) setPicks(data.picks);
+        if (data.bankroll) setBankroll({ ...emptyBankroll(), ...data.bankroll });
+        if (Array.isArray(data.historial)) setHistorial(data.historial);
+        setAiStatus("idle");
+        setAiResult(null);
+        setActiveTab("analisis");
+        alert("✅ Partido importado correctamente.");
       } catch {
-        alert("❌ No pude importar ese archivo. Asegúrate de que sea un JSON exportado por la app.");
+        alert("❌ Archivo inválido. Asegúrate de importar un JSON exportado por esta app.");
       }
     };
     reader.readAsText(file);
   };
 
-
-
-  const inputClass =
-    "w-full rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-white outline-none backdrop-blur placeholder:text-slate-300 focus:border-sky-300 focus:ring-2 focus:ring-sky-400/30";
-  const selectClass =
-    "w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300";
-
-
-  const renderDominancePair = (
-    title: string,
-    overLineField: keyof DominanceContext,
-    overOddField: keyof DominanceContext,
-    underLineField: keyof DominanceContext,
-    underOddField: keyof DominanceContext,
-    overLines: string[],
-    underLines: string[]
-  ) => (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-      <h3 className="mb-3 font-black">{title}</h3>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <p className="text-xs text-slate-400">Over</p>
-          <select className={`${selectClass} mt-1`} value={String(dominanceContext[overLineField] || "")} onChange={(event) => setDominanceContext({ ...dominanceContext, [overLineField]: event.target.value })}>
-            {overLines.map((line) => <option key={line} value={line}>+{line}</option>)}
-          </select>
-          <input className={`${inputClass} mt-2`} inputMode="decimal" placeholder="Cuota over" value={String(dominanceContext[overOddField] || "")} onChange={(event) => setDominanceContext({ ...dominanceContext, [overOddField]: event.target.value })} />
-        </div>
-        <div>
-          <p className="text-xs text-slate-400">Under</p>
-          <select className={`${selectClass} mt-1`} value={String(dominanceContext[underLineField] || "")} onChange={(event) => setDominanceContext({ ...dominanceContext, [underLineField]: event.target.value })}>
-            {underLines.map((line) => <option key={line} value={line}>-{line}</option>)}
-          </select>
-          <input className={`${inputClass} mt-2`} inputMode="decimal" placeholder="Cuota under" value={String(dominanceContext[underOddField] || "")} onChange={(event) => setDominanceContext({ ...dominanceContext, [underOddField]: event.target.value })} />
-        </div>
-      </div>
-    </div>
-  );
-  const SelectNumber = ({ value, max, onChange, placeholder }: { value: string; max: number; onChange: (value: string) => void; placeholder: string }) => (
-    <select className={selectClass} value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">{placeholder}</option>
-      {NUMBER_OPTIONS(max).map((option) => (
-        <option key={option} value={option}>{option}</option>
-      ))}
-    </select>
-  );
-
-  const LineSelect = ({ value, options, onChange }: { value: string; options: string[]; onChange: (value: string) => void }) => (
-    <select className={selectClass} value={value} onChange={(event) => onChange(event.target.value)}>
-      {options.map((option) => (
-        <option key={option} value={option}>{option}</option>
-      ))}
-    </select>
-  );
-
-  const renderRecentBlock = (title: string, side: "local" | "visitante", rows: RecentRow[]) => (
-    <div className="rounded-3xl border border-white/10 bg-slate-950/35 p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h3 className="text-lg font-black">{title}</h3>
-          <p className="text-xs text-slate-300">Selects rápidos. Resultado G/E/P se calcula solo con GF y GC.</p>
-        </div>
-        <button
-          onClick={() => addRecentRow(side)}
-          className="rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/15"
-        >
-          + Partido
-        </button>
-      </div>
-
-      <div className="space-y-2">
-        {rows.map((row, index) => {
-          const result = getAutoResult(row);
-          return (
-            <div key={row.id} className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-white/5 p-3 sm:grid-cols-6">
-              {focusNeedsResult(marketFocus) ? (
-                <>
-                  <SelectNumber value={row.goalsFor} max={9} placeholder={`P${index + 1} GF`} onChange={(value) => updateRecent(side, row.id, "goalsFor", value)} />
-                  <SelectNumber value={row.goalsAgainst} max={9} placeholder="GC" onChange={(value) => updateRecent(side, row.id, "goalsAgainst", value)} />
-                </>
-              ) : null}
-              {focusEnabled(marketFocus, "corners") ? (
-                <>
-                  <SelectNumber value={row.cornersFor} max={20} placeholder="CF" onChange={(value) => updateRecent(side, row.id, "cornersFor", value)} />
-                  <SelectNumber value={row.cornersAgainst} max={20} placeholder="CC" onChange={(value) => updateRecent(side, row.id, "cornersAgainst", value)} />
-                </>
-              ) : null}
-              {focusEnabled(marketFocus, "cards") ? (
-                <>
-                  <SelectNumber value={row.cardsFor} max={10} placeholder="TF" onChange={(value) => updateRecent(side, row.id, "cardsFor", value)} />
-                  <SelectNumber value={row.cardsAgainst} max={10} placeholder="TC" onChange={(value) => updateRecent(side, row.id, "cardsAgainst", value)} />
-                </>
-              ) : null}
-              {focusNeedsResult(marketFocus) ? (
-                <div className="flex items-center justify-center rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 font-black text-white">
-                  {result || "—"}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-3 grid gap-2 text-xs text-slate-300 sm:grid-cols-3">
-        {focusNeedsResult(marketFocus) ? <span className="rounded-xl bg-white/5 px-3 py-2">GF/GC = goles a favor/en contra</span> : null}
-        {focusEnabled(marketFocus, "corners") ? <span className="rounded-xl bg-white/5 px-3 py-2">CF/CC = corners a favor/en contra</span> : null}
-        {focusEnabled(marketFocus, "cards") ? <span className="rounded-xl bg-white/5 px-3 py-2">TF/TC = tarjetas propias/rival</span> : null}
-      </div>
-    
-      {(() => {
-        const stats = buildRecentStats(rows);
-        const rb = resultBreakdown(rows);
-        return stats.count > 0 ? (
-          <div className="mt-4 rounded-2xl border border-sky-300/20 bg-sky-400/10 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h4 className="font-black text-sky-100">📌 Resumen de {stats.count} partidos</h4>
-              <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-slate-100">{rb.wins}G · {rb.draws}E · {rb.losses}P</span>
-            </div>
-            <div className="grid gap-2 text-xs sm:grid-cols-3">
-              {focusNeedsResult(marketFocus) ? <div className="rounded-xl bg-slate-950/45 p-3"><p className="text-slate-400">Goles prom.</p><b>{stats.goalsForAvg.toFixed(1)} GF / {stats.goalsAgainstAvg.toFixed(1)} GC</b></div> : null}
-              {focusEnabled(marketFocus, "corners") ? <div className="rounded-xl bg-slate-950/45 p-3"><p className="text-slate-400">Corners prom.</p><b>{stats.cornersForAvg.toFixed(1)} CF / {stats.cornersAgainstAvg.toFixed(1)} CC</b></div> : null}
-              {focusEnabled(marketFocus, "cards") ? <div className="rounded-xl bg-slate-950/45 p-3"><p className="text-slate-400">Tarjetas prom.</p><b>{stats.cardsForAvg.toFixed(1)} TF / {stats.cardsAgainstAvg.toFixed(1)} TC</b></div> : null}
-            </div>
-          </div>
-        ) : null;
-      })()}
-    </div>
-  );
-
-  const getHouseRangeStatus = (groupLabel: string, overLine: string, underLine: string) => {
-    const over = toNumber(overLine);
-    const under = toNumber(underLine);
-    if (!over || !under) return null;
-    const gap = Math.abs(under - over);
-    const isCorners = groupLabel.toLowerCase().includes("corner");
-    const isGoals = groupLabel.toLowerCase().includes("gol");
-    const tight = isCorners ? gap <= 3 : isGoals ? gap <= 1 : gap <= 1;
-    const comfy = isCorners ? gap >= 5 : isGoals ? gap >= 2 : gap >= 2;
-    if (tight) return { tone: "tight", text: `⚠️ Línea justa: la casa está encerrando el mercado entre ${overLine} y ${underLine}. Mejor no usar fuerte en parlay.` };
-    if (comfy) return { tone: "comfort", text: `🟢 Rango cómodo: hay más separación entre over/under (${overLine} ↔ ${underLine}).` };
-    return { tone: "neutral", text: `🟡 Rango medio: revisar value y registros antes de combinar.` };
+  const exportData = () => {
+    const data = { match, picks, bankroll, historial, exportedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url;
+    const matchName = match.local && match.visitante
+      ? `${match.local}_vs_${match.visitante}`.replace(/[^a-zA-Z0-9_áéíóúÁÉÍÓÚüÜñÑ-]/g, "_").slice(0, 50)
+      : "apuestas";
+    a.download = `${matchName}_${today}.json`; a.click(); URL.revokeObjectURL(url);
   };
 
-  const updateHouse = (field: keyof HouseMarket, value: string) => {
-    setHouseMarkets((prev) => ({ ...prev, [field]: value }));
-  };
+  // ── HELPERS ───────────────────────────────────────────────────────────
+  const gradeColor = (color) => color === "green" ? "text-emerald-400" : color === "yellow" ? "text-amber-400" : "text-rose-400";
+  const gradeBg = (color) => color === "green" ? "bg-emerald-400/15 border-emerald-400/30" : color === "yellow" ? "bg-amber-400/15 border-amber-400/30" : "bg-rose-400/15 border-rose-400/30";
+  const prioColor = (p) => p === "alta" ? "text-emerald-300 bg-emerald-400/10" : p === "media" ? "text-amber-300 bg-amber-400/10" : "text-slate-400 bg-slate-400/10";
+  const filteredPicks = picks.filter(p => matchesFilter(p, marketFilter));
 
-  const renderHouseMarket = (
-    title: string,
-    overLineField: keyof HouseMarket,
-    overOddField: keyof HouseMarket,
-    underLineField: keyof HouseMarket,
-    underOddField: keyof HouseMarket,
-    overOptions: string[],
-    underOptions: string[]
-  ) => (
-    <div className="rounded-3xl border border-white/10 bg-slate-950/35 p-4">
-      <h3 className="mb-3 text-lg font-black">{title}</h3>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-3">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-emerald-100">Over casa</p>
-          <div className="grid grid-cols-2 gap-2">
-            <LineSelect value={String(houseMarkets[overLineField])} options={overOptions} onChange={(value) => updateHouse(overLineField, value)} />
-            <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={String(houseMarkets[overOddField])} onChange={(event) => updateHouse(overOddField, event.target.value)} />
-          </div>
-        </div>
-        <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-3">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-rose-100">Under casa</p>
-          <div className="grid grid-cols-2 gap-2">
-            <LineSelect value={String(houseMarkets[underLineField])} options={underOptions} onChange={(value) => updateHouse(underLineField, value)} />
-            <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={String(houseMarkets[underOddField])} onChange={(event) => updateHouse(underOddField, event.target.value)} />
-          </div>
-        </div>
-      </div>
-      {(() => {
-        const status = getHouseRangeStatus(title, String(houseMarkets[overLineField]), String(houseMarkets[underLineField]));
-        return status ? (
-          <div className={`mt-3 rounded-2xl border px-3 py-2 text-xs font-bold ${status.tone === "tight" ? "border-amber-300/30 bg-amber-400/10 text-amber-100" : status.tone === "comfort" ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100" : "border-sky-300/30 bg-sky-400/10 text-sky-100"}`}>
-            {status.text}
-          </div>
-        ) : null;
-      })()}
-    </div>
-  );
+  // ── TABS ───────────────────────────────────────────────────────────────
+  const tabs = [
+    { id: "analisis", label: "🔍 Análisis", icon: "⚽" },
+    { id: "picks", label: "🎯 Picks", icon: "🎯" },
+    { id: "ticket", label: "🧾 Ticket", icon: "🧾" },
+    { id: "bankroll", label: "💼 Bankroll", icon: "💰" },
+    { id: "historial", label: "📚 Historial", icon: "📊" },
+  ];
 
-
-  const renderResultHouseMarket = () => (
-    <div className="rounded-3xl border border-white/10 bg-slate-950/35 p-4">
-      <h3 className="mb-3 text-lg font-black">🛡️ Resultado protegido</h3>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-3">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-sky-100">Local o empate 1X</p>
-          <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.dcLocalDrawOdd} onChange={(event) => updateHouse("dcLocalDrawOdd", event.target.value)} />
-        </div>
-        <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-3">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-sky-100">Empate o visitante X2</p>
-          <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.dcDrawVisitOdd} onChange={(event) => updateHouse("dcDrawVisitOdd", event.target.value)} />
-        </div>
-        <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-3">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-sky-100">Local o visitante 12</p>
-          <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.dcLocalVisitOdd} onChange={(event) => updateHouse("dcLocalVisitOdd", event.target.value)} />
-        </div>
-      </div>
-      <p className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">Estas cuotas alimentan picks de doble oportunidad y evitan depender solo de las cuotas 1X2.</p>
-    </div>
-  );
-
-  const renderHandicapHouseMarket = () => (
-    <div className="rounded-3xl border border-white/10 bg-slate-950/35 p-4">
-      <h3 className="mb-3 text-lg font-black">🧱 Handicap casa</h3>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-3">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-violet-100">Handicap local</p>
-          <div className="grid grid-cols-2 gap-2">
-            <LineSelect value={houseMarkets.handicapLocalLine} options={HANDICAP_LINES} onChange={(value) => updateHouse("handicapLocalLine", value)} />
-            <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.handicapLocalOdd} onChange={(event) => updateHouse("handicapLocalOdd", event.target.value)} />
-          </div>
-        </div>
-        <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-3">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-violet-100">Handicap visitante</p>
-          <div className="grid grid-cols-2 gap-2">
-            <LineSelect value={houseMarkets.handicapVisitLine} options={HANDICAP_LINES} onChange={(value) => updateHouse("handicapVisitLine", value)} />
-            <input className={selectClass} inputMode="decimal" placeholder="Cuota" value={houseMarkets.handicapVisitOdd} onChange={(event) => updateHouse("handicapVisitOdd", event.target.value)} />
-          </div>
-        </div>
-      </div>
-      <p className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">Puedes escoger desde +0.5 hasta +3.5 y desde -0.5 hasta -3.5. El motor toma esa línea y su cuota para value/probabilidad.</p>
-    </div>
-  );
-
-
-  const teamBackground = `
-    radial-gradient(circle at 15% 8%, ${match.localColor1}88, transparent 34%),
-    radial-gradient(circle at 85% 10%, ${match.visitColor1}88, transparent 32%),
-    radial-gradient(circle at 50% 95%, ${match.localColor2}30, transparent 28%),
-    #070b12
-  `;
-
-  const neonBackground = `
-    radial-gradient(circle at 20% 10%, ${match.localColor1}aa, transparent 28%),
-    radial-gradient(circle at 80% 5%, ${match.visitColor1}aa, transparent 30%),
-    radial-gradient(circle at 50% 70%, #a855f744, transparent 35%),
-    #020617
-  `;
-
-  const baseBackground =
-    match.backgroundMode === "dark"
-      ? "#070b12"
-      : match.backgroundMode === "neon"
-        ? neonBackground
-        : teamBackground;
-
+  // ═══════════════════════════════════════════════════════════════════════
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#070b12] text-white">
-      <div className="pointer-events-none fixed inset-0 z-0" style={{ background: baseBackground }} />
-      {match.backgroundImage.trim() ? (
-        <div
-          className="pointer-events-none fixed inset-0 z-[1] bg-cover bg-center opacity-45"
-          style={{ backgroundImage: `url(${match.backgroundImage.trim()})` }}
-        />
-      ) : null}
-      {match.backgroundMode === "stadium" && !match.backgroundImage.trim() ? (
-        <div
-          className="pointer-events-none fixed inset-0 z-[1] bg-cover bg-center opacity-35"
-          style={{ backgroundImage: `url(${BACKGROUND_PRESETS[0].value})` }}
-        />
-      ) : null}
-      <div className="pointer-events-none fixed inset-0 z-[2] bg-[linear-gradient(to_bottom,rgba(2,6,23,.15),rgba(2,6,23,.88)),radial-gradient(circle_at_50%_0%,rgba(255,255,255,.12),transparent_30%)] backdrop-blur-[1px]" />
+    <div style={{ fontFamily: "'Segoe UI', system-ui, sans-serif", background: "#030712", minHeight: "100vh", color: "#f1f5f9" }}>
+      {/* BG */}
+      <div style={{ position: "fixed", inset: 0, background: "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(99,102,241,.18), transparent)", pointerEvents: "none", zIndex: 0 }} />
 
-      <div className="relative z-10 mx-auto max-w-6xl px-4 py-6 pb-24">
-        <header className="mb-6">
-          <h1 className="text-3xl font-black tracking-tight sm:text-4xl">🔥ANALIZADOR RAPIDO H2H KAL🔥</h1>
-          <p className="mt-1 text-sm text-slate-300">Motor IA · Picks inteligentes · Value real · Kelly automático</p>
-        </header>
-
-        {/* ══════════════════════════════════════════════════════════════════
-            MOTOR IA — SECCIÓN PRINCIPAL
-        ══════════════════════════════════════════════════════════════════ */}
-        <section className="mb-6 overflow-hidden rounded-[2rem] border-2 border-sky-400/40 bg-gradient-to-br from-sky-500/20 via-slate-900/90 to-violet-500/20 p-1 shadow-2xl shadow-sky-500/20 backdrop-blur-xl">
-          <div className="rounded-[1.8rem] bg-slate-950/80 p-5">
-
-            {/* Header */}
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.35em] text-sky-300/80">Motor principal</p>
-                <h2 className="mt-1 text-3xl font-black">🤖 Análisis IA del partido</h2>
-                <p className="mt-1 text-sm text-slate-400">La IA busca los datos, analiza ambos equipos y genera los mejores picks. Tú solo pones las cuotas.</p>
-              </div>
-              {aiMotor.status !== "idle" && (
-                <button onClick={() => setAiMotor({ status: "idle", matchName: "", competition: "Liga", picks: [], context: "", pronostico: "", errorMsg: "" })}
-                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-slate-300">
-                  🔄 Nuevo partido
-                </button>
-              )}
+      {/* HEADER */}
+      <header style={{ borderBottom: "1px solid rgba(99,102,241,.2)", background: "rgba(3,7,18,.8)", backdropFilter: "blur(20px)", position: "sticky", top: 0, zIndex: 50 }}>
+        <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 16px", height: 64, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 28 }}>⚽</span>
+            <div>
+              <div style={{ fontWeight: 900, fontSize: 18, letterSpacing: "-.02em", color: "#e0e7ff" }}>BetAnalyzer KAL <span style={{ color: "#818cf8" }}>PRO</span></div>
+              <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase" }}>IA Predictiva · Gestión de Banca</div>
             </div>
-
-            {/* Inputs del partido */}
-            {(aiMotor.status === "idle" || aiMotor.status === "error") && (
-              <div className="space-y-3">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <input className={inputClass} placeholder="🏠 Equipo local (ej: Barcelona)" value={match.local} onChange={(e) => setMatch({ ...match, local: e.target.value })} />
-                  <input className={inputClass} placeholder="✈️ Equipo visitante (ej: Real Madrid)" value={match.visitante} onChange={(e) => setMatch({ ...match, visitante: e.target.value })} />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {["Liga", "Champions", "Copa", "Eliminatoria", "Amistoso"].map((c) => (
-                    <button key={c} onClick={() => setAiMotor((prev) => ({ ...prev, competition: c }))}
-                      className={`rounded-xl px-3 py-2 text-xs font-black ${aiMotor.competition === c ? "bg-sky-400 text-sky-950" : "border border-white/10 bg-white/5 text-slate-300"}`}>
-                      {c}
-                    </button>
-                  ))}
-                </div>
-                {aiMotor.status === "error" && (
-                  <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-3">
-                    <p className="text-sm font-black text-rose-100">❌ {aiMotor.errorMsg}</p>
-                    {retryCountdown > 0 && retryAction === "runAI" && (
-                      <div className="mt-2 flex items-center gap-2">
-                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-700">
-                          <div className="h-full rounded-full bg-amber-400 transition-all duration-1000"
-                            style={{ width: `${(retryCountdown / 30) * 100}%` }} />
-                        </div>
-                        <span className="text-xs font-black text-amber-300 tabular-nums">{retryCountdown}s</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                <button onClick={runAIMotor}
-                  disabled={!match.local.trim() || !match.visitante.trim() || (retryCountdown > 0 && retryAction === "runAI")}
-                  className="w-full rounded-2xl bg-gradient-to-r from-sky-400 to-violet-400 py-4 font-black text-slate-950 shadow-xl shadow-sky-500/30 disabled:opacity-40 text-lg">
-                  {retryCountdown > 0 && retryAction === "runAI"
-                    ? `⏳ Espera ${retryCountdown}s para reintentar...`
-                    : aiMotor.status === "error" ? "🔄 Reintentar análisis" : "⚡ Analizar partido con IA"}
-                </button>
-              </div>
-            )}
-
-            {/* Loading states */}
-            {(aiMotor.status === "searching" || aiMotor.status === "analyzing" || aiMotor.status === "verifying") && (
-              <div className="space-y-4 py-6 text-center">
-                <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-sky-400 border-t-transparent" />
-                <p className="font-black text-sky-200 text-lg">
-                  {aiMotor.status === "searching" ? "🌐 Buscando datos en la web..." :
-                   aiMotor.status === "analyzing" ? "🤖 Analizando partido..." :
-                   "🔍 Verificando value de las cuotas..."}
-                </p>
-                <p className="text-xs text-slate-400">
-                  {aiMotor.status === "searching" ? "Forma reciente, bajas, estadísticas de corners y tarjetas..." :
-                   aiMotor.status === "verifying" ? "Calculando edge real y stake Kelly óptimo..." : ""}
-                </p>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-                  <div className="h-full animate-pulse rounded-full bg-gradient-to-r from-sky-400 to-violet-400"
-                    style={{ width: aiMotor.status === "searching" ? "35%" : aiMotor.status === "verifying" ? "85%" : "60%" }} />
-                </div>
-              </div>
-            )}
-
-            {/* Resultado: contexto + picks */}
-            {(aiMotor.status === "awaiting_odds" || aiMotor.status === "done") && (
-              <div className="space-y-4">
-                {/* Contexto encontrado */}
-                <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-4">
-                  <p className="mb-1 text-xs font-black uppercase tracking-widest text-sky-200">📋 Datos encontrados</p>
-                  <p className="text-sm leading-relaxed text-slate-200">{aiMotor.context}</p>
-                  {aiMotor.pronostico && (
-                    <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-400/10 p-3">
-                      <p className="text-xs font-black text-amber-200 mb-1">🎯 Pronóstico</p>
-                      <p className="text-sm text-slate-200">{aiMotor.pronostico}</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Picks */}
-                <div>
-                  <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-300">
-                    ⚡ Picks sugeridos — {aiMotor.status === "awaiting_odds" ? "Ingresa las cuotas de tu casa de apuestas" : "Análisis de value completado"}
-                  </p>
-                  <div className="space-y-3">
-                    {aiMotor.picks.filter((p) => p.status !== "discarded").map((pick) => (
-                      <div key={pick.id} className={`rounded-2xl border p-4 transition-all ${
-                        pick.status === "confirmed" ? "border-emerald-300/40 bg-emerald-400/10" :
-                        pick.status === "discarded" ? "border-slate-300/10 bg-slate-800/20 opacity-50" :
-                        pick.priority === "alta" ? "border-sky-300/30 bg-sky-400/10" :
-                        pick.priority === "media" ? "border-amber-300/20 bg-amber-400/8" :
-                        "border-white/10 bg-white/5"}`}>
-
-                        <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${
-                                pick.priority === "alta" ? "bg-sky-400/30 text-sky-100" :
-                                pick.priority === "media" ? "bg-amber-400/30 text-amber-100" :
-                                "bg-slate-400/20 text-slate-300"}`}>
-                                {pick.priority === "alta" ? "🔥 ALTA" : pick.priority === "media" ? "🟡 MEDIA" : "🔵 BAJA"}
-                              </span>
-                              <span className="text-xs text-slate-400">Confianza IA: {pick.confidence}%</span>
-                              {pick.status === "confirmed" && <span className="text-xs font-black text-emerald-300">✅ Confirmado con value</span>}
-                            </div>
-                            <p className="mt-1 text-lg font-black">{pick.label}{pick.line ? ` · ${pick.line}` : ""}</p>
-                            <p className="text-xs text-slate-400 mt-0.5">{pick.reasoning}</p>
-                          </div>
-                          <button onClick={() => discardAIPick(pick.id)} className="text-xs text-slate-500 hover:text-rose-300">✕ Descartar</button>
-                        </div>
-
-                        {/* Cuota input */}
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="flex items-center gap-2 flex-1">
-                            <input
-                              className="w-32 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-sky-400"
-                              placeholder="Cuota (ej: 1.85)"
-                              inputMode="decimal"
-                              value={pick.houseOdd}
-                              onChange={(e) => updateAIPickOdd(pick.id, e.target.value)}
-                            />
-                            {toNumber(pick.houseOdd) > 1 && (
-                              <span className="text-xs text-slate-400">
-                                Prob. implícita: {(100 / toNumber(pick.houseOdd)).toFixed(1)}%
-                              </span>
-                            )}
-                          </div>
-                          {pick.status === "confirmed" && pick.kellyStakeAmt > 0 && (
-                            <button onClick={() => sendAIPickToBankroll(pick)}
-                              className="rounded-xl bg-emerald-400 px-3 py-2 text-xs font-black text-emerald-950">
-                              💰 Apostar {formatMoney(pick.kellyStakeAmt)}
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Veredicto de value */}
-                        {pick.valueVerdict && (
-                          <div className={`mt-2 rounded-xl border px-3 py-2 text-xs font-bold ${
-                            pick.status === "confirmed" ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-200" :
-                            "border-rose-300/30 bg-rose-400/10 text-rose-200"}`}>
-                            {pick.valueVerdict}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Botón segunda pasada */}
-                {aiMotor.status === "awaiting_odds" && aiMotor.picks.some((p) => toNumber(p.houseOdd) > 1) && (
-                  <div className="space-y-2">
-                    {retryCountdown > 0 && retryAction === "verify" && (
-                      <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 p-3">
-                        <p className="text-xs font-black text-amber-200">⏳ Límite de API alcanzado — reintentando en {retryCountdown}s</p>
-                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-700">
-                          <div className="h-full rounded-full bg-amber-400 transition-all duration-1000"
-                            style={{ width: `${(retryCountdown / 30) * 100}%` }} />
-                        </div>
-                      </div>
-                    )}
-                    <button onClick={verifyOddsWithAI}
-                      disabled={retryCountdown > 0 && retryAction === "verify"}
-                      className="w-full rounded-2xl bg-gradient-to-r from-emerald-400 to-teal-400 py-4 font-black text-emerald-950 shadow-xl shadow-emerald-500/20 text-lg disabled:opacity-40 disabled:cursor-not-allowed">
-                      {retryCountdown > 0 && retryAction === "verify"
-                        ? `⏳ Espera ${retryCountdown}s...`
-                        : `🔍 Verificar value con IA (${aiMotor.picks.filter((p) => toNumber(p.houseOdd) > 1).length} picks con cuota)`}
-                    </button>
-                  </div>
-                )}
-
-                {/* Resumen done */}
-                {aiMotor.status === "done" && (
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-3 text-center">
-                      <p className="text-2xl font-black text-emerald-100">{aiMotor.picks.filter((p) => p.status === "confirmed").length}</p>
-                      <p className="text-xs text-slate-400">Con value real ✅</p>
-                    </div>
-                    <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-3 text-center">
-                      <p className="text-2xl font-black text-amber-100">{aiMotor.picks.filter((p) => p.status === "pending_odd" && p.valueVerdict).length}</p>
-                      <p className="text-xs text-slate-400">Value marginal 🟡</p>
-                    </div>
-                    <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-3 text-center">
-                      <p className="text-2xl font-black text-rose-100">{aiMotor.picks.filter((p) => p.status === "discarded").length}</p>
-                      <p className="text-xs text-slate-400">Descartados ❌</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
-        </section>
-
-        {/* ══════════════════════════════════════════════════════════════════
-            HERRAMIENTAS AVANZADAS — PANEL COMPACTO DESPLEGABLE
-        ══════════════════════════════════════════════════════════════════ */}
-        <div className="mb-6">
-          <button
-            onClick={() => setShowToolsPanel((v) => !v)}
-            className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-5 py-4 font-black text-slate-300 backdrop-blur-xl"
-          >
-            <span>⚙️ Herramientas avanzadas (análisis estadístico, bankroll, historial, Kelly, calibración)</span>
-            <span className="text-xl">{showToolsPanel ? "▲" : "▼"}</span>
-          </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={() => setExpertMode(v => !v)} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: `1px solid ${expertMode ? "rgba(99,102,241,.5)" : "rgba(255,255,255,.1)"}`, background: expertMode ? "rgba(99,102,241,.2)" : "transparent", color: expertMode ? "#a5b4fc" : "#64748b", cursor: "pointer", fontWeight: 700 }}>
+              {expertMode ? "🧠 Experto" : "📊 Básico"}
+            </button>
+            <button onClick={clearAll} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(239,68,68,.3)", background: "rgba(239,68,68,.1)", color: "#f87171", cursor: "pointer", fontWeight: 700 }}>🗑 Nuevo partido</button>
+            <button onClick={() => importRef.current?.click()} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.1)", color: "#7dd3fc", cursor: "pointer", fontWeight: 700 }}>📂 Importar</button>
+            <button onClick={exportData} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(255,255,255,.1)", background: "transparent", color: "#64748b", cursor: "pointer", fontWeight: 700 }}>⬇ Export</button>
+            <input ref={importRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => importData(e.target.files?.[0] || null)} />
+          </div>
         </div>
+      </header>
 
-        {showToolsPanel && (
-          <div className="space-y-5">
+      {/* TABS */}
+      <div style={{ borderBottom: "1px solid rgba(255,255,255,.06)", background: "rgba(3,7,18,.6)", backdropFilter: "blur(10px)", position: "sticky", top: 64, zIndex: 40 }}>
+        <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 16px", display: "flex", gap: 4, overflowX: "auto" }}>
+          {tabs.map(t => (
+            <button key={t.id} onClick={() => setActiveTab(t.id)} style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", border: "none", background: "transparent", color: activeTab === t.id ? "#818cf8" : "#475569", cursor: "pointer", borderBottom: `2px solid ${activeTab === t.id ? "#818cf8" : "transparent"}`, transition: "all .15s" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
+      <main style={{ maxWidth: 900, margin: "0 auto", padding: "24px 16px 80px", position: "relative", zIndex: 1 }}>
 
-        <section className="mb-5 overflow-hidden rounded-[2rem] border border-emerald-300/20 bg-gradient-to-br from-emerald-400/15 via-slate-900/75 to-sky-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
-          <div className="rounded-[1.8rem] bg-slate-950/50 p-5">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.35em] text-emerald-200/80">Control real de dinero</p>
-                <h2 className="mt-1 text-3xl font-black">💼 Bankroll tracker</h2>
-                <p className="mt-1 text-sm text-slate-300">Este bloque NO se borra con Limpiar. Solo con Reset bankroll.</p>
+        {/* ── TAB: ANÁLISIS ──────────────────────────────────────────────── */}
+        {activeTab === "analisis" && (
+          <div>
+            {/* Match Input */}
+            <section style={{ background: "rgba(30,27,75,.4)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 20, padding: 24, marginBottom: 20 }}>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".12em", textTransform: "uppercase", color: "#818cf8", marginBottom: 4 }}>Datos del Partido</div>
+                <h2 style={{ fontSize: 22, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>⚽Registra el Partido⚽</h2>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={exportBankroll} className="rounded-2xl bg-emerald-400 px-4 py-3 font-black text-emerald-950">🗃️ Exportar bank</button>
-                <button onClick={() => bankrollImportRef.current?.click()} className="rounded-2xl bg-sky-400 px-4 py-3 font-black text-sky-950">📨 Importar bank</button>
-                <button onClick={resetBankroll} className="rounded-2xl bg-rose-500 px-4 py-3 font-black text-white">🧨 Reset bankroll</button>
-                <button onClick={() => setShowKellyPanel((v) => !v)} className="rounded-2xl bg-violet-400 px-4 py-3 font-black text-violet-950">🎯 Kelly</button>
-                <input ref={bankrollImportRef} type="file" accept="application/json" className="hidden" onChange={(event) => importBankroll(event.target.files?.[0] || null)} />
-              </div>
-            </div>
-
-            {/* ── Alerta de racha negativa ──────────────────────────────── */}
-            {losingStreak.alert && (
-              <div className="mb-4 rounded-2xl border border-rose-400/40 bg-rose-500/15 p-4">
-                <p className="font-black text-rose-100">{losingStreak.message}</p>
-                <p className="mt-1 text-xs text-rose-200/70">Tu método sigue siendo válido — las rachas malas son parte del juego. Pausa, analiza y vuelve con calma.</p>
-              </div>
-            )}
-
-            {/* ── Alerta de límite diario ───────────────────────────────── */}
-            {dailyLossInfo.message && (
-              <div className={`mb-4 rounded-2xl border p-4 ${dailyLossInfo.exceeded ? "border-rose-400/40 bg-rose-500/15" : "border-amber-400/40 bg-amber-500/15"}`}>
-                <p className={`font-black ${dailyLossInfo.exceeded ? "text-rose-100" : "text-amber-100"}`}>{dailyLossInfo.message}</p>
-              </div>
-            )}
-
-            {/* ── Config límite diario ──────────────────────────────────── */}
-            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3">
-              <p className="text-xs font-bold text-slate-300">🛡️ Límite de pérdida diaria:</p>
-              <select className="rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-bold text-white outline-none" value={dailyLossLimitPct} onChange={(e) => setDailyLossLimitPct(e.target.value)}>
-                {["5","8","10","15","20","25"].map((v) => <option key={v} value={v}>{v}% del bank ({bankrollStats.initialBank > 0 ? formatMoney((bankrollStats.initialBank * Number(v)) / 100) : "—"})</option>)}
-              </select>
-              {dailyLossInfo.limitAmount > 0 && (
-                <p className="text-xs text-slate-400">Perdido hoy: <span className={dailyLossInfo.exceeded ? "font-black text-rose-300" : "text-white"}>{formatMoney(dailyLossInfo.todayLoss)}</span> / {formatMoney(dailyLossInfo.limitAmount)}</p>
-              )}
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-5">
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs text-slate-400">Bank inicial</p>
-                <input className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xl font-black text-white outline-none" inputMode="decimal" placeholder="0.00" value={bankroll.initialBank} onChange={(event) => setBankroll((prev) => ({ ...prev, initialBank: event.target.value }))} />
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs text-slate-400">Bank actual</p>
-                <p className="mt-2 text-3xl font-black text-emerald-100">{formatMoney(bankrollStats.currentBank)}</p>
-              </div>
-              <div className={`rounded-2xl border border-white/10 bg-white/10 p-4 ${bankrollStats.profit >= 0 ? "text-emerald-100" : "text-rose-100"}`}>
-                <p className="text-xs text-slate-400">Ganancia / pérdida</p>
-                <p className="mt-2 text-3xl font-black">{bankrollStats.profit >= 0 ? "+" : ""}{formatMoney(bankrollStats.profit)}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs text-slate-400">ROI</p>
-                <p className="mt-2 text-3xl font-black text-sky-100">{bankrollStats.roi.toFixed(1)}%</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs text-slate-400">Acierto</p>
-                <p className="mt-2 text-3xl font-black text-violet-100">{bankrollStats.winrate.toFixed(1)}%</p>
-                <p className="text-xs text-slate-400">{bankrollStats.wins}G / {bankrollStats.losses}P · Pend: {bankrollStats.pending}</p>
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-4 lg:grid-cols-3">
-              <div className="rounded-3xl border border-white/10 bg-slate-950/45 p-4 lg:col-span-2">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-xl font-black">📈 Curva del bank</h3>
-                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold">Stake total: {formatMoney(bankrollStats.totalStake)}</span>
-                </div>
-                <svg viewBox="0 0 600 180" className="h-48 w-full overflow-visible rounded-2xl bg-white/5 p-3">
-                  <defs>
-                    <linearGradient id="bankLine" x1="0" x2="1" y1="0" y2="0">
-                      <stop offset="0%" stopColor="#34d399" />
-                      <stop offset="100%" stopColor="#38bdf8" />
-                    </linearGradient>
-                  </defs>
-                  {(() => {
-                    const points = bankrollStats.equityPoints.length >= 2 ? bankrollStats.equityPoints : [bankrollStats.initialBank || 0, bankrollStats.currentBank || 0];
-                    const min = Math.min(...points, bankrollStats.initialBank || 0);
-                    const max = Math.max(...points, bankrollStats.initialBank || 0, min + 1);
-                    const coords = points.map((value, index) => {
-                      const x = points.length === 1 ? 20 : 20 + (index * 560) / (points.length - 1);
-                      const y = 150 - ((value - min) / Math.max(1, max - min)) * 120;
-                      return `${x},${y}`;
-                    }).join(" ");
-                    return <polyline points={coords} fill="none" stroke="url(#bankLine)" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />;
-                  })()}
-                  <line x1="20" y1="150" x2="580" y2="150" stroke="rgba(255,255,255,.15)" strokeWidth="2" />
-                </svg>
-              </div>
-
-              <div className="rounded-3xl border border-white/10 bg-slate-950/45 p-4">
-                <h3 className="text-xl font-black">🧠 App vs Manual</h3>
-                <div className="mt-4 space-y-4">
-                  {bankrollStats.sourceStats.map((item) => (
-                    <div key={item.source}>
-                      <div className="mb-1 flex justify-between text-sm">
-                        <span className="font-bold">{item.source === "app" ? "🤖 Picks app" : "🧍 Picks manuales"}</span>
-                        <span className={item.profit >= 0 ? "text-emerald-200" : "text-rose-200"}>{item.profit >= 0 ? "+" : ""}{formatMoney(item.profit)} · ROI {item.roi.toFixed(1)}%</span>
-                      </div>
-                      <div className="h-3 overflow-hidden rounded-full bg-white/10">
-                        <div className={`h-full ${item.profit >= 0 ? "bg-emerald-400" : "bg-rose-400"}`} style={{ width: `${clamp(Math.abs(item.roi), 4, 100)}%` }} />
-                      </div>
-                      <p className="mt-1 text-xs text-slate-400">{item.total} apuestas · {item.wins} ganadas</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-3xl border border-white/10 bg-slate-950/45 p-4">
-              <h3 className="text-xl font-black">📜 Historial rápido</h3>
-              <div className="mt-3 space-y-2">
-                {bankroll.bets.length === 0 ? <p className="text-sm text-slate-300">Sin apuestas registradas todavía.</p> : null}
-                {bankroll.bets.slice(0, 8).map((bet) => {
-                  const profit = betProfit(bet);
-                  return (
-                    <div key={bet.id} className="grid gap-3 rounded-2xl border border-white/10 bg-white/5 p-3 lg:grid-cols-[1fr_auto]">
-                      <div>
-                        <p className="text-xs text-slate-400">{bet.date} · {bet.source === "app" ? "🤖 App" : "🧍 Manual"} · {bet.market || "Sin mercado"}</p>
-                        <p className="font-black">{bet.matchName}</p>
-                        <p className="text-sm text-slate-300">{bet.pick} · Stake {bet.stake} · Cuota {bet.odd}</p>
-                        {bet.notes ? <p className="mt-1 text-xs text-slate-400">Nota: {bet.notes}</p> : null}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                        <span className={`rounded-xl px-3 py-2 text-sm font-black ${bet.status === "won" ? "bg-emerald-400/20 text-emerald-100" : bet.status === "lost" ? "bg-rose-400/20 text-rose-100" : bet.status === "void" ? "bg-slate-400/20 text-slate-100" : "bg-amber-400/20 text-amber-100"}`}>{bet.status === "won" ? `+${formatMoney(profit)}` : bet.status === "lost" ? formatMoney(profit) : bet.status === "void" ? "Nula" : "Pendiente"}</span>
-                        <button onClick={() => updateBankBetStatusWithCalibration(bet.id, "won")} className="rounded-lg bg-emerald-500/20 px-2 py-1 text-xs font-bold text-emerald-100">✅</button>
-                        <button onClick={() => updateBankBetStatusWithCalibration(bet.id, "lost")} className="rounded-lg bg-rose-500/20 px-2 py-1 text-xs font-bold text-rose-100">❌</button>
-                        <button onClick={() => updateBankBetStatusWithCalibration(bet.id, "void")} className="rounded-lg bg-slate-500/20 px-2 py-1 text-xs font-bold text-slate-100">↩️</button>
-                        <button onClick={() => deleteBankBet(bet.id)} className="rounded-lg bg-white/10 px-2 py-1 text-xs font-bold text-white">🗑️</button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4 flex flex-wrap gap-3">
-            <button onClick={saveManual} className="rounded-2xl bg-emerald-500 px-4 py-3 font-bold text-emerald-950 shadow-lg shadow-emerald-500/20">💾 Guardar</button>
-            <button onClick={saveToHistory} className="rounded-2xl bg-indigo-400 px-4 py-3 font-bold text-indigo-950 shadow-lg shadow-indigo-400/20">📂 Al historial</button>
-            <button onClick={clearAll} className="rounded-2xl bg-rose-500 px-4 py-3 font-bold text-white shadow-lg shadow-rose-500/20">🧹 Limpiar</button>
-            <button onClick={() => importRef.current?.click()} className="rounded-2xl bg-sky-400 px-4 py-3 font-bold text-sky-950 shadow-lg shadow-sky-400/20">📨 Importar</button>
-            <button onClick={exportMatch} className="rounded-2xl bg-violet-400 px-4 py-3 font-bold text-violet-950 shadow-lg shadow-violet-400/20">🗃️ Exportar</button>
-            <input ref={importRef} type="file" accept="application/json" className="hidden" onChange={(event) => importMatch(event.target.files?.[0] || null)} />
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <input className={inputClass} placeholder="🛡️ Local" value={match.local} onChange={(event) => setMatch({ ...match, local: event.target.value })} />
-            <input className={inputClass} placeholder="🚌 Visitante" value={match.visitante} onChange={(event) => setMatch({ ...match, visitante: event.target.value })} />
-            <input className={inputClass} inputMode="decimal" placeholder="💰 Cuota Local🏡" value={match.oddLocal} onChange={(event) => setMatch({ ...match, oddLocal: event.target.value })} />
-            <input className={inputClass} inputMode="decimal" placeholder="💰 Empate⚔️" value ={match.oddDraw} onChange={(event) => setMatch({ ...match, oddDraw: event.target.value })} />
-            <input className={inputClass} inputMode="decimal" placeholder="💰 Cuota Visitante🛩️" value={match.oddVisit} onChange={(event) => setMatch({ ...match, oddVisit: event.target.value })} />
-          </div>
-
-          {/* ── BOTÓN ANÁLISIS IA ────────────────────────────────────────── */}
-          {match.local.trim() && match.visitante.trim() && (
-            <div className="mt-4 flex flex-wrap items-center gap-3 rounded-2xl border border-sky-300/20 bg-sky-400/10 p-3">
-              <div className="flex-1">
-                <p className="text-sm font-black text-sky-100">🤖 Análisis IA del partido</p>
-                <p className="text-xs text-slate-400">Claude analiza la previa, perfiles, pronóstico y value de las cuotas</p>
-              </div>
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-300">
-                <input type="checkbox" checked={useWebSearch} onChange={(e) => setUseWebSearch(e.target.checked)} className="accent-sky-400" />
-                🌐 Búsqueda web
-              </label>
-              <button
-                onClick={runAIAnalysis}
-                disabled={aiStatus === "loading_web" || aiStatus === "loading_ai"}
-                className="rounded-2xl bg-sky-400 px-5 py-3 font-black text-sky-950 shadow-lg shadow-sky-400/20 disabled:opacity-50"
-              >
-                {aiStatus === "loading_web" ? "🌐 Buscando..." : aiStatus === "loading_ai" ? "🤖 Analizando..." : "⚡ Analizar con IA"}
-              </button>
-            </div>
-          )}
-
-<div className="flex flex-wrap gap-2">
-  <button
-    onClick={() => autoFillFromAPIFootball(5)}
-    disabled={apiFootballStatus === "loading" || !match.local || !match.visitante}
-    className="rounded-2xl border border-emerald-300/30 bg-emerald-400/15 px-4 py-3 font-black text-emerald-100 disabled:opacity-50"
-  >
-    {apiFootballStatus === "loading" ? "⏳ Cargando datos..." : "⚽ Auto-Fill API-Football"}
-  </button>
-  {apiFootballStatus === "done" && (
-    <span className="self-center text-xs text-emerald-300">✅ Datos cargados automáticamente</span>
-  )}
-  {apiFootballStatus === "error" && (
-    <span className="self-center text-xs text-rose-300">❌ {apiFootballError}</span>
-  )}
-</div>
-
-          <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/35 p-4">
-            <p className="mb-3 text-sm font-black text-slate-100">🎨 Colores visuales para banner/escudos</p>
-            <div className="grid gap-3 sm:grid-cols-4">
-              <label className="rounded-xl bg-white/5 p-3 text-xs text-slate-300">Color 1 local
-                <input type="color" className="mt-2 h-10 w-full cursor-pointer rounded-lg bg-transparent" value={match.localColor1} onChange={(event) => setMatch({ ...match, localColor1: event.target.value })} />
-              </label>
-              <label className="rounded-xl bg-white/5 p-3 text-xs text-slate-300">Color 2 local
-                <input type="color" className="mt-2 h-10 w-full cursor-pointer rounded-lg bg-transparent" value={match.localColor2} onChange={(event) => setMatch({ ...match, localColor2: event.target.value })} />
-              </label>
-              <label className="rounded-xl bg-white/5 p-3 text-xs text-slate-300">Color 1 visitante
-                <input type="color" className="mt-2 h-10 w-full cursor-pointer rounded-lg bg-transparent" value={match.visitColor1} onChange={(event) => setMatch({ ...match, visitColor1: event.target.value })} />
-              </label>
-              <label className="rounded-xl bg-white/5 p-3 text-xs text-slate-300">Color 2 visitante
-                <input type="color" className="mt-2 h-10 w-full cursor-pointer rounded-lg bg-transparent" value={match.visitColor2} onChange={(event) => setMatch({ ...match, visitColor2: event.target.value })} />
-              </label>
-            </div>
-
-            <div className="mt-4 grid gap-3 lg:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 lg:col-span-1">
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-300">Fondo visual</p>
-                <select
-                  className={selectClass}
-                  value={match.backgroundMode}
-                  onChange={(event) => setMatch({ ...match, backgroundMode: event.target.value as BackgroundMode })}
-                >
-                  <option value="team">Gradiente por equipos</option>
-                  <option value="stadium">Estadio + colores</option>
-                  <option value="neon">Neón deportivo</option>
-                  <option value="dark">Oscuro limpio</option>
-                </select>
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-3 lg:col-span-2">
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-300">Imagen de fondo opcional</p>
-                <input
-                  className={inputClass}
-                  placeholder="Pega URL de imagen o usa un preset"
-                  value={match.backgroundImage}
-                  onChange={(event) => setMatch({ ...match, backgroundImage: event.target.value })}
-                />
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {BACKGROUND_PRESETS.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => setMatch({ ...match, backgroundMode: "stadium", backgroundImage: preset.value })}
-                      className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-bold text-slate-100 hover:bg-white/15"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setMatch({ ...match, backgroundImage: "" })}
-                    className="rounded-full border border-rose-300/20 bg-rose-400/10 px-3 py-1 text-xs font-bold text-rose-100 hover:bg-rose-400/20"
-                  >
-                    Quitar imagen
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 p-3">
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-300">Presets rápidos de colores</p>
-              <div className="flex flex-wrap gap-2">
-                {TEAM_COLOR_PRESETS.map((preset) => (
-                  <button
-                    key={preset.label}
-                    type="button"
-                    onClick={() =>
-                      setMatch({
-                        ...match,
-                        localColor1: preset.local1,
-                        localColor2: preset.local2,
-                        visitColor1: preset.visit1,
-                        visitColor2: preset.visit2,
-                        backgroundMode: "team",
-                      })
-                    }
-                    className="rounded-full border border-white/10 px-3 py-1 text-xs font-black text-white shadow-lg shadow-black/20"
-                    style={{ background: `linear-gradient(135deg, ${preset.local1}, ${preset.visit1})` }}
-                  >
-                    {preset.label}
-                  </button>
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+                {[
+                  { key: "local", label: "🏠 Equipo Local", placeholder: "Ej: Real Madrid" },
+                  { key: "visitante", label: "✈️ Equipo Visitante", placeholder: "Ej: Barcelona" },
+                  { key: "liga", label: "🏆 Liga / Competición", placeholder: "Ej: La Liga" },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 4 }}>{f.label}</label>
+                    <input value={match[f.key]} onChange={e => setMatch(m => ({ ...m, [f.key]: e.target.value }))}
+                      placeholder={f.placeholder}
+                      style={{ width: "100%", background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "10px 12px", color: "#e2e8f0", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                  </div>
                 ))}
               </div>
-            </div>
-          </div>
-        </section>
-
-
-        <section className="mb-5 rounded-3xl border border-cyan-300/25 bg-gradient-to-br from-cyan-400/10 via-slate-900/55 to-emerald-500/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200/80">Modo enfoque global</p>
-              <h2 className="text-2xl font-black">🎯 Mercados a analizar</h2>
-              <p className="text-xs text-slate-300">Marca solo lo que la casa permite o lo que quieres jugar. La app oculta el resto para que no llenes datos innecesarios.</p>
-            </div>
-            <label className="rounded-2xl border border-white/10 bg-slate-950/45 p-3 text-xs font-bold text-slate-300">
-              Partidos por equipo
-              <select className={`${selectClass} mt-2`} value={marketFocus.recentCount} onChange={(event) => updateRecentCount(event.target.value)}>
-                {RECENT_MATCH_COUNT_OPTIONS.map((option) => <option key={option} value={option}>{option} registros</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
-            {FOCUS_OPTIONS.map((option) => {
-              const checked = Boolean(marketFocus[option.key]);
-              return (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => updateMarketFocus(option.key, !checked)}
-                  className={`rounded-2xl border px-4 py-3 text-left shadow-lg transition ${checked ? "border-emerald-300/40 bg-emerald-400/15 text-white" : "border-white/10 bg-slate-950/45 text-slate-300 opacity-80"}`}
-                >
-                  <div className="flex items-center gap-2 text-sm font-black">
-                    <span>{checked ? "☑" : "☐"}</span>
-                    <span>{option.label}</span>
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(3,1fr)", marginTop: 12 }}>
+                {[
+                  { key: "oddLocal", label: "💵Cuota Local🏡 (1)" },
+                  { key: "oddDraw", label: "💵Cuota Empate⚔️ (X)" },
+                  { key: "oddVisit", label: "💵Cuota Visitante🛩️ (2)" },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 4 }}>{f.label}</label>
+                    <input type="number" step="0.01" value={match[f.key]} onChange={e => setMatch(m => ({ ...m, [f.key]: e.target.value }))}
+                      placeholder="💴1.85💴"
+                      style={{ width: "100%", background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "10px 12px", color: "#e2e8f0", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
                   </div>
-                  <p className="mt-1 text-[11px] text-slate-300">{option.help}</p>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-4 rounded-2xl border border-cyan-300/20 bg-slate-950/45 p-3 text-xs text-cyan-50">
-            🧠 Enfoque activo: {marketFocus.all ? "Todos los mercados" : [marketFocus.winner && "Ganador", marketFocus.doubleChance && "Doble oportunidad", marketFocus.goals && "Goles", marketFocus.corners && "Corners", marketFocus.cards && "Tarjetas"].filter(Boolean).join(" · ") || "Sin mercados seleccionados"}.
-          </div>
-        </section>
-
-    <section className="mb-5 rounded-3xl border border-amber-300/25 bg-gradient-to-br from-amber-400/10 via-slate-900/45 to-violet-500/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.35em] text-amber-200/80">Contexto especial</p>
-              <h2 className="text-2xl font-black">🏆 Eliminatoria ida/vuelta</h2>
-              <p className="text-xs text-slate-300">Todo es con selects. Si es partido de vuelta, el motor baja overs agresivos y protege doble oportunidad/handicap.</p>
-            </div>
-            {isSecondLegWithLead(eliminationContext) ? (
-              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 px-4 py-3 text-sm font-black text-amber-100">
-                ⚠️ Ventaja global: {getSideName(eliminationContext.advantageTeam, match)} +{eliminationContext.leadGoals}
+                ))}
               </div>
-            ) : null}
-          </div>
+              {match.oddLocal && match.oddDraw && match.oddVisit && (
+                <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {[
+                    { label: match.local || "Local", p: impliedProb(toNum(match.oddLocal)), color: "#34d399" },
+                    { label: "Empate", p: impliedProb(toNum(match.oddDraw)), color: "#94a3b8" },
+                    { label: match.visitante || "Visitante", p: impliedProb(toNum(match.oddVisit)), color: "#f87171" },
+                  ].map(x => (
+                    <div key={x.label} style={{ background: "rgba(15,23,42,.6)", borderRadius: 10, padding: "6px 12px", fontSize: 12 }}>
+                      <span style={{ color: "#64748b" }}>{x.label}: </span>
+                      <span style={{ color: x.color, fontWeight: 800 }}>{fmtPct(x.p)}</span>
+                      <span style={{ color: "#475569", fontSize: 10 }}> implícita</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
 
-          <div className="grid gap-3 md:grid-cols-5">
-            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
-              ¿Es eliminatoria?
-              <select
-                className={`${selectClass} mt-2`}
-                value={eliminationContext.enabled ? "yes" : "no"}
-                onChange={(event) => {
-                  const enabled = event.target.value === "yes";
-                  setEliminationContext(enabled ? { ...eliminationContext, enabled, leg: eliminationContext.leg === "none" ? "second" : eliminationContext.leg } : emptyEliminationContext());
-                }}
-              >
-                <option value="no">No</option>
-                <option value="yes">Sí</option>
-              </select>
-            </label>
-
-            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
-              Partido
-              <select
-                className={`${selectClass} mt-2`}
-                value={eliminationContext.leg}
-                disabled={!eliminationContext.enabled}
-                onChange={(event) => setEliminationContext({ ...eliminationContext, leg: event.target.value as EliminationLeg })}
-              >
-                <option value="none">Normal</option>
-                <option value="first">Ida</option>
-                <option value="second">Vuelta</option>
-              </select>
-            </label>
-
-            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
-              Equipo con ventaja
-              <select
-                className={`${selectClass} mt-2`}
-                value={eliminationContext.advantageTeam}
-                disabled={!eliminationContext.enabled || eliminationContext.leg !== "second"}
-                onChange={(event) => setEliminationContext({ ...eliminationContext, advantageTeam: event.target.value as EliminationSide })}
-              >
-                <option value="none">Ninguno / Empate global</option>
-                <option value="local">{match.local || "Local"}</option>
-                <option value="visitante">{match.visitante || "Visitante"}</option>
-              </select>
-            </label>
-
-            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
-              Ventaja global
-              <select
-                className={`${selectClass} mt-2`}
-                value={eliminationContext.leadGoals}
-                disabled={!eliminationContext.enabled || eliminationContext.leg !== "second"}
-                onChange={(event) => setEliminationContext({ ...eliminationContext, leadGoals: event.target.value })}
-              >
-                {LEAD_GOAL_OPTIONS.map((option) => <option key={option} value={option}>{option} gol{option === "1" ? "" : "es"}</option>)}
-              </select>
-            </label>
-
-            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
-              Obligado a remontar
-              <select
-                className={`${selectClass} mt-2`}
-                value={eliminationContext.pressureTeam}
-                disabled={!eliminationContext.enabled || eliminationContext.leg !== "second"}
-                onChange={(event) => setEliminationContext({ ...eliminationContext, pressureTeam: event.target.value as EliminationSide })}
-              >
-                <option value="none">Ninguno</option>
-                <option value="local">{match.local || "Local"}</option>
-                <option value="visitante">{match.visitante || "Visitante"}</option>
-              </select>
-            </label>
-          </div>
-
-          {eliminationContext.enabled ? (
-            <div className="mt-4 rounded-2xl border border-amber-200/20 bg-slate-950/45 p-4 text-sm text-amber-50">
-              {eliminationContext.leg === "second" ? (
-                <p>
-                  🧠 Modo vuelta activo: si hay ventaja global, la app castiga over 2.5/BTTS, baja ganador directo y favorece doble oportunidad, handicap positivo, under amplio y tarjetas por presión.
-                </p>
+            {/* AI Button */}
+            <button onClick={runAIAnalysis} disabled={aiStatus === "loading"}
+              style={{ width: "100%", padding: "18px 24px", borderRadius: 16, border: "none", background: aiStatus === "loading" ? "rgba(99,102,241,.3)" : "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "#fff", fontSize: 16, fontWeight: 900, cursor: aiStatus === "loading" ? "not-allowed" : "pointer", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, transition: "all .2s", boxShadow: aiStatus === "loading" ? "none" : "0 4px 24px rgba(99,102,241,.4)" }}>
+              {aiStatus === "loading" ? (
+                <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Analizando con IA + Web Search...</>
               ) : (
-                <p>🧠 Modo ida: el motor no castiga fuerte, pero marca el partido como contexto especial para no sobreexponer parlays grandes.</p>
+                <><span>🤖</span> Analizar Partido con IA</>
               )}
-            </div>
-          ) : null}
-        </section>
+            </button>
 
-    {focusEnabled(marketFocus, "cards") ? (
-    <section className="mb-5 rounded-3xl border border-rose-300/25 bg-gradient-to-br from-rose-400/10 via-slate-900/45 to-orange-500/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.35em] text-rose-200/80">Factor disciplinario</p>
-              <h2 className="text-2xl font-black">👨‍⚖️ Árbitro del partido</h2>
-              <p className="text-xs text-slate-300">Opcional. Si lo llenas, el motor ajusta tarjetas sin romper la lectura principal.</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/45 px-4 py-3 text-sm font-black text-rose-50">
-              Tarjetas ajustadas: {adjustedCardsExpected ? adjustedCardsExpected.toFixed(1) : "—"}
-            </div>
-          </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
-              Prom. amarillas
-              <select className={`${selectClass} mt-2`} value={refereeContext.yellowAvg} onChange={(event) => setRefereeContext({ ...refereeContext, yellowAvg: event.target.value })}>
-                <option value="">Sin dato</option>
-                {AVG_YELLOW_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-            </label>
-            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
-              Prom. rojas
-              <select className={`${selectClass} mt-2`} value={refereeContext.redAvg} onChange={(event) => setRefereeContext({ ...refereeContext, redAvg: event.target.value })}>
-                <option value="">Sin dato</option>
-                {AVG_RED_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-            </label>
-            <label className="rounded-2xl border border-white/10 bg-slate-950/35 p-3 text-xs font-bold text-slate-300">
-              Rigor manual
-              <select className={`${selectClass} mt-2`} value={refereeContext.strictness} onChange={(event) => setRefereeContext({ ...refereeContext, strictness: event.target.value as RefereeStrictness })}>
-                {REFEREE_STRICTNESS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-          </div>
-          {refereeCardAdjustment.notes.length > 0 ? (
-            <div className="mt-4 rounded-2xl border border-rose-200/20 bg-slate-950/45 p-3 text-sm text-rose-50">
-              {refereeCardAdjustment.notes.map((note) => <p key={note}>• {note}</p>)}
-            </div>
-          ) : null}
-        </section>
-    ) : null}
-
-        {/* ── PANEL RESULTADO ANÁLISIS IA ──────────────────────────────────── */}
-        {showAI && (
-          <section className="mb-5 overflow-hidden rounded-[2rem] border border-sky-300/30 bg-gradient-to-br from-sky-500/15 via-slate-900/80 to-indigo-500/15 p-1 shadow-2xl shadow-sky-500/20 backdrop-blur-xl">
-            <div className="rounded-[1.8rem] bg-slate-950/70 p-5">
-              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.35em] text-sky-200/80">Inteligencia Artificial</p>
-                  <h2 className="mt-1 text-2xl font-black">🤖 Análisis IA — {match.local} vs {match.visitante}</h2>
-                  {aiAnalysis && <p className="mt-1 text-xs text-slate-400">{aiAnalysis.usedWeb ? "🌐 Con búsqueda web" : "🧠 Solo conocimiento Claude"} · {new Date(aiAnalysis.generatedAt).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</p>}
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={runAIAnalysis} disabled={aiStatus === "loading_web" || aiStatus === "loading_ai"} className="rounded-2xl border border-sky-300/30 bg-sky-400/15 px-4 py-3 font-black text-sky-100 disabled:opacity-50">
-                    {aiStatus === "loading_web" ? "🌐 Buscando..." : aiStatus === "loading_ai" ? "🤖 Analizando..." : "🔄 Regenerar"}
-                  </button>
-                  <button onClick={() => setShowAI(false)} className="rounded-xl bg-white/10 px-3 py-2 text-sm font-black text-slate-300">✕</button>
-                </div>
+            {aiError && (
+              <div style={{ background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 12, padding: "12px 16px", marginBottom: 20, color: "#fca5a5", fontSize: 13 }}>
+                ⚠️ {aiError}
               </div>
+            )}
 
-              {/* Loading */}
-              {(aiStatus === "loading_web" || aiStatus === "loading_ai") && (
-                <div className="space-y-3 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
-                    <p className="text-sm font-bold text-sky-200">
-                      {aiStatus === "loading_web" ? "🌐 Buscando información actualizada en la web..." : "🤖 Claude está analizando el partido..."}
-                    </p>
+            {/* AI Results */}
+            {aiStatus === "done" && aiResult && (
+              <div ref={resultsRef}>
+                {/* Match Profile */}
+                {aiResult.perfilPartido && (
+                  <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ background: aiResult.perfilPartido === "abierto" ? "rgba(52,211,153,.15)" : aiResult.perfilPartido === "trampa" ? "rgba(239,68,68,.15)" : aiResult.perfilPartido === "cerrado" ? "rgba(56,189,248,.15)" : "rgba(148,163,184,.15)", border: `1px solid ${aiResult.perfilPartido === "abierto" ? "rgba(52,211,153,.3)" : aiResult.perfilPartido === "trampa" ? "rgba(239,68,68,.3)" : aiResult.perfilPartido === "cerrado" ? "rgba(56,189,248,.3)" : "rgba(148,163,184,.3)"}`, borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 800, color: aiResult.perfilPartido === "abierto" ? "#34d399" : aiResult.perfilPartido === "trampa" ? "#f87171" : aiResult.perfilPartido === "cerrado" ? "#38bdf8" : "#94a3b8" }}>
+                      Perfil: {aiResult.perfilPartido}
+                    </span>
+                    <span style={{ fontSize: 13, color: "#64748b" }}>{match.local} vs {match.visitante}</span>
                   </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
-                    <div className="h-full animate-pulse rounded-full bg-sky-400" style={{ width: aiStatus === "loading_web" ? "40%" : "80%" }} />
+                )}
+
+                {/* Alerts */}
+                {aiResult.alertas?.filter(Boolean).length > 0 && (
+                  <div style={{ background: "rgba(245,158,11,.08)", border: "1px solid rgba(245,158,11,.25)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+                    <div style={{ fontWeight: 800, fontSize: 12, color: "#fbbf24", marginBottom: 6 }}>⚠️ ALERTAS</div>
+                    {aiResult.alertas.map((a, i) => <div key={i} style={{ fontSize: 13, color: "#fde68a", marginBottom: 2 }}>• {a}</div>)}
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Error */}
-              {aiStatus === "error" && (
-                <div className="rounded-2xl border border-rose-300/30 bg-rose-400/10 p-4">
-                  <p className="font-black text-rose-100">❌ Error al generar el análisis</p>
-                  <p className="mt-1 text-xs text-rose-200">{aiError}</p>
-                  <p className="mt-2 text-xs text-slate-400">Verifica que la app esté correctamente configurada con acceso a la API.</p>
-                </div>
-              )}
-
-              {/* Resultado */}
-              {aiStatus === "done" && aiAnalysis && (
-                <div className="space-y-4">
-                  {/* Previa */}
-                  <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-                    <p className="mb-2 text-xs font-black uppercase tracking-widest text-sky-200">📋 Previa del partido</p>
-                    <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.previa}</p>
+                {/* Summary + Teams */}
+                <div style={{ display: "grid", gap: 14, gridTemplateColumns: expertMode ? "1fr 1fr" : "1fr", marginBottom: 16 }}>
+                  <div style={{ background: "rgba(30,27,75,.4)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 16, padding: 18 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: "#818cf8", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".08em" }}>📋 Resumen del Partido</div>
+                    <p style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.6, margin: 0 }}>{aiResult.resumen}</p>
+                    {aiResult.pronostico && (
+                      <div style={{ marginTop: 12, background: "rgba(99,102,241,.1)", borderRadius: 10, padding: "10px 12px" }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#818cf8", marginBottom: 4 }}>🎯 PRONÓSTICO IA</div>
+                        <p style={{ fontSize: 13, color: "#e0e7ff", margin: 0, lineHeight: 1.5 }}>{aiResult.pronostico}</p>
+                      </div>
+                    )}
                   </div>
-
-                  {/* Perfiles */}
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4">
-                      <p className="mb-2 text-xs font-black uppercase tracking-widest text-emerald-200">🏠 {match.local}</p>
-                      <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.perfilLocal}</p>
-                    </div>
-                    <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4">
-                      <p className="mb-2 text-xs font-black uppercase tracking-widest text-rose-200">✈️ {match.visitante}</p>
-                      <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.perfilVisitante}</p>
-                    </div>
-                  </div>
-
-                  {/* Pronóstico */}
-                  <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4">
-                    <p className="mb-2 text-xs font-black uppercase tracking-widest text-amber-200">🎯 Pronóstico</p>
-                    <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.pronostico}</p>
-                  </div>
-
-                  {/* Picks IA */}
-                  <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-4">
-                    <p className="mb-2 text-xs font-black uppercase tracking-widest text-violet-200">⚡ Picks sugeridos por IA</p>
-                    <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-line">{aiAnalysis.picksIA}</p>
-                  </div>
-
-                  {/* Value */}
-                  {aiAnalysis.valueAnalysis && (
-                    <div className="rounded-2xl border border-teal-300/20 bg-teal-400/10 p-4">
-                      <p className="mb-2 text-xs font-black uppercase tracking-widest text-teal-200">💰 Análisis de value en cuotas</p>
-                      <p className="text-sm leading-relaxed text-slate-200">{aiAnalysis.valueAnalysis}</p>
+                  {expertMode && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {aiResult.formaLocal && (
+                        <div style={{ background: "rgba(52,211,153,.05)", border: "1px solid rgba(52,211,153,.15)", borderRadius: 16, padding: 16, flex: 1 }}>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: "#34d399", marginBottom: 6 }}>🏠 {match.local}</div>
+                          <p style={{ fontSize: 13, color: "#a7f3d0", margin: 0, lineHeight: 1.5 }}>{aiResult.formaLocal}</p>
+                        </div>
+                      )}
+                      {aiResult.formaVisitante && (
+                        <div style={{ background: "rgba(248,113,113,.05)", border: "1px solid rgba(248,113,113,.15)", borderRadius: 16, padding: 16, flex: 1 }}>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: "#f87171", marginBottom: 6 }}>✈️ {match.visitante}</div>
+                          <p style={{ fontSize: 13, color: "#fecaca", margin: 0, lineHeight: 1.5 }}>{aiResult.formaVisitante}</p>
+                        </div>
+                      )}
                     </div>
                   )}
-
-                  <p className="text-center text-xs text-slate-500">⚠️ El análisis IA es orientativo. Combínalo siempre con tu análisis estadístico propio.</p>
                 </div>
-              )}
-            </div>
-          </section>
+
+                {/* CTA to picks */}
+                <button onClick={() => setActiveTab("picks")} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: "rgba(99,102,241,.15)", color: "#818cf8", fontSize: 14, fontWeight: 800, cursor: "pointer", border: "1px solid rgba(99,102,241,.25)" }}>
+                  🎯 Ver {picks.length} Picks Generados →
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
-    <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-2xl font-bold">🧪 Últimos registros</h2>
-              <p className="text-xs text-slate-300">Ahora los corners y tarjetas se llenan a favor/en contra. Eso frena unders engañosos.</p>
-            </div>
-            <button
-              onClick={() => setShowQuickEntry((v) => !v)}
-              className="rounded-2xl bg-amber-400 px-4 py-3 font-black text-amber-950 shadow-lg shadow-amber-400/20"
-            >
-              ⚡ {showQuickEntry ? "Ocultar entrada rápida" : "Entrada rápida"}
-            </button>
-          </div>
-
-          {/* ── PANEL DE ENTRADA RÁPIDA ─────────────────────────────────── */}
-          {showQuickEntry && (
-            <div className="mb-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 space-y-3">
+        {/* ── TAB: PICKS ─────────────────────────────────────────────────── */}
+        {activeTab === "picks" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
               <div>
-                <p className="mb-1 text-xs font-black text-amber-100 uppercase tracking-widest">⚡ Carga rápida de forma reciente</p>
-                <p className="text-xs text-slate-300 mb-3">
-                  Escribe un partido por token: <b className="text-white">GF-GC</b> o con corners: <b className="text-white">GF-GC/CF-CC</b> o completo: <b className="text-white">GF-GC/CF-CC/TF-TC</b><br/>
-                  Separa partidos con espacio. Ej: <span className="text-amber-200 font-mono">2-1 0-0/5-3 3-2/8-4/1-0</span>
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {/* Local */}
-                  <div>
-                    <div className="mb-1 flex items-center justify-between">
-                      <p className="text-xs font-bold text-slate-300">🏠 {match.local || "Local"}</p>
-                      <div className="flex gap-1">
-                        <button onClick={saveLocalToMemory} className="rounded-lg bg-indigo-400/20 px-2 py-1 text-[11px] font-black text-indigo-200" title="Guardar en memoria">💾 Guardar</button>
-                        <button onClick={() => { setShowMemoryLocal((v) => !v); setShowMemoryVisit(false); }} className="rounded-lg bg-indigo-400/20 px-2 py-1 text-[11px] font-black text-indigo-200" title="Cargar desde memoria">📂 Memoria</button>
-                      </div>
-                    </div>
-                    {showMemoryLocal && (
-                      <div className="mb-2 rounded-xl border border-indigo-300/20 bg-slate-950/60 p-2">
-                        <input
-                          className="mb-2 w-full rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1 text-xs text-white outline-none"
-                          placeholder="Buscar equipo..."
-                          value={memorySearchLocal}
-                          onChange={(e) => setMemorySearchLocal(e.target.value)}
-                        />
-                        <div className="max-h-40 space-y-1 overflow-y-auto">
-                          {searchTeamMemory(teamMemory, memorySearchLocal).filter((e) => e.condition === "local").length === 0
-                            ? <p className="text-xs text-slate-400 px-1">Sin equipos locales guardados.</p>
-                            : searchTeamMemory(teamMemory, memorySearchLocal).filter((e) => e.condition === "local").map((entry) => (
-                              <div key={entry.id} className="flex items-center justify-between gap-1 rounded-lg bg-white/5 px-2 py-1">
-                                <button onClick={() => loadFromMemoryLocal(entry)} className="flex-1 text-left text-xs font-bold text-indigo-100 hover:text-white">
-                                  🏠 {entry.name} <span className="font-normal text-slate-400">· {countValidRows(entry.rows).length} partidos · {new Date(entry.updatedAt).toLocaleDateString("es", { day: "numeric", month: "short" })}</span>
-                                </button>
-                                <button onClick={() => deleteFromMemory(entry.id)} className="text-rose-400 text-xs">🗑️</button>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#818cf8", textTransform: "uppercase", marginBottom: 2 }}>Predicciones IA</div>
+                <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>🎯 Picks del Partido</h2>
+              </div>
+              {picks.some(p => toNum(p.cuotaCasa) > 1) && (
+                <button onClick={verifyValue} disabled={verifyingValue} style={{ padding: "8px 16px", borderRadius: 10, border: "1px solid rgba(99,102,241,.3)", background: "rgba(99,102,241,.1)", color: "#a5b4fc", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                  {verifyingValue ? "⚙️ Verificando..." : "🔍 Verificar Value con IA"}
+                </button>
+              )}
+            </div>
+
+            {picks.length === 0 && (
+              <div style={{ textAlign: "center", padding: "60px 20px", color: "#475569" }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>🤖</div>
+                <div style={{ fontWeight: 700, marginBottom: 8 }}>Sin picks generados</div>
+                <div style={{ fontSize: 13 }}>Ve a "Análisis" e ingresa un partido para comenzar</div>
+                <button onClick={() => setActiveTab("analisis")} style={{ marginTop: 16, padding: "10px 20px", borderRadius: 10, border: "1px solid rgba(99,102,241,.3)", background: "rgba(99,102,241,.1)", color: "#818cf8", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                  ← Ir a Análisis
+                </button>
+              </div>
+            )}
+
+            {picks.length > 0 && (
+              <>
+                {/* Filters */}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+                  {MARKET_FILTERS.map(f => (
+                    <button key={f} onClick={() => setMarketFilter(f)} style={{ padding: "5px 12px", borderRadius: 20, border: `1px solid ${marketFilter === f ? "rgba(99,102,241,.5)" : "rgba(255,255,255,.08)"}`, background: marketFilter === f ? "rgba(99,102,241,.2)" : "transparent", color: marketFilter === f ? "#a5b4fc" : "#475569", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      {f}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Picks List */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {filteredPicks.map(pick => {
+                    const hasOdd = toNum(pick.cuotaCasa) > 1;
+                    const vr = hasOdd ? valueAndRisk(pick.confianza, toNum(pick.cuotaCasa)) : null;
+                    return (
+                      <div key={pick.id} style={{ background: pick.seleccionado ? "rgba(99,102,241,.12)" : "rgba(15,23,42,.6)", border: `1px solid ${pick.seleccionado ? "rgba(99,102,241,.4)" : "rgba(255,255,255,.07)"}`, borderRadius: 16, padding: 16, transition: "all .15s" }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+                              <span style={{ fontWeight: 900, fontSize: 15, color: "#e0e7ff" }}>{pick.mercado}</span>
+                              {pick.linea && <span style={{ fontSize: 12, color: "#94a3b8" }}>({pick.linea})</span>}
+                              <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 700, ...{alta: {background:"rgba(52,211,153,.1)",color:"#34d399"}, media: {background:"rgba(245,158,11,.1)",color:"#fbbf24"}, baja:{background:"rgba(148,163,184,.1)",color:"#94a3b8"}}[pick.prioridad] }}>
+                                {pick.prioridad}
+                              </span>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                              {/* Confidence bar */}
+                              <div style={{ flex: 1, background: "rgba(255,255,255,.06)", borderRadius: 4, height: 6, overflow: "hidden" }}>
+                                <div style={{ height: "100%", width: `${pick.confianza}%`, background: pick.confianza >= 75 ? "#34d399" : pick.confianza >= 60 ? "#fbbf24" : "#f87171", borderRadius: 4, transition: "width .5s" }} />
                               </div>
-                            ))}
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex gap-2">
-                      <input
-                        className="flex-1 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none font-mono"
-                        placeholder="2-1 0-0 3-2/6-4/2-1 ..."
-                        value={quickLocalText}
-                        onChange={(e) => setQuickLocalText(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") applyQuickLocal(); }}
-                      />
-                      <button onClick={applyQuickLocal} className="rounded-xl bg-emerald-400 px-3 py-2 font-black text-emerald-950 text-sm">✓</button>
-                    </div>
-                  </div>
-                  {/* Visitante */}
-                  <div>
-                    <div className="mb-1 flex items-center justify-between">
-                      <p className="text-xs font-bold text-slate-300">✈️ {match.visitante || "Visitante"}</p>
-                      <div className="flex gap-1">
-                        <button onClick={saveVisitToMemory} className="rounded-lg bg-indigo-400/20 px-2 py-1 text-[11px] font-black text-indigo-200" title="Guardar en memoria">💾 Guardar</button>
-                        <button onClick={() => { setShowMemoryVisit((v) => !v); setShowMemoryLocal(false); }} className="rounded-lg bg-indigo-400/20 px-2 py-1 text-[11px] font-black text-indigo-200" title="Cargar desde memoria">📂 Memoria</button>
-                      </div>
-                    </div>
-                    {showMemoryVisit && (
-                      <div className="mb-2 rounded-xl border border-indigo-300/20 bg-slate-950/60 p-2">
-                        <input
-                          className="mb-2 w-full rounded-lg border border-white/10 bg-slate-900/60 px-2 py-1 text-xs text-white outline-none"
-                          placeholder="Buscar equipo..."
-                          value={memorySearchVisit}
-                          onChange={(e) => setMemorySearchVisit(e.target.value)}
-                        />
-                        <div className="max-h-40 space-y-1 overflow-y-auto">
-                          {searchTeamMemory(teamMemory, memorySearchVisit).filter((e) => e.condition === "visitante").length === 0
-                            ? <p className="text-xs text-slate-400 px-1">Sin equipos visitantes guardados.</p>
-                            : searchTeamMemory(teamMemory, memorySearchVisit).filter((e) => e.condition === "visitante").map((entry) => (
-                              <div key={entry.id} className="flex items-center justify-between gap-1 rounded-lg bg-white/5 px-2 py-1">
-                                <button onClick={() => loadFromMemoryVisit(entry)} className="flex-1 text-left text-xs font-bold text-indigo-100 hover:text-white">
-                                  ✈️ {entry.name} <span className="font-normal text-slate-400">· {countValidRows(entry.rows).length} partidos · {new Date(entry.updatedAt).toLocaleDateString("es", { day: "numeric", month: "short" })}</span>
-                                </button>
-                                <button onClick={() => deleteFromMemory(entry.id)} className="text-rose-400 text-xs">🗑️</button>
+                              <span style={{ fontSize: 13, fontWeight: 800, color: pick.confianza >= 75 ? "#34d399" : pick.confianza >= 60 ? "#fbbf24" : "#f87171", minWidth: 36 }}>{pick.confianza}%</span>
+                            </div>
+                            {expertMode && pick.justificacion && (
+                              <p style={{ fontSize: 12, color: "#64748b", margin: "0 0 8px", lineHeight: 1.5 }}>{pick.justificacion}</p>
+                            )}
+                            {/* Value display */}
+                            {hasOdd && vr && (
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+                                <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 800, background: vr.color === "green" ? "rgba(52,211,153,.1)" : vr.color === "yellow" ? "rgba(245,158,11,.1)" : "rgba(239,68,68,.1)", color: vr.color === "green" ? "#34d399" : vr.color === "yellow" ? "#fbbf24" : "#f87171" }}>
+                                  {vr.label}
+                                </span>
+                                {expertMode && <>
+                                  <span style={{ fontSize: 11, color: "#475569" }}>EV: <b style={{ color: vr.ev > 0 ? "#34d399" : "#f87171" }}>{vr.ev > 0 ? "+" : ""}{(vr.ev * 100).toFixed(1)}%</b></span>
+                                  <span style={{ fontSize: 11, color: "#475569" }}>Edge: <b style={{ color: "#94a3b8" }}>{vr.value.toFixed(1)}pp</b></span>
+                                </>}
+                                {pick.kellyLabel && <span style={{ fontSize: 11, color: "#a5b4fc" }}>Kelly: {pick.kellyLabel}</span>}
+                                {pick.recomendacionIA && <span style={{ fontSize: 11, color: "#94a3b8" }}>{pick.recomendacionIA}</span>}
                               </div>
-                            ))}
+                            )}
+                          </div>
+                          {/* Right: Odd input + actions */}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", minWidth: 120 }}>
+                            <div>
+                              <div style={{ fontSize: 10, color: "#475569", marginBottom: 3, textAlign: "right" }}>Cuota Casa</div>
+                              <input type="number" step="0.01" value={pick.cuotaCasa} onChange={e => updatePickOdd(pick.id, e.target.value)}
+                                placeholder={pick.cuotaSugerida || "1.85"}
+                                style={{ width: 90, background: "rgba(15,23,42,.8)", border: "1px solid rgba(255,255,255,.12)", borderRadius: 8, padding: "6px 8px", color: "#e2e8f0", fontSize: 13, fontWeight: 700, outline: "none", textAlign: "center" }} />
+                            </div>
+                            {pick.cuotaSugerida && <div style={{ fontSize: 10, color: "#475569" }}>Mín: {pick.cuotaSugerida}</div>}
+                            <button onClick={() => togglePickSel(pick.id)} style={{ padding: "6px 12px", borderRadius: 8, border: `1px solid ${pick.seleccionado ? "rgba(99,102,241,.5)" : "rgba(255,255,255,.1)"}`, background: pick.seleccionado ? "rgba(99,102,241,.25)" : "transparent", color: pick.seleccionado ? "#a5b4fc" : "#475569", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                              {pick.seleccionado ? "✓ Sel." : "+ Ticket"}
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    )}
-                    <div className="flex gap-2">
-                      <input
-                        className="flex-1 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none font-mono"
-                        placeholder="1-1 2-0 0-1/4-6/0-2 ..."
-                        value={quickVisitText}
-                        onChange={(e) => setQuickVisitText(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") applyQuickVisit(); }}
-                      />
-                      <button onClick={applyQuickVisit} className="rounded-xl bg-emerald-400 px-3 py-2 font-black text-emerald-950 text-sm">✓</button>
-                    </div>
-                  </div>
+                    );
+                  })}
                 </div>
-              </div>
-            </div>
-          )}
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            {renderRecentBlock(`Registro Local🏡 · ${match.local || "Local"}`, "local", localRecent)}
-            {renderRecentBlock(`Registro Visitante🛩️ · ${match.visitante || "Visitante"}`, "visitante", visitRecent)}
-          </div>
-        </section>
-
-     <section className="mb-5 rounded-3xl border border-cyan-300/30 bg-cyan-400/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <h2 className="text-2xl font-bold">🧭 Detector de partido</h2>
-          <div className="mt-3 grid gap-3 sm:grid-cols-5">
-            <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Tipo</p><p className="text-lg font-black">{matchProfile.type === "abierto" ? "🔥 Abierto" : matchProfile.type === "cerrado" ? "🧊 Cerrado" : matchProfile.type === "trampa" ? "⚠️ Trampa" : "⚖️ Equilibrado"}</p></div>
-            <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Prom. goles</p><p className="text-lg font-black">{matchProfile.avgGoals ? matchProfile.avgGoals.toFixed(2) : "—"}</p></div>
-            <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Corners esperados</p><p className="text-lg font-black">{projection.expectedCorners ? projection.expectedCorners.toFixed(1) : "—"}</p></div>
-            <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Tarjetas esperadas</p><p className="text-lg font-black">{adjustedCardsExpected ? adjustedCardsExpected.toFixed(1) : "—"}</p></div>
-            <div className="rounded-2xl bg-slate-950/45 p-3"><p className="text-xs text-slate-400">Bloqueo under</p><p className="text-lg font-black">{matchProfile.blockUnderGoals || matchProfile.blockUnderCorners ? "Activo" : "No"}</p></div>
-          </div>
-          {matchProfile.notes.length > 0 ? (
-            <div className="mt-3 rounded-2xl bg-slate-950/45 p-3 text-sm text-cyan-50">
-              {matchProfile.notes.map((note) => <p key={note}>• {note}</p>)}
-            </div>
-          ) : null}
-        </section>
-
-        {/* ── DETECTOR DE LÍNEA MOVIDA ────────────────────────────────────── */}
-        <section className="mb-5 overflow-hidden rounded-[2rem] border border-orange-300/20 bg-gradient-to-br from-orange-400/10 via-slate-900/65 to-red-500/10 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
-          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.35em] text-orange-200/80">Dinero profesional</p>
-                <h2 className="mt-1 text-2xl font-black">📡 Detector de línea movida</h2>
-                <p className="mt-1 text-sm text-slate-300">Ingresa la cuota de apertura y la cuota actual. Si se movió más del 5%, hay dinero entrando en ese mercado.</p>
-              </div>
-              <button onClick={() => setShowLineMovement((v) => !v)} className="rounded-2xl border border-orange-300/30 bg-orange-400/15 px-4 py-3 font-black text-orange-100">
-                {showLineMovement ? "▲ Ocultar" : "▼ Ver detector"}
-              </button>
-            </div>
-
-            {/* Alertas siempre visibles si hay movimiento */}
-            {lineMovementAnalysis.alerts.length > 0 && (
-              <div className="mb-4 space-y-2">
-                {lineMovementAnalysis.alerts.map((a) => (
-                  <div key={a.movement.market} className={`rounded-2xl border px-4 py-3 ${a.color === "green" ? "border-emerald-300/40 bg-emerald-400/15" : a.color === "red" ? "border-rose-300/40 bg-rose-400/15" : "border-amber-300/40 bg-amber-400/15"}`}>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-black text-sm">{a.movement.label} {a.movement.lineValue ? `(${a.movement.lineValue})` : ""}</span>
-                      <span className={`rounded-full px-3 py-1 text-xs font-black ${a.color === "green" ? "bg-emerald-400/30 text-emerald-100" : a.color === "red" ? "bg-rose-400/30 text-rose-100" : "bg-amber-400/30 text-amber-100"}`}>
-                        {a.direction === "bajó" ? "▼" : "▲"} {a.pct.toFixed(1)}% · {toNumber(a.movement.oddBefore).toFixed(2)} → {toNumber(a.movement.oddNow).toFixed(2)}
-                      </span>
-                    </div>
-                    <p className={`mt-1 text-xs ${a.color === "green" ? "text-emerald-200" : a.color === "red" ? "text-rose-200" : "text-amber-200"}`}>{a.signal}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {showLineMovement && (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {lineMovements.map((mv, i) => (
-                  <div key={mv.market} className="rounded-2xl border border-white/10 bg-slate-950/45 p-4">
-                    <p className="mb-2 text-sm font-black">{mv.label}</p>
-                    <div className="space-y-2">
-                      <input
-                        className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none"
-                        placeholder="Línea (ej: 2.5)"
-                        value={mv.lineValue}
-                        onChange={(e) => setLineMovements((prev) => prev.map((m, j) => j === i ? { ...m, lineValue: e.target.value } : m))}
-                      />
-                      <input
-                        className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none"
-                        placeholder="Cuota apertura"
-                        inputMode="decimal"
-                        value={mv.oddBefore}
-                        onChange={(e) => setLineMovements((prev) => prev.map((m, j) => j === i ? { ...m, oddBefore: e.target.value } : m))}
-                      />
-                      <input
-                        className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs text-white placeholder-slate-500 outline-none"
-                        placeholder="Cuota actual"
-                        inputMode="decimal"
-                        value={mv.oddNow}
-                        onChange={(e) => setLineMovements((prev) => prev.map((m, j) => j === i ? { ...m, oddNow: e.target.value } : m))}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-    
-    <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-2xl font-bold">Indicadores SofaScore o Automaticos segun Registros🧾</h2>
-              <p className="text-xs text-slate-300">Carga señales fuertes. Genera automaticamente los mercador conforme a los registros. Evita llenar mercados débiles.</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={autoFillIndicatorsFromRecent}
-                className="rounded-2xl bg-teal-400 px-4 py-3 font-black text-teal-950 shadow-lg shadow-teal-400/20"
-                title="Genera indicadores automáticamente desde los registros recientes cargados"
-              >
-                🤖 Auto desde registros
-              </button>
-              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-slate-950/35 p-2">
-                <select className="rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300" value={indicatorBulkCount} onChange={(event) => setIndicatorBulkCount(event.target.value)}>
-                  {INDICATOR_BULK_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                </select>
-                <button onClick={addMultipleIndicators} className="rounded-2xl bg-gradient-to-r from-sky-300 to-blue-500 px-4 py-3 font-bold text-slate-950 shadow-lg shadow-sky-500/20">+ Agregar indicadores</button>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            {indicators.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/15 p-5 text-sm text-slate-300">
-                Ejemplo: Ambos marcan 5/5, Más de 2.5 goles 8/10, Menos de 10.5 corners 6/7. Si ya llenaste Dominador + líneas reales, la cuota se carga sola al elegir el mismo mercado y línea.
-              </div>
-            ) : null}
-
-            {indicators.map((indicator) => {
-              const marketValue = getMarketValue(indicator.market);
-              const showLine = shouldShowIndicatorLine(marketValue);
-              const showOdd = shouldShowIndicatorOdd(marketValue);
-              const recordParts = splitRecordValue(indicator.record);
-              const cardTone = isStreakIndicatorMarket(marketValue) ? "border-emerald-300/20 bg-emerald-500/10" : "border-sky-300/20 bg-sky-500/10";
-
-              return (
-                <div key={indicator.id} className={`rounded-2xl border ${cardTone} p-3 shadow-lg`}>
-                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-black uppercase tracking-widest text-slate-300">
-                    <span className="rounded-full bg-white/10 px-3 py-1">{isStreakIndicatorMarket(marketValue) ? "📌 Racha rápida" : "💰 Mercado apostable"}</span>
-                    <span className="rounded-full bg-white/10 px-3 py-1">{getPeriodLabel(indicator.period)}</span>
-                  </div>
-
-                  <div className="grid gap-2 sm:grid-cols-12">
-                    <select value={indicator.team} onChange={(event) => updateIndicator(indicator.id, "team", event.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-2">
-                      {TEAM_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
-                    <select value={indicator.period || "full"} onChange={(event) => updateIndicator(indicator.id, "period", event.target.value)} className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-2">
-                      {PERIOD_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
-                    <select
-                      value={marketValue}
-                      onChange={(event) => updateIndicatorMarket(indicator.id, event.target.value)}
-                      className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-3"
-                    >
-                      <option value="">Seleccionar mercado</option>
-                      <optgroup label="📌 Rachas sin línea/cuota">
-                        {MARKET_OPTIONS.filter((option) => option.kind === "streak").map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </optgroup>
-                      <optgroup label="💰 Mercados con línea/cuota">
-                        {MARKET_OPTIONS.filter((option) => option.kind === "bet").map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </optgroup>
-                    </select>
-
-                    {showLine ? (
-                      <input className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-1" placeholder="Línea" value={indicator.line} onChange={(event) => updateIndicator(indicator.id, "line", event.target.value)} />
-                    ) : null}
-
-                    <div className={`${showLine ? "sm:col-span-2" : "sm:col-span-3"} grid grid-cols-2 gap-2`}>
-                      <select
-                        value={recordParts.hits}
-                        onChange={(event) => updateIndicator(indicator.id, "record", joinRecordValue(event.target.value, recordParts.total))}
-                        className={selectClass}
-                      >
-                        <option value="">Veces</option>
-                        {RECORD_NUMBER_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                      </select>
-                      <select
-                        value={recordParts.total}
-                        onChange={(event) => updateIndicator(indicator.id, "record", joinRecordValue(recordParts.hits, event.target.value))}
-                        className={selectClass}
-                      >
-                        <option value="">De</option>
-                        {RECORD_NUMBER_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
-                      </select>
-                    </div>
-
-                    {showOdd ? (
-                      <input className="w-full rounded-xl border border-white/10 bg-slate-900/80 px-3 py-3 text-white outline-none focus:border-sky-300 sm:col-span-2" inputMode="decimal" placeholder="Cuota casa" value={indicator.houseOdd} onChange={(event) => updateIndicator(indicator.id, "houseOdd", event.target.value)} />
-                    ) : null}
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-300">
-                    <span>{getTeamLabel(indicator.team, match)} · {getPeriodLabel(indicator.period)} · {getMarketLabel(indicator.market)}{indicator.line ? ` · ${indicator.line}` : ""}{indicator.record ? ` · ${indicator.record}` : ""}</span>
-                    <button onClick={() => removeIndicator(indicator.id)} className="rounded-xl bg-rose-500 px-4 py-2 font-bold text-white">✖</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="mb-5 rounded-3xl border border-cyan-300/20 bg-cyan-400/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200/80">Motor de presión real + casa</p>
-              <h2 className="text-2xl font-black">🏷️ Dominador + líneas reales</h2>
-              <p className="mt-1 text-xs text-slate-300">Llena aquí una sola vez las líneas de la casa. El motor cruza cuotas, registros, dominancia por equipo, árbitro y contexto.</p>
-            </div>
-            <div className="rounded-2xl bg-white/10 px-4 py-3 text-sm">
-              <b>Total esperado:</b> {dominanceAnalysis.values.totalGoals.toFixed(1)} goles · {dominanceAnalysis.values.totalCorners.toFixed(1)} corners · {dominanceAnalysis.values.totalCards.toFixed(1)} tarjetas
-            </div>
-          </div>
-
-          <div className="grid gap-3 lg:grid-cols-3">
-            {focusEnabled(marketFocus, "goals") || focusEnabled(marketFocus, "winner") || focusEnabled(marketFocus, "doubleChance") ? (
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-              <p className="text-xs text-slate-400">Goles esperados</p>
-              <h3 className="mt-1 text-xl font-black">{dominanceAnalysis.values.localGoals.toFixed(1)} - {dominanceAnalysis.values.visitGoals.toFixed(1)}</h3>
-              <p className="mt-1 text-sm text-slate-300">{match.local || "Local"} vs {match.visitante || "Visitante"}</p>
-              <p className="mt-2 rounded-xl bg-white/10 p-2 text-xs">{dominanceAnalysis.dependencies.goals.label}</p>
-            </div>
-            ) : null}
-            {focusEnabled(marketFocus, "corners") ? (
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-              <p className="text-xs text-slate-400">Corners esperados</p>
-              <h3 className="mt-1 text-xl font-black">{dominanceAnalysis.values.localCorners.toFixed(1)} - {dominanceAnalysis.values.visitCorners.toFixed(1)}</h3>
-              <p className="mt-1 text-sm text-slate-300">Total: {dominanceAnalysis.values.totalCorners.toFixed(1)}</p>
-              <p className="mt-2 rounded-xl bg-white/10 p-2 text-xs">{dominanceAnalysis.dependencies.corners.label}</p>
-            </div>
-            ) : null}
-            {focusEnabled(marketFocus, "cards") ? (
-            <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
-              <p className="text-xs text-slate-400">Tarjetas esperadas</p>
-              <h3 className="mt-1 text-xl font-black">{dominanceAnalysis.values.localCards.toFixed(1)} - {dominanceAnalysis.values.visitCards.toFixed(1)}</h3>
-              <p className="mt-1 text-sm text-slate-300">Ajustado por árbitro</p>
-              <p className="mt-2 rounded-xl bg-white/10 p-2 text-xs">{dominanceAnalysis.dependencies.cards.label}</p>
-            </div>
-            ) : null}
-          </div>
-
-          {dominanceAnalysis.dominators.length > 0 ? (
-            <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4 text-sm text-amber-50">
-              <h3 className="mb-2 font-black">📌 Lecturas de dominancia</h3>
-              {dominanceAnalysis.dominators.map((note) => <p key={note}>• {note}</p>)}
-            </div>
-          ) : null}
-
-          <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="text-xl font-black">🏦 Líneas reales totales</h3>
-                <p className="text-xs text-slate-300">Goles, corners y tarjetas se llenan aquí y alimentan también Picks clasificados, Anti-Casa, Resumen 90' y Modo PRO.</p>
-              </div>
-              <button onClick={() => setShowQuickEntry((v) => !v)} className="rounded-2xl bg-amber-400 px-3 py-2 font-black text-amber-950 text-sm">
-                ⚡ {showQuickEntry ? "Ocultar carga rápida" : "Carga rápida de cuotas"}
-              </button>
-            </div>
-            {showQuickEntry && (
-              <div className="mb-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4">
-                <p className="text-xs font-black text-amber-100 uppercase tracking-widest mb-2">⚡ Carga rápida de mercados</p>
-                <p className="text-xs text-slate-300 mb-3">
-                  Formato por bloque: <span className="font-mono text-amber-200">lineaOver cuotaOver lineaUnder cuotaUnder</span> — separa con <b className="text-white"> | </b><br/>
-                  Ej: <span className="font-mono text-amber-200 text-[11px]">2.5 1.85 2.5 1.95 | 9.5 1.90 9.5 1.90 | 4.5 1.75 4.5 2.00</span><br/>
-                  (bloque 1 = goles · bloque 2 = corners · bloque 3 = tarjetas)
-                </p>
-                <div className="flex gap-2">
-                  <input
-                    className="flex-1 rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none font-mono"
-                    placeholder="2.5 1.85 2.5 1.95 | 9.5 1.90 9.5 1.90 | 4.5 1.75 4.5 2.00"
-                    value={quickHouseText}
-                    onChange={(e) => setQuickHouseText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") applyQuickHouse(); }}
-                  />
-                  <button onClick={applyQuickHouse} className="rounded-xl bg-emerald-400 px-4 py-2 font-black text-emerald-950 text-sm">✓ Aplicar</button>
-                </div>
-              </div>
-            )}
-            <div className="grid gap-4 lg:grid-cols-3">
-              {focusEnabled(marketFocus, "goals") ? renderHouseMarket("⚽ Goles", "goalsOverLine", "goalsOverOdd", "goalsUnderLine", "goalsUnderOdd", GOAL_LINES, [...GOAL_LINES].reverse()) : null}
-              {focusEnabled(marketFocus, "corners") ? renderHouseMarket("🚩 Corners", "cornersOverLine", "cornersOverOdd", "cornersUnderLine", "cornersUnderOdd", CORNER_OVER_LINES, CORNER_UNDER_LINES) : null}
-              {focusEnabled(marketFocus, "cards") ? renderHouseMarket("🟨 Tarjetas", "cardsOverLine", "cardsOverOdd", "cardsUnderLine", "cardsUnderOdd", CARD_LINES, [...CARD_LINES].reverse()) : null}
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-3">
-              <h3 className="text-xl font-black">🎯 Líneas por equipo</h3>
-              <p className="text-xs text-slate-300">Úsalas cuando la casa ofrezca corners/goles/tarjetas por equipo. Sirven para detectar si el total depende de un solo lado.</p>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-3">
-              {focusEnabled(marketFocus, "goals") ? renderDominancePair(`⚽ ${match.local || "Local"} goles`, "localGoalsOverLine", "localGoalsOverOdd", "localGoalsUnderLine", "localGoalsUnderOdd", TEAM_GOAL_LINES, [...TEAM_GOAL_LINES].reverse()) : null}
-              {focusEnabled(marketFocus, "goals") ? renderDominancePair(`⚽ ${match.visitante || "Visitante"} goles`, "visitGoalsOverLine", "visitGoalsOverOdd", "visitGoalsUnderLine", "visitGoalsUnderOdd", TEAM_GOAL_LINES, [...TEAM_GOAL_LINES].reverse()) : null}
-              {focusEnabled(marketFocus, "corners") ? renderDominancePair(`🚩 ${match.local || "Local"} corners`, "localCornersOverLine", "localCornersOverOdd", "localCornersUnderLine", "localCornersUnderOdd", TEAM_CORNER_LINES, [...TEAM_CORNER_LINES].reverse()) : null}
-              {focusEnabled(marketFocus, "corners") ? renderDominancePair(`🚩 ${match.visitante || "Visitante"} corners`, "visitCornersOverLine", "visitCornersOverOdd", "visitCornersUnderLine", "visitCornersUnderOdd", TEAM_CORNER_LINES, [...TEAM_CORNER_LINES].reverse()) : null}
-              {focusEnabled(marketFocus, "cards") ? renderDominancePair(`🟨 ${match.local || "Local"} tarjetas`, "localCardsOverLine", "localCardsOverOdd", "localCardsUnderLine", "localCardsUnderOdd", TEAM_CARD_LINES, [...TEAM_CARD_LINES].reverse()) : null}
-              {focusEnabled(marketFocus, "cards") ? renderDominancePair(`🟨 ${match.visitante || "Visitante"} tarjetas`, "visitCardsOverLine", "visitCardsOverOdd", "visitCardsUnderLine", "visitCardsUnderOdd", TEAM_CARD_LINES, [...TEAM_CARD_LINES].reverse()) : null}
-            </div>
-          </div>
-
-          <div className="mt-4 rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div className="mb-3">
-              <h3 className="text-xl font-black">🛡️ Resultado protegido y handicap</h3>
-              <p className="text-xs text-slate-300">Estas cuotas siguen alimentando doble oportunidad, handicap y protección del Modo PRO.</p>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-2">
-              {focusEnabled(marketFocus, "doubleChance") || focusEnabled(marketFocus, "winner") ? renderResultHouseMarket() : null}
-              {focusEnabled(marketFocus, "doubleChance") ? renderHandicapHouseMarket() : null}
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            {focusedDominancePicks.length === 0 ? <p className="text-sm text-slate-300">Carga registros y líneas del enfoque seleccionado para generar picks por dominancia.</p> : null}
-            {focusedDominancePicks.map((pick) => (
-              <article key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-black">{pick.label}</h3>
-                    <p className="text-xs text-slate-300">{pick.reason}</p>
-                  </div>
-                  <span className={`rounded-full px-3 py-1 text-xs font-black ${pick.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pick.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>{getTierLabel(pick.grade)}</span>
-                </div>
-                <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-                  <div className="rounded-xl bg-white/5 p-3">Score: <b>{pick.score.toFixed(1)}%</b></div>
-                  <div className="rounded-xl bg-white/5 p-3">Cuota: <b>{pick.odd > 1 ? pick.odd.toFixed(2) : "—"}</b></div>
-                  <div className="rounded-xl bg-white/5 p-3">Riesgo: <b>{pick.risk}</b></div>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
-   {/* ── SCORE DE CONFIANZA ──────────────────────────────────────────── */}
-        <section className="mb-5 overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-slate-800/60 via-slate-900/80 to-slate-800/60 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
-          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.35em] text-slate-300/80">¿Qué tan sólido es este análisis?</p>
-                <h2 className="mt-1 text-2xl font-black">🎓 Score de confianza</h2>
-              </div>
-              <div className={`rounded-2xl px-5 py-3 text-center ${confidenceScore.grade === "alta" ? "bg-emerald-400/20 border border-emerald-300/30" : confidenceScore.grade === "media" ? "bg-amber-400/20 border border-amber-300/30" : "bg-rose-400/20 border border-rose-300/30"}`}>
-                <p className="text-3xl font-black">{confidenceScore.total}</p>
-                <p className={`text-xs font-black uppercase ${confidenceScore.grade === "alta" ? "text-emerald-100" : confidenceScore.grade === "media" ? "text-amber-100" : "text-rose-100"}`}>{confidenceScore.grade === "alta" ? "✅ Alta" : confidenceScore.grade === "media" ? "🟡 Media" : "🔴 Baja"}</p>
-              </div>
-            </div>
-            <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {confidenceScore.breakdown.map((item) => (
-                <div key={item.label} className={`flex items-center justify-between rounded-xl border px-3 py-2 ${item.ok ? "border-emerald-300/20 bg-emerald-400/10" : "border-rose-300/20 bg-rose-400/10"}`}>
-                  <span className="text-xs font-bold">{item.ok ? "✅" : "❌"} {item.label}</span>
-                  <span className="text-xs font-black">{item.points}/{item.max}</span>
-                </div>
-              ))}
-            </div>
-            <div className={`rounded-2xl border px-4 py-3 text-sm font-bold ${confidenceScore.grade === "alta" ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100" : confidenceScore.grade === "media" ? "border-amber-300/30 bg-amber-400/10 text-amber-100" : "border-rose-300/30 bg-rose-400/10 text-rose-100"}`}>
-              {confidenceScore.message}
-            </div>
-          </div>
-        </section>
-
-
-        <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <h2 className="mb-4 text-2xl font-bold">🏦 Lectura de casa + registros</h2>
-          <div className="grid gap-3 lg:grid-cols-2">
-            {housePicks.filter((pick) => isMarketAllowedByFocus(pick.marketValue, marketFocus)).map((pick) => (
-              <article key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 shadow-lg">
-                <div className="flex items-start justify-between gap-3">
-                  <div><h3 className="font-black">{pick.label}</h3><p className="text-sm text-slate-300">Modelo: {formatScore(pick.modelScore)} · Prob. casa: {pick.implied ? formatScore(pick.implied) : "—"}</p></div>
-                  <div className="flex items-center gap-2">
-                    <span className={`rounded-full px-3 py-1 text-sm font-bold ${pick.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pick.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>{pick.tier}</span>
-                    <button
-                      onClick={() => openPreBet({ label: pick.label, line: pick.line, score: pick.modelScore, odd: pick.odd, grade: pick.grade, marketValue: pick.marketValue, source: "Casa" })}
-                      className="rounded-xl bg-violet-400 px-3 py-2 text-xs font-black text-violet-950 shadow-lg shadow-violet-400/20"
-                    >⚡ Pre-apuesta</button>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2 text-sm sm:grid-cols-4">
-                  <div className="rounded-xl bg-white/5 p-3">Cuota: <b>{pick.odd ? pick.odd.toFixed(2) : "—"}</b></div>
-                  <div className="rounded-xl bg-white/5 p-3">Value: <b>{pick.implied ? `${pick.value >= 0 ? "+" : ""}${pick.value.toFixed(1)}%` : "—"}</b></div>
-                  <div className="rounded-xl bg-white/5 p-3">Línea: <b>{pick.line}</b></div>
-                  <div className="rounded-xl bg-white/5 p-3">Anti-casa: <b>{pick.trapLabel || "—"}</b></div>
-                </div>
-                {pick.riskFlags.length > 0 ? <div className="mt-3 rounded-xl bg-amber-400/10 p-3 text-xs text-amber-100">{pick.riskFlags.map((flag) => <p key={flag}>• {flag}</p>)}</div> : null}
-              </article>
-            ))}
-          </div>
-        </section>
-
-        {contradictionAlerts.length > 0 ? (
-          <section className="mb-5 rounded-3xl border border-amber-300/40 bg-amber-400/10 p-4 backdrop-blur-xl">
-            <h2 className="text-xl font-bold text-amber-100">⚠️ Alertas de contradicción</h2>
-            <div className="mt-2 space-y-1 text-sm text-amber-50">{contradictionAlerts.map((alert) => <p key={alert}>• {alert}</p>)}</div>
-          </section>
-        ) : null}
-
-        <section className="mb-5 rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <h2 className="mb-4 text-2xl font-bold">📊 Picks clasificados</h2>
-
-          {/* ── SEÑALES CRUZADAS ──────────────────────────────────────────── */}
-          {crossedSignals.length > 0 && (
-            <div className="mb-4 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 p-4">
-              <p className="mb-2 text-xs font-black uppercase tracking-widest text-emerald-200">🔥 Señales cruzadas local × visitante</p>
-              <p className="mb-3 text-xs text-slate-300">Ambos equipos confirman el mismo mercado. Señal más fuerte que cualquiera sola.</p>
-              <div className="space-y-2">
-                {crossedSignals.map((sig) => (
-                  <div key={sig.market} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-300/20 bg-slate-950/40 px-4 py-3">
-                    <div>
-                      <p className="font-black text-emerald-100">{sig.label}{sig.line ? ` · ${sig.line}` : ""}</p>
-                      <p className="text-xs text-slate-400">Local {sig.localScore.toFixed(0)}% · Visitante {sig.visitScore.toFixed(0)}% → Combinado {sig.combinedScore.toFixed(0)}%</p>
-                    </div>
-                    <span className={`rounded-full px-3 py-1 text-xs font-black ${sig.grade === "safe" ? "bg-emerald-400/30 text-emerald-100" : sig.grade === "reasonable" ? "bg-amber-400/30 text-amber-100" : "bg-rose-400/30 text-rose-100"}`}>
-                      {sig.combinedScore.toFixed(0)}% 🔥
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-3">
-            {results.length === 0 && activeIndicators.length > 0 ? (
-              <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4">
-                <p className="font-black text-amber-100">⚠️ Sin picks apostables</p>
-                <p className="mt-1 text-sm text-slate-300">Tienes indicadores cargados pero ninguno tiene cuota de casa ingresada. Los mercados de racha (victorias, portería a cero, etc.) no generan picks — solo perfilan el partido. Agrega la cuota en el campo "Cuota casa" de cada indicador apostable.</p>
-              </div>
-            ) : results.length === 0 ? (
-              <p className="text-sm text-slate-300">Todavía no hay picks. Agrega indicadores con registro tipo X/X y su cuota de casa.</p>
-            ) : null}
-            {results.map((pick) => (
-              <article key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/50 p-4 shadow-lg">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black">{pick.sources?.[0]?.period && pick.sources[0].period !== "full" ? `${getPeriodLabel(pick.sources[0].period)} · ` : ""}{pick.label}{pick.line ? ` · ${pick.line}` : ""}</h3>
-                    <p className="text-sm text-slate-300">Señales: {pick.count} · SofaScore: {formatScore(pick.confidence)} · Registros: {pick.recentScore ? formatScore(pick.recentScore) : "—"} · Licuadora: {formatScore(pick.blendedScore)}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className={`rounded-full px-3 py-1 text-sm font-bold ${pick.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pick.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>{pick.tier}</div>
-                    <button
-                      onClick={() => openPreBet({ label: pick.label, line: pick.line, score: pick.blendedScore, odd: pick.avgOdd, grade: pick.grade, marketValue: pick.marketValue, source: "SofaScore" })}
-                      className="rounded-xl bg-violet-400 px-3 py-2 text-xs font-black text-violet-950 shadow-lg shadow-violet-400/20"
-                    >⚡ Pre-apuesta</button>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-                  <div className="rounded-xl bg-white/5 p-3">Cuota casa: <b>{pick.avgOdd ? pick.avgOdd.toFixed(2) : "—"}</b></div>
-                  <div className="rounded-xl bg-white/5 p-3">Prob. casa: <b>{pick.implied ? `${pick.implied.toFixed(1)}%` : "—"}</b></div>
-                  <div className={`rounded-xl p-3 ${pick.value >= 8 ? "bg-emerald-500/20 text-emerald-100" : pick.value < 0 ? "bg-rose-500/20 text-rose-100" : "bg-white/5"}`}>Value: <b>{pick.implied ? `${pick.value >= 0 ? "+" : ""}${pick.value.toFixed(1)}%` : "—"}</b></div>
-                </div>
-                {pick.riskFlags.length > 0 ? <div className="mt-3 rounded-xl bg-amber-400/10 p-3 text-xs text-amber-100">{pick.riskFlags.map((flag) => <p key={flag}>• {flag}</p>)}</div> : null}
-              </article>
-            ))}
-          </div>
-        </section>
-
-
-        {/* ── PANEL PRE-APUESTA ──────────────────────────────────────────── */}
-        {showPreBet && preBetPick && (() => {
-          const bank = bankrollStats.currentBank;
-          const va = bank > 0 ? strictValueBetAnalysis(preBetPick.score, preBetPick.odd, bank) : null;
-          const kelly = va?.kellyResult ?? null;
-          const lineAlert = lineMovementAnalysis.alerts.find((a) => a.movement.market.includes(preBetPick.marketValue.split("_")[0]));
-          return (
-            <section id="pre-bet-panel" className="mb-5 overflow-hidden rounded-[2rem] border-2 border-violet-400/50 bg-gradient-to-br from-violet-500/20 via-slate-900/80 to-indigo-500/20 p-1 shadow-2xl shadow-violet-500/30 backdrop-blur-xl">
-              <div className="rounded-[1.8rem] bg-slate-950/70 p-5">
-                <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-[0.35em] text-violet-200/80">Decisión de apuesta</p>
-                    <h2 className="mt-1 text-2xl font-black">⚡ Panel pre-apuesta</h2>
-                    <p className="mt-1 text-sm text-slate-300">{match.local || "Local"} vs {match.visitante || "Visitante"}</p>
-                  </div>
-                  <button onClick={() => setShowPreBet(false)} className="rounded-xl bg-white/10 px-3 py-2 text-sm font-black text-slate-300">✕ Cerrar</button>
-                </div>
-                <div className={`mb-4 rounded-2xl border p-4 ${preBetPick.grade === "safe" ? "border-emerald-300/40 bg-emerald-400/10" : preBetPick.grade === "reasonable" ? "border-amber-300/40 bg-amber-400/10" : "border-rose-300/40 bg-rose-400/10"}`}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-bold text-slate-400">{preBetPick.source}</p>
-                      <p className="text-xl font-black">{preBetPick.label}{preBetPick.line ? ` · ${preBetPick.line}` : ""}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-3xl font-black">{preBetPick.score.toFixed(0)}%</p>
-                      <p className="text-xs text-slate-400">Score del modelo</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <div className={`rounded-2xl border p-3 ${confidenceScore.grade === "alta" ? "border-emerald-300/20 bg-emerald-400/10" : confidenceScore.grade === "media" ? "border-amber-300/20 bg-amber-400/10" : "border-rose-300/20 bg-rose-400/10"}`}>
-                    <p className="text-xs text-slate-400">Confianza análisis</p>
-                    <p className="text-2xl font-black">{confidenceScore.total}/100</p>
-                    <p className={`text-xs font-bold ${confidenceScore.grade === "alta" ? "text-emerald-200" : confidenceScore.grade === "media" ? "text-amber-200" : "text-rose-200"}`}>{confidenceScore.grade === "alta" ? "✅ Alta" : confidenceScore.grade === "media" ? "🟡 Media" : "🔴 Baja"}</p>
-                  </div>
-                  <div className={`rounded-2xl border p-3 ${va && va.hasValue ? "border-emerald-300/20 bg-emerald-400/10" : "border-rose-300/20 bg-rose-400/10"}`}>
-                    <p className="text-xs text-slate-400">Cuota · Value</p>
-                    <p className="text-2xl font-black">{preBetPick.odd > 1 ? preBetPick.odd.toFixed(2) : "—"}</p>
-                    <p className={`text-xs font-bold ${va && va.edge >= 5 ? "text-emerald-200" : "text-rose-200"}`}>{va ? `${va.edge >= 0 ? "+" : ""}${va.edge.toFixed(1)}% edge` : "Sin cuota"}</p>
-                  </div>
-                  <div className={`rounded-2xl border p-3 ${kelly && kelly.tier !== "no_apostar" ? "border-violet-300/20 bg-violet-400/10" : "border-slate-300/20 bg-slate-800/40"}`}>
-                    <p className="text-xs text-slate-400">Kelly recomendado</p>
-                    {kelly && kelly.recommendedStake > 0 ? (
-                      <>
-                        <p className="text-2xl font-black">{formatMoney(kelly.recommendedStake)}</p>
-                        <p className={`text-xs font-bold ${kelly.tier === "fuerte" ? "text-emerald-200" : kelly.tier === "moderado" ? "text-amber-200" : "text-sky-200"}`}>{(kelly.kellyFraction * 100).toFixed(1)}% del bank</p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-2xl font-black">—</p>
-                        <p className="text-xs font-bold text-rose-200">{bank <= 0 ? "Sin bank definido" : "Sin value suficiente"}</p>
-                      </>
-                    )}
-                  </div>
-                  <div className={`rounded-2xl border p-3 ${lineAlert ? lineAlert.color === "green" ? "border-emerald-300/20 bg-emerald-400/10" : lineAlert.color === "red" ? "border-rose-300/20 bg-rose-400/10" : "border-amber-300/20 bg-amber-400/10" : "border-slate-300/20 bg-slate-800/40"}`}>
-                    <p className="text-xs text-slate-400">Línea movida</p>
-                    {lineAlert ? (
-                      <>
-                        <p className={`text-lg font-black ${lineAlert.direction === "bajó" ? "text-emerald-100" : "text-rose-100"}`}>{lineAlert.direction === "bajó" ? "▼" : "▲"} {lineAlert.pct.toFixed(1)}%</p>
-                        <p className={`text-xs font-bold ${lineAlert.color === "green" ? "text-emerald-200" : lineAlert.color === "red" ? "text-rose-200" : "text-amber-200"}`}>{lineAlert.direction === "bajó" ? "Dinero entrando ✅" : "Dinero saliendo ⚠️"}</p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-lg font-black text-slate-400">Sin dato</p>
-                        <p className="text-xs text-slate-500">Llena el detector de línea</p>
-                      </>
-                    )}
-                  </div>
-                </div>
-                {va && (
-                  <div className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-bold ${va.verdictColor === "green" ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100" : va.verdictColor === "yellow" ? "border-amber-300/30 bg-amber-400/10 text-amber-100" : "border-rose-300/30 bg-rose-400/10 text-rose-100"}`}>
-                    {va.verdict}
-                  </div>
+                {picks.filter(p => p.seleccionado).length > 0 && (
+                  <button onClick={() => setActiveTab("ticket")} style={{ width: "100%", marginTop: 16, padding: "14px", borderRadius: 14, border: "none", background: "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "#fff", fontSize: 14, fontWeight: 900, cursor: "pointer", boxShadow: "0 4px 20px rgba(99,102,241,.3)" }}>
+                    🧾 Ver Ticket ({picks.filter(p => p.seleccionado).length} picks) →
+                  </button>
                 )}
-                {losingStreak.alert && (
-                  <div className="mb-4 rounded-2xl border border-rose-400/40 bg-rose-500/15 px-4 py-3">
-                    <p className="text-sm font-black text-rose-100">⚠️ {losingStreak.message}</p>
-                  </div>
-                )}
-                <div className="space-y-3">
-                  <input
-                    className="w-full rounded-xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none"
-                    placeholder="Nota opcional: baja de jugador, contexto del partido..."
-                    value={preBetNote}
-                    onChange={(e) => setPreBetNote(e.target.value)}
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    {kelly && kelly.recommendedStake > 0 && (
-                      <>
-                        <button onClick={() => sendPreBetToBankroll(kelly.recommendedStake)} className="rounded-2xl bg-violet-400 px-5 py-3 font-black text-violet-950 shadow-lg shadow-violet-400/20">✅ Apostar Kelly ({formatMoney(kelly.recommendedStake)})</button>
-                        <button onClick={() => sendPreBetToBankroll(kelly.recommendedStake * 0.5)} className="rounded-2xl border border-violet-300/30 bg-violet-400/15 px-4 py-3 font-black text-violet-100">🔽 Medio Kelly ({formatMoney(kelly.recommendedStake * 0.5)})</button>
-                      </>
-                    )}
-                    {[5, 10, 20, 50].map((amt) => (
-                      <button key={amt} onClick={() => sendPreBetToBankroll(amt)} className="rounded-2xl border border-white/10 bg-white/10 px-3 py-3 text-sm font-black text-white">{formatMoney(amt)}</button>
-                    ))}
-                    <button onClick={() => setShowPreBet(false)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-black text-slate-300">❌ Descartar</button>
-                  </div>
-                </div>
-              </div>
-            </section>
-          );
-        })()}
+              </>
+            )}
+          </div>
+        )}
 
-  {hasMinimumData && antiCasaAlerts.length > 0 ? (
-          <section className="mb-5 rounded-3xl border border-orange-300/30 bg-orange-400/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-bold">🧨 Detector Anti-Casa</h2>
-                <p className="text-xs text-orange-100/80">Detecta líneas estrechas, trampas visuales y value real antes de meterlas en parlay.</p>
-              </div>
+        {/* ── TAB: TICKET ────────────────────────────────────────────────── */}
+        {activeTab === "ticket" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#818cf8", textTransform: "uppercase", marginBottom: 2 }}>Apuesta Configurada</div>
+              <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>🧾 Ticket de Apuesta</h2>
             </div>
-            <div className="grid gap-3 lg:grid-cols-2">
-              {antiCasaAlerts.map((pick) => (
-                <div key={pick.key} className={`rounded-2xl border p-4 ${pick.trapLevel === "valor_real" ? "border-emerald-300/30 bg-emerald-400/10" : pick.trapLevel === "linea_comoda" ? "border-sky-300/30 bg-sky-400/10" : pick.trapLevel === "trampa_probable" ? "border-rose-300/30 bg-rose-400/10" : "border-amber-300/30 bg-amber-400/10"}`}>
-                  <div className="flex items-start justify-between gap-3">
+
+            {picks.filter(p => p.seleccionado).length === 0 ? (
+              <div style={{ textAlign: "center", padding: "60px 20px", color: "#475569" }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>🎫</div>
+                <div>Sin picks seleccionados. Ve a Picks y selecciona los que quieras apostar.</div>
+              </div>
+            ) : (
+              <>
+                {/* Ticket config */}
+                <div style={{ background: "rgba(30,27,75,.4)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 16, padding: 20, marginBottom: 16 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
                     <div>
-                      <p className="text-xs font-bold uppercase tracking-widest text-slate-300">{pick.trapLabel}</p>
-                      <h3 className="mt-1 font-black">{pick.label}</h3>
-                      <p className="text-xs text-slate-300">Margen vs línea: {typeof pick.margin === "number" ? pick.margin.toFixed(1) : "—"} · Modelo {formatScore(pick.modelScore)}</p>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 4 }}>💰 Stake total</label>
+                      <input type="number" value={ticketStake} onChange={e => setTicketStake(e.target.value)}
+                        style={{ width: "100%", background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "10px 12px", color: "#e2e8f0", fontSize: 15, fontWeight: 800, outline: "none", boxSizing: "border-box" }} />
                     </div>
-                    <span className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black">{pick.odd ? pick.odd.toFixed(2) : "Sin cuota"}</span>
-                  </div>
-                  {pick.riskFlags.length > 0 ? (
-                    <div className="mt-3 space-y-1 text-xs text-orange-50">
-                      {pick.riskFlags.slice(0, 3).map((flag) => <p key={flag}>• {flag}</p>)}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-
-        {analysis ? (
-          <section className="mb-5 overflow-hidden rounded-[2rem] border border-yellow-300/40 bg-gradient-to-br from-yellow-300/15 via-slate-900/80 to-violet-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
-            <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
-              <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.35em] text-yellow-200/80">Centro de decisión</p>
-                  <h2 className="mt-1 text-3xl font-black">🧠 Análisis inteligente</h2>
-                </div>
-                <div className={`rounded-2xl px-4 py-3 text-xl font-black ${analysis.decision.includes("JUGAR") ? "bg-emerald-400/15 text-emerald-100" : analysis.decision.includes("NO") ? "bg-rose-400/15 text-rose-100" : "bg-amber-400/15 text-amber-100"}`}>
-                  {analysis.decision}
-                </div>
-              </div>
-              <div className="grid gap-3 lg:grid-cols-4">
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4 lg:col-span-2">
-                  <p className="text-xs text-slate-400">Mejor lectura</p>
-                  <p className="mt-1 text-2xl font-black">{analysis.best.label} {analysis.best.line ? `· ${analysis.best.line}` : ""}</p>
-                  <p className="mt-2 text-sm text-slate-300">{analysis.detail}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs text-slate-400">Puntaje</p>
-                  <p className="mt-1 text-3xl font-black text-sky-100">{analysis.best.score.toFixed(1)}%</p>
-                  <p className="text-xs text-slate-400">Origen: {analysis.best.source}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs text-slate-400">Value / Perfil</p>
-                  <p className="mt-1 text-xl font-black">{analysis.best.implied ? `${analysis.best.value >= 0 ? "+" : ""}${analysis.best.value.toFixed(1)}%` : "Sin cuota"}</p>
-                  <p className="text-xs text-slate-400">{matchProfile.type === "abierto" ? "🔥 Abierto" : matchProfile.type === "cerrado" ? "🧊 Cerrado" : matchProfile.type === "trampa" ? "⚠️ Trampa" : "⚖️ Equilibrado"}</p>
-                </div>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-
-        {proMode ? (
-          <section className={`mb-5 overflow-hidden rounded-[2rem] border p-1 shadow-2xl shadow-black/50 backdrop-blur-xl ${proMode.tone === "green" ? "border-emerald-300/40 bg-emerald-400/10" : proMode.tone === "red" ? "border-rose-300/40 bg-rose-400/10" : "border-amber-300/40 bg-amber-400/10"}`}>
-            <div className="rounded-[1.8rem] bg-slate-950/60 p-5">
-              <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200/80">Modo PRO rentable</p>
-                  <h2 className="mt-1 text-3xl font-black">🤖 {proMode.title}</h2>
-                  <p className="mt-1 max-w-3xl text-sm text-slate-300">{proMode.message}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-right">
-                  <p className="text-xs text-slate-400">Mejor confianza real</p>
-                  <p className="text-3xl font-black text-emerald-100">{proMode.top ? `${proMode.top.realConfidence.toFixed(1)}/100` : "—"}</p>
-                </div>
-              </div>
-
-              <div className="grid gap-4 lg:grid-cols-3">
-                <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4 lg:col-span-2">
-                  <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
-                      <h3 className="text-xl font-black text-emerald-100">🧊 Parlay PRO corto</h3>
-                      <p className="text-xs text-emerald-50/80">Solo 2 selecciones, familias distintas y sin zonas trampa.</p>
-                    </div>
-                    <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-black">Cuota: {formatOdd(combinedOdds(proMode.proParlay))}</span>
-                  </div>
-                  <div className="space-y-3">
-                    {proMode.proParlay.length === 0 ? <p className="text-sm text-slate-300">Sin parlay PRO limpio. No fuerces combinación.</p> : null}
-                    {proMode.proParlay.map((pick, index) => (
-                      <div key={pick.key} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
-                        <div>
-                          <p className="text-xs text-slate-400">Selección {index + 1} · {pick.source}</p>
-                          <p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
-                          <p className="text-xs text-emerald-100">Confianza real {pick.realConfidence.toFixed(1)} · Score {formatScore(pick.score)}</p>
-                        </div>
-                        <div className="flex flex-col items-end gap-2">
-                          <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">{formatOdd(pick.odd)}</span>
-                          <button onClick={() => addPickToDaily(pick)} disabled={isPickInDaily(pick)} className={`rounded-xl px-3 py-2 text-xs font-black shadow-lg transition ${isPickInDaily(pick) ? "bg-emerald-400/20 text-emerald-100" : "bg-cyan-300 text-cyan-950 hover:bg-cyan-200"}`}>
-                            {isPickInDaily(pick) ? "✔ Añadido" : "📤 Agregar"}
+                      <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 4 }}>Tipo de apuesta</label>
+                      <div style={{ display: "flex", gap: 8, height: 40 }}>
+                        {[["Parlay", true], ["Singles", false]].map(([label, val]) => (
+                          <button key={label} onClick={() => setEsParlay(val)} style={{ flex: 1, borderRadius: 10, border: `1px solid ${esParlay === val ? "rgba(99,102,241,.4)" : "rgba(255,255,255,.1)"}`, background: esParlay === val ? "rgba(99,102,241,.2)" : "transparent", color: esParlay === val ? "#a5b4fc" : "#475569", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+                            {label}
                           </button>
-                        </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-4">
-                  <h3 className="text-xl font-black text-sky-100">🎯 Simples PRO</h3>
-                  <p className="text-xs text-sky-50/80">Mejor para stake controlado si no hay parlay limpio.</p>
-                  <div className="mt-3 space-y-3">
-                    {proMode.proSimples.length === 0 ? <p className="text-sm text-slate-300">Sin simple clara.</p> : null}
-                    {proMode.proSimples.map((pick) => (
-                      <div key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/45 p-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
-                            <p className="text-xs text-sky-100">Confianza real {pick.realConfidence.toFixed(1)} · {pick.source}</p>
-                          </div>
-                          <span className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black">{formatOdd(pick.odd)}</span>
-                        </div>
-                        <button onClick={() => addPickToDaily(pick)} disabled={isPickInDaily(pick)} className={`mt-3 w-full rounded-xl px-3 py-2 text-xs font-black ${isPickInDaily(pick) ? "bg-emerald-400/20 text-emerald-100" : "bg-cyan-300 text-cyan-950"}`}>
-                          {isPickInDaily(pick) ? "✔ Añadido al día" : "📤 Agregar al día"}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {proMode.bloqueados.length > 0 ? (
-                <div className="mt-4 rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4">
-                  <h3 className="font-black text-rose-100">⛔ Detector de sabotaje / no combinar</h3>
-                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                    {proMode.bloqueados.map((pick) => (
-                      <div key={pick.key} className="rounded-2xl border border-white/10 bg-slate-950/45 p-3">
-                        <p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
-                        <p className="text-xs text-rose-100">Confianza real {pick.realConfidence.toFixed(1)} · No forzar</p>
-                        {pick.reasons.length > 0 ? <p className="mt-1 text-xs text-slate-300">• {pick.reasons[0]}</p> : null}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </section>
-        ) : null}
-
-        <section className="rounded-3xl border border-white/10 bg-white/10 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <h2 className="text-2xl font-bold">🧩 Sugerencia de posible parlay</h2>
-          <p className="mt-1 text-xs text-slate-300">No es apuesta segura. Es una combinación razonable si no hay contradicciones fuertes.</p>
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4">
-              <h3 className="font-black text-emerald-100">🧊 Parlay conservador</h3>
-              <div className="mt-3 space-y-3">
-                {parlaySuggestions.conservador.length === 0 ? <p className="text-sm text-slate-300">Sin combinación conservadora clara.</p> : null}
-                {parlaySuggestions.conservador.map((pick, index) => (
-                  <div key={pick.key} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
-                    <div><p className="text-xs text-slate-400">Selección {index + 1} · {pick.source}</p><p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p><p className="text-xs text-slate-300">{pick.tier} · Score {formatScore(pick.score)}</p></div>
-                    <div className="flex flex-col items-end gap-2">
-                      <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">{pick.odd ? pick.odd.toFixed(2) : "Sin cuota"}</span>
-                      <button
-                        onClick={() => addPickToDaily(pick)}
-                        disabled={isPickInDaily(pick)}
-                        className={`rounded-xl px-3 py-2 text-xs font-black shadow-lg transition ${isPickInDaily(pick) ? "bg-emerald-400/20 text-emerald-100" : "bg-cyan-300 text-cyan-950 hover:bg-cyan-200"}`}
-                      >
-                        {isPickInDaily(pick) ? "✔ Añadido" : "📤 Agregar al día"}
-                      </button>
                     </div>
                   </div>
-                ))}
-              </div>
-              
-            </div>
-            <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4">
-              <h3 className="font-black text-rose-100">🔥 Parlay riesgoso</h3>
-              <div className="mt-3 space-y-3">
-                {parlaySuggestions.riesgoso.length === 0 ? <p className="text-sm text-slate-300">Sin combinación riesgosa clara.</p> : null}
-                {parlaySuggestions.riesgoso.map((pick, index) => (
-                  <div key={pick.key} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
-                    <div><p className="text-xs text-slate-400">Selección {index + 1} · {pick.source}</p><p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p><p className="text-xs text-slate-300">{pick.tier} · Score {formatScore(pick.score)}</p></div>
-                    <div className="flex flex-col items-end gap-2">
-                      <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold">{pick.odd ? pick.odd.toFixed(2) : "Sin cuota"}</span>
-                      <button
-                        onClick={() => addPickToDaily(pick)}
-                        disabled={isPickInDaily(pick)}
-                        className={`rounded-xl px-3 py-2 text-xs font-black shadow-lg transition ${isPickInDaily(pick) ? "bg-emerald-400/20 text-emerald-100" : "bg-cyan-300 text-cyan-950 hover:bg-cyan-200"}`}
-                      >
-                        {isPickInDaily(pick) ? "✔ Añadido" : "📤 Agregar al día"}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                
-              </div>
-            </div>
-          </div>
-          
-        </section>
 
-        <section className="mt-5 overflow-hidden rounded-[2rem] border border-cyan-300/25 bg-gradient-to-br from-cyan-400/15 via-slate-950/70 to-violet-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
-          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.35em] text-cyan-200/80">Planificador del día</p>
-                <h2 className="mt-1 text-3xl font-black">📤 Parlays o simples del día</h2>
-                <p className="mt-1 text-sm text-slate-300">Selecciona picks desde el bloque de parlay. Este bloque NO se borra con Limpiar partido.</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={exportDailyPicks} className="rounded-2xl bg-cyan-400 px-4 py-3 font-black text-cyan-950">🗃️ Exportar día</button>
-                <button onClick={() => dailyPicksImportRef.current?.click()} className="rounded-2xl bg-violet-400 px-4 py-3 font-black text-violet-950">📨 Importar día</button>
-                <button onClick={clearDailyPicks} className="rounded-2xl bg-rose-500 px-4 py-3 font-black text-white">🧹 Limpiar día</button>
-                <input ref={dailyPicksImportRef} type="file" accept="application/json" className="hidden" onChange={(event) => importDailyPicks(event.target.files?.[0] || null)} />
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-4">
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs text-slate-400">Picks seleccionados</p>
-                <p className="mt-1 text-3xl font-black text-cyan-100">{dailyPicks.length}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                <p className="text-xs text-slate-400">Cuota total si combinaras todo</p>
-                <p className="mt-1 text-3xl font-black text-amber-100">{combinedOdds(dailyPicks) ? combinedOdds(dailyPicks).toFixed(2) : "—"}</p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 p-4 md:col-span-2">
-                <p className="text-xs text-slate-400">Regla de disciplina</p>
-                <p className="mt-1 text-sm font-semibold text-slate-200">No agregues mercados manuales encima. Primero genera el plan y respeta qué va simple, qué va parlay y qué se descarta.</p>
-              </div>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {dailyPicks.length === 0 ? (
-                <div className="rounded-3xl border border-white/10 bg-slate-950/45 p-5 text-sm text-slate-300">
-                  Todavía no seleccionaste picks. Usa el botón <b>📤 Agregar al día</b> en Parlay conservador o riesgoso.
-                </div>
-              ) : null}
-              {dailyPicks.map((pick) => (
-                <div key={pick.id} className="grid gap-3 rounded-3xl border border-white/10 bg-slate-950/45 p-4 lg:grid-cols-[1fr_auto]">
-                  <div>
-                    <p className="text-xs text-slate-400">{pick.matchName} · {pick.source}</p>
-                    <p className="text-lg font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
-                    <p className="text-xs text-slate-300">{pick.tier} · Score {formatScore(pick.score)} · {formatOdd(pick.odd)}</p>
-                    {pick.riskFlags.length ? <p className="mt-1 text-xs text-amber-100">⚠️ {pick.riskFlags[0]}</p> : null}
-                  </div>
-                  <button onClick={() => removeDailyPick(pick.id)} className="rounded-2xl bg-rose-500/90 px-4 py-2 text-sm font-black text-white">Quitar</button>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-white/10 bg-white/10 p-4">
-              <div>
-                <h3 className="text-xl font-black">🤖 Generador de estrategia</h3>
-                <p className="text-sm text-slate-300">La app separa simples, parlay conservador, riesgoso y descartes para evitar sabotear el sistema.</p>
-              </div>
-              <button onClick={() => setDailyPlanGenerated(true)} disabled={dailyPicks.length === 0} className="rounded-2xl bg-emerald-400 px-5 py-3 font-black text-emerald-950 disabled:cursor-not-allowed disabled:bg-slate-600 disabled:text-slate-300">Generar Parlay o Simples del día</button>
-            </div>
-
-            {dailyPlanGenerated ? (
-              <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                {dailyPlan.map((group) => (
-                  <div key={group.title} className={`rounded-3xl border p-4 ${group.tone === "safe" ? "border-emerald-300/25 bg-emerald-400/10" : group.tone === "reasonable" ? "border-cyan-300/25 bg-cyan-400/10" : group.tone === "risky" ? "border-rose-300/25 bg-rose-400/10" : "border-slate-300/20 bg-slate-400/10"}`}>
-                    <div className="mb-3 flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-xl font-black">{group.title}</h3>
-                        <p className="text-xs text-slate-300">{group.subtitle}</p>
-                      </div>
-                      <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-black">{group.picks.length} picks</span>
-                    </div>
-                    {group.title.includes("Parlay") && group.picks.length ? (
-                      <p className="mb-3 rounded-2xl bg-slate-950/40 px-3 py-2 text-sm font-black text-amber-100">Cuota combinada aprox: {combinedOdds(group.picks).toFixed(2)}</p>
-                    ) : null}
-                    <div className="space-y-2">
-                      {group.picks.length === 0 ? <p className="text-sm text-slate-300">Sin picks para esta categoría.</p> : null}
-                      {group.picks.map((pick, index) => (
-                        <div key={pick.id} className="rounded-2xl border border-white/10 bg-slate-950/45 p-3">
-                          <p className="text-xs text-slate-400">Selección {index + 1} · {pick.matchName}</p>
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="font-black">{pick.label} {pick.line ? `· ${pick.line}` : ""}</p>
-                            <span className="rounded-xl bg-white/10 px-3 py-2 text-sm font-black">{formatOdd(pick.odd)}</span>
-                          </div>
-                          <p className="text-xs text-slate-300">{pick.tier} · Score {formatScore(pick.score)}</p>
+                  {/* Stats row */}
+                  {ticket.count > 0 && (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8 }}>
+                      {[
+                        { label: "Picks", val: ticket.count, color: "#818cf8" },
+                        { label: esParlay ? "Cuota combinada" : "Stake/pick", val: esParlay ? ticket.combinada.toFixed(2) : `$${(toNum(ticketStake)/ticket.count).toFixed(2)}`, color: "#e0e7ff" },
+                        { label: "Ganancia potencial", val: `$${fmtMoney(ticket.potencial - toNum(ticketStake))}`, color: "#34d399" },
+                        { label: "Prob. real est.", val: fmtPct(ticket.probReal), color: "#818cf8" },
+                        { label: "Value del ticket", val: ticket.value >= 5 ? "🟢 " + ticket.value.toFixed(1) + "pp" : ticket.value >= 0 ? "🟡 " + ticket.value.toFixed(1) + "pp" : "🔴 " + ticket.value.toFixed(1) + "pp", color: ticket.value >= 5 ? "#34d399" : ticket.value >= 0 ? "#fbbf24" : "#f87171" },
+                      ].map(x => (
+                        <div key={x.label} style={{ background: "rgba(15,23,42,.4)", borderRadius: 10, padding: "10px 12px" }}>
+                          <div style={{ fontSize: 10, color: "#475569", marginBottom: 3 }}>{x.label}</div>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: x.color }}>{x.val}</div>
                         </div>
                       ))}
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </section>
-
-        {finalReading ? (
-          <section className="relative overflow-hidden rounded-3xl border border-sky-300/20 bg-slate-950/45 p-4 shadow-2xl shadow-sky-950/40 backdrop-blur-xl">
-            <div className="pointer-events-none absolute inset-0 opacity-70" style={{ background: `radial-gradient(circle at top left, ${match.localColor1}33, transparent 35%), radial-gradient(circle at bottom right, ${match.visitColor1}33, transparent 35%)` }} />
-            <div className="relative z-10">
-              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <p className="text-xs font-black uppercase tracking-[0.35em] text-sky-200">Lectura para comparar después</p>
-                  <h2 className="mt-1 text-2xl font-black text-white">🔮 Resumen de lectura 90’</h2>
-                  <p className="mt-1 text-xs text-slate-300">No es apuesta segura. Sirve para revisar qué tan cerca estuvo la app al finalizar el partido.</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-right">
-                  <p className="text-xs text-slate-400">Perfil del partido</p>
-                  <p className="text-lg font-black">{finalReading.profile === "abierto" ? "🔥 Abierto" : finalReading.profile === "cerrado" ? "🧊 Cerrado" : finalReading.profile === "trampa" ? "⚠️ Trampa" : "⚖️ Equilibrado"}</p>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Ganador probable</p>
-                  <p className="mt-2 text-xl font-black text-white">{finalReading.winner.label}</p>
-                  <div className="mt-3 h-2 rounded-full bg-white/10"><div className="h-2 rounded-full bg-emerald-400" style={{ width: `${finalReading.winner.pct}%` }} /></div>
-                  <p className="mt-2 text-2xl font-black text-emerald-100">{finalReading.winner.pct.toFixed(1)}%</p>
+                  )}
                 </div>
 
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Doble oportunidad</p>
-                  <p className="mt-2 text-xl font-black text-white">{finalReading.doubleChance.label}</p>
-                  <div className="mt-3 h-2 rounded-full bg-white/10"><div className="h-2 rounded-full bg-sky-400" style={{ width: `${finalReading.doubleChance.pct}%` }} /></div>
-                  <p className="mt-2 text-2xl font-black text-sky-100">{finalReading.doubleChance.pct.toFixed(1)}%</p>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Total de goles</p>
-                  <p className="mt-2 text-lg font-black text-white">{finalReading.goals.label}</p>
-                  <p className="mt-1 text-xs text-slate-300">Esperado: {finalReading.goals.expected.toFixed(1)}</p>
-                  <p className="mt-2 text-2xl font-black text-violet-100">{finalReading.goals.pct.toFixed(1)}%</p>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Total de corners</p>
-                  <p className="mt-2 text-lg font-black text-white">{finalReading.corners.label}</p>
-                  <p className="mt-1 text-xs text-slate-300">Esperado: {finalReading.corners.expected.toFixed(1)}</p>
-                  <p className="mt-2 text-2xl font-black text-amber-100">{finalReading.corners.pct.toFixed(1)}%</p>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Total de tarjetas</p>
-                  <p className="mt-2 text-lg font-black text-white">{finalReading.cards.label}</p>
-                  <p className="mt-1 text-xs text-slate-300">Esperado: {finalReading.cards.expected.toFixed(1)}</p>
-                  <p className="mt-2 text-2xl font-black text-rose-100">{finalReading.cards.pct.toFixed(1)}%</p>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4">
-                <p className="text-xs font-black uppercase tracking-[0.25em] text-cyan-200">Mensaje de sugerencia</p>
-                <p className="mt-2 text-sm font-semibold text-cyan-50">{finalReading.message}</p>
-              </div>
-            </div>
-          </section>
-        ) : null}
-        
- {/* ── MEJORA 5: Calibración de predicciones ─────────────────────────── */}
-        <section className="mb-5 overflow-hidden rounded-[2rem] border border-teal-300/20 bg-gradient-to-br from-teal-400/10 via-slate-900/65 to-cyan-500/10 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
-          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.35em] text-teal-200/80">Calibrador de picks</p>
-                <h2 className="mt-1 text-2xl font-black">📐 Resultado real vs predicción</h2>
-                <p className="mt-1 text-sm text-slate-300">Registra el resultado real de cada partido. La app aprende qué tipos de pick aciertan más para que concentres el dinero ahí.</p>
-              </div>
-              <button onClick={() => setShowCalibration((v) => !v)} className="rounded-2xl border border-teal-300/30 bg-teal-400/15 px-4 py-3 font-black text-teal-100">
-                {showCalibration ? "▲ Ocultar" : "▼ Ver calibrador"}
-              </button>
-            </div>
-            {calibration.outcomes.length > 0 && (
-              <div className="grid gap-3 sm:grid-cols-4">
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs text-slate-400">Partidos registrados</p>
-                  <p className="mt-1 text-3xl font-black text-teal-100">{calibrationStats.total}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                  <p className="text-xs text-slate-400">Acierto global</p>
-                  <p className={`mt-1 text-3xl font-black ${calibrationStats.accuracy >= 70 ? "text-emerald-100" : calibrationStats.accuracy >= 50 ? "text-amber-100" : "text-rose-100"}`}>{calibrationStats.accuracy.toFixed(1)}%</p>
-                </div>
-                {(["safe", "reasonable", "risky"] as Grade[]).map((grade) => {
-                  const s = calibrationStats.byGrade[grade];
-                  return s ? (
-                    <div key={grade} className="rounded-2xl border border-white/10 bg-white/10 p-4">
-                      <p className="text-xs text-slate-400">{grade === "safe" ? "🟢 Picks seguros" : grade === "reasonable" ? "🟡 Razonables" : "🔴 Riesgosos"}</p>
-                      <p className="mt-1 text-xl font-black">{s.total > 0 ? ((s.correct / s.total) * 100).toFixed(0) : "—"}%</p>
-                      <p className="text-xs text-slate-400">{s.correct}/{s.total} picks</p>
+                {/* Kelly for ticket */}
+                {esParlay && ticket.count > 0 && toNum(bankroll.inicial) > 0 && (() => {
+                  const kb = kellyStake(ticket.probReal, ticket.combinada, stats.currentBank);
+                  return kb && kb.tier !== "none" ? (
+                    <div style={{ background: "rgba(167,139,250,.07)", border: "1px solid rgba(167,139,250,.2)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#a78bfa", marginBottom: 4 }}>🧮 Kelly Criterion</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#e0e7ff" }}>{kb.label}</div>
                     </div>
                   ) : null;
-                })}
-              </div>
-            )}
-            {showCalibration && (
-              <div className="mt-4 space-y-4">
-                <div className="rounded-2xl border border-teal-300/20 bg-slate-950/45 p-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="font-black">➕ Registrar resultado del partido</h3>
-                    <button onClick={prefillOutcomeDraft} className="rounded-xl bg-teal-400 px-3 py-2 text-xs font-black text-teal-950">⚡ Usar picks del análisis actual</button>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    <input className={inputClass} type="date" value={outcomeDraft.date} onChange={(e) => setOutcomeDraft((p) => ({ ...p, date: e.target.value }))} />
-                    <input className={inputClass} placeholder="Partido (ej: Betis vs Barça)" value={outcomeDraft.matchName} onChange={(e) => setOutcomeDraft((p) => ({ ...p, matchName: e.target.value }))} />
-                    <select className={selectClass} value={outcomeDraft.winner} onChange={(e) => setOutcomeDraft((p) => ({ ...p, winner: e.target.value as MatchOutcome["winner"] }))}>
-                      <option value="">Ganador real</option>
-                      <option value="local">Local</option>
-                      <option value="empate">Empate</option>
-                      <option value="visitante">Visitante</option>
-                    </select>
-                    <input className={inputClass} placeholder="Goles real (ej: 2-1)" value={outcomeDraft.actualGoals} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualGoals: e.target.value }))} />
-                    <input className={inputClass} placeholder="Corners total real" value={outcomeDraft.actualCorners} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualCorners: e.target.value }))} />
-                    <input className={inputClass} placeholder="Tarjetas total real" value={outcomeDraft.actualCards} onChange={(e) => setOutcomeDraft((p) => ({ ...p, actualCards: e.target.value }))} />
-                    <input className={`${inputClass} lg:col-span-2`} placeholder="Nota: qué aprendiste de este partido" value={outcomeDraft.notes} onChange={(e) => setOutcomeDraft((p) => ({ ...p, notes: e.target.value }))} />
-                  </div>
-                  {outcomeDraft.predictedPicks.length > 0 && (
-                    <div className="mt-3 rounded-xl bg-white/5 p-3">
-                      <p className="mb-2 text-xs text-slate-400">Picks a evaluar:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {outcomeDraft.predictedPicks.map((pk, i) => (
-                          <span key={i} className={`rounded-full px-3 py-1 text-xs font-bold ${pk.grade === "safe" ? "bg-emerald-400/20 text-emerald-100" : pk.grade === "reasonable" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>
-                            {pk.label}{pk.line ? ` · ${pk.line}` : ""} ({pk.score.toFixed(0)}%)
-                          </span>
-                        ))}
+                })()}
+
+                {/* Picks in ticket */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                  {picks.filter(p => p.seleccionado).map((pick, i) => (
+                    <div key={pick.id} style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 12, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: "#475569", minWidth: 20 }}>#{i + 1}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#e0e7ff" }}>{pick.mercado} {pick.linea}</div>
+                        <div style={{ fontSize: 12, color: "#475569" }}>{match.local} vs {match.visitante} · Confianza: {pick.confianza}%</div>
                       </div>
-                    </div>
-                  )}
-                  <button onClick={addOutcome} className="mt-3 rounded-2xl bg-teal-400 px-4 py-3 font-black text-teal-950">💾 Guardar resultado real</button>
-                </div>
-                <div className="space-y-2">
-                  {calibration.outcomes.length === 0 && <p className="text-sm text-slate-300">Sin resultados todavía. Registra el primero después de que termine un partido analizado.</p>}
-                  {calibration.outcomes.slice(0, 10).map((outcome) => (
-                    <div key={outcome.id} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4 lg:grid-cols-[1fr_auto]">
-                      <div>
-                        <p className="text-xs text-slate-400">{outcome.date}</p>
-                        <p className="font-black">{outcome.matchName}</p>
-                        <div className="mt-1 flex flex-wrap gap-2 text-xs">
-                          <span className="rounded-full bg-white/10 px-2 py-1">{outcome.winner === "local" ? "🏠 Local" : outcome.winner === "visitante" ? "✈️ Visitante" : outcome.winner === "empate" ? "🤝 Empate" : "—"}</span>
-                          {outcome.actualGoals && <span className="rounded-full bg-white/10 px-2 py-1">⚽ {outcome.actualGoals}</span>}
-                          {outcome.actualCorners && <span className="rounded-full bg-white/10 px-2 py-1">🚩 {outcome.actualCorners} corners</span>}
-                          {outcome.actualCards && <span className="rounded-full bg-white/10 px-2 py-1">🟨 {outcome.actualCards} tarjetas</span>}
-                        </div>
-                        {outcome.notes && <p className="mt-1 text-xs text-slate-400 italic">💡 {outcome.notes}</p>}
-                        {outcome.predictedPicks.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {outcome.predictedPicks.map((pk, i) => (
-                              <span key={i} className="rounded-full bg-white/5 px-2 py-1 text-[11px] text-slate-300">{pk.label} ({pk.score.toFixed(0)}%)</span>
-                            ))}
-                          </div>
-                        )}
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 15, fontWeight: 900, color: "#818cf8" }}>{toNum(pick.cuotaCasa) > 1 ? toNum(pick.cuotaCasa).toFixed(2) : "—"}</div>
+                        {pick.valueLabel && <div style={{ fontSize: 10, color: pick.color === "green" ? "#34d399" : pick.color === "yellow" ? "#fbbf24" : "#f87171" }}>{pick.valueLabel}</div>}
                       </div>
-                      <button onClick={() => deleteOutcome(outcome.id)} className="self-start rounded-xl bg-rose-500/80 px-3 py-2 text-xs font-black text-white">🗑️</button>
+                      <button onClick={() => togglePickSel(pick.id)} style={{ padding: "4px 8px", borderRadius: 6, border: "none", background: "rgba(239,68,68,.15)", color: "#f87171", fontSize: 11, cursor: "pointer" }}>✕</button>
                     </div>
                   ))}
                 </div>
-              </div>
+
+                <button onClick={saveTicket} style={{ width: "100%", padding: "16px", borderRadius: 14, border: "none", background: "linear-gradient(135deg, #059669, #047857)", color: "#fff", fontSize: 15, fontWeight: 900, cursor: "pointer", boxShadow: "0 4px 20px rgba(5,150,105,.3)" }}>
+                  💾 Guardar Ticket en Historial
+                </button>
+              </>
             )}
           </div>
-        </section>
-
-
-<div className="mt-4 grid gap-4 lg:grid-cols-3">
-              <div className="rounded-3xl border border-white/10 bg-white/10 p-4 lg:col-span-2">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-xl font-black">➕ Registrar apuesta</h3>
-                  <button onClick={quickFillBankBet} className="rounded-xl bg-amber-300 px-3 py-2 text-sm font-black text-amber-950">⚡ Usar mejor lectura</button>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                  <input className={inputClass} type="date" value={bankBetDraft.date} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, date: event.target.value }))} />
-                  <input className={inputClass} placeholder="Partido" value={bankBetDraft.matchName} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, matchName: event.target.value }))} />
-                  <input className={inputClass} placeholder="Pick / selección" value={bankBetDraft.pick} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, pick: event.target.value }))} />
-                  <select className={selectClass} value={bankBetDraft.market} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, market: event.target.value }))}>
-                    <option value="">Mercado</option>
-                    <option value="Ganador / doble oportunidad">Ganador / doble oportunidad</option>
-                    <option value="Goles">Goles</option>
-                    <option value="Corners">Corners</option>
-                    <option value="Tarjetas">Tarjetas</option>
-                    <option value="Handicap">Handicap</option>
-                    <option value="Parlay">Parlay</option>
-                  </select>
-                  <input className={inputClass} inputMode="decimal" placeholder="Monto apostado" value={bankBetDraft.stake} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, stake: event.target.value }))} />
-                  <input className={inputClass} inputMode="decimal" placeholder="Cuota total" value={bankBetDraft.odd} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, odd: event.target.value }))} />
-                  <select className={selectClass} value={bankBetDraft.source} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, source: event.target.value as BetSource }))}>
-                    <option value="app">🤖 App</option>
-                    <option value="manual">🧍 Manual</option>
-                  </select>
-                  <select className={selectClass} value={bankBetDraft.status} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, status: event.target.value as BetStatus }))}>
-                    <option value="pending">Pendiente</option>
-                    <option value="won">Ganada</option>
-                    <option value="lost">Perdida</option>
-                    <option value="void">Nula</option>
-                  </select>
-                  <input className={`${inputClass} sm:col-span-2 lg:col-span-3`} placeholder="Nota corta: por qué la jugaste / qué aprendiste" value={bankBetDraft.notes} onChange={(event) => setBankBetDraft((prev) => ({ ...prev, notes: event.target.value }))} />
-                  <button onClick={addBankBet} className="rounded-2xl bg-emerald-400 px-4 py-3 font-black text-emerald-950 shadow-lg shadow-emerald-400/20">Guardar apuesta</button>
-                </div>
-              </div>
-
-              <div className="rounded-3xl border border-white/10 bg-white/10 p-4">
-                <h3 className="text-xl font-black">🏆 Mercados</h3>
-                <div className="mt-3 space-y-2">
-                  {bankrollStats.byMarket.length === 0 ? <p className="text-sm text-slate-300">Aún no hay mercados cerrados.</p> : null}
-                  {bankrollStats.byMarket.map((item) => (
-                    <div key={item.market} className="rounded-2xl bg-slate-950/45 p-3">
-                      <div className="flex justify-between gap-2 text-sm"><span className="font-bold">{item.market}</span><span className={item.profit >= 0 ? "text-emerald-200" : "text-rose-200"}>{item.profit >= 0 ? "+" : ""}{formatMoney(item.profit)}</span></div>
-                      <p className="text-xs text-slate-400">{item.total} cerradas · ROI {item.stake > 0 ? ((item.profit / item.stake) * 100).toFixed(1) : "0.0"}%</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-        
-   {/* ── MEJORA 1 & 3: Panel Kelly + Value Bet Estricto ─────────────────── */}
-        {showKellyPanel && (
-          <section className="mb-5 rounded-3xl border border-violet-300/30 bg-gradient-to-br from-violet-400/15 via-slate-900/60 to-indigo-500/15 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl">
-            <div className="mb-4">
-              <p className="text-xs font-black uppercase tracking-[0.35em] text-violet-200/80">Criterio de Kelly + Value Bet</p>
-              <h2 className="mt-1 text-2xl font-black">🎯 Calculadora de stake óptimo</h2>
-              <p className="mt-1 text-xs text-slate-300">Kelly te dice exactamente cuánto apostar según tu bankroll. Value Bet estricto filtra cuándo la cuota realmente vale.</p>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              {hasMinimumData && bankrollStats.currentBank > 0 ? (
-                <div className="rounded-2xl border border-violet-300/20 bg-slate-950/40 p-4">
-                  <h3 className="mb-3 font-black text-violet-100">📊 Picks actuales con Kelly</h3>
-                  <div className="space-y-3">
-                    {[...results.slice(0, 4).map((p) => ({ key: p.key, label: p.label, line: p.line, score: p.blendedScore, odd: p.avgOdd })),
-                      ...housePicks.slice(0, 2).map((p) => ({ key: p.key, label: p.label, line: p.line, score: p.modelScore, odd: p.odd }))]
-                      .filter((p) => p.score >= 65 && p.odd > 1)
-                      .slice(0, 6)
-                      .map((p) => {
-                        const va = strictValueBetAnalysis(p.score, p.odd, bankrollStats.currentBank);
-                        return (
-                          <div key={p.key} className="rounded-xl border border-white/10 bg-white/5 p-3">
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <p className="text-sm font-black">{p.label}{p.line ? ` · ${p.line}` : ""}</p>
-                                <p className="text-xs text-slate-400">Score {p.score.toFixed(1)}% · Cuota {p.odd.toFixed(2)}</p>
-                              </div>
-                              <span className={`rounded-full px-2 py-1 text-xs font-black ${va.verdictColor === "green" ? "bg-emerald-400/20 text-emerald-100" : va.verdictColor === "yellow" ? "bg-amber-400/20 text-amber-100" : "bg-rose-400/20 text-rose-100"}`}>
-                                {va.edge >= 0 ? "+" : ""}{va.edge.toFixed(1)}%
-                              </span>
-                            </div>
-                            <p className={`mt-2 text-xs font-bold ${va.kellyResult.tier === "fuerte" ? "text-emerald-100" : va.kellyResult.tier === "moderado" ? "text-amber-100" : va.kellyResult.tier === "minimo" ? "text-sky-100" : "text-rose-100"}`}>{va.kellyResult.label}</p>
-                            <p className={`mt-1 text-xs ${va.verdictColor === "green" ? "text-emerald-200/80" : va.verdictColor === "yellow" ? "text-amber-200/80" : "text-rose-200/80"}`}>{va.verdict}</p>
-                          </div>
-                        );
-                      })}
-                    {![...results, ...housePicks].some((p) => ("blendedScore" in p ? p.blendedScore : p.modelScore) >= 65) && (
-                      <p className="text-sm text-slate-300">Carga picks (score ≥65%) para ver el análisis Kelly.</p>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-white/10 bg-slate-950/40 p-4 text-sm text-slate-300">
-                  {bankrollStats.currentBank <= 0 ? "Ingresa tu bank inicial en el Bankroll Tracker para activar Kelly." : "Carga datos del partido primero."}
-                </div>
-              )}
-              <div className="rounded-2xl border border-indigo-300/20 bg-slate-950/40 p-4">
-                <h3 className="mb-3 font-black text-indigo-100">🧮 Valor del parlay PRO actual</h3>
-                {(() => {
-              const parlayPicks: {
-  score: number;
-  odd: number;
-  label: string;
-}[] = [
-  ...(proMode?.proParlay ?? []).map((p) => ({
-    score: Number(p.score || 0),
-    odd: Number(p.odd || 0),
-    label: String(p.label || ""),
-  })),
-
-  ...((proMode?.proParlay?.length ?? 0) === 0
-    ? parlaySuggestions.conservador.map((p) => ({
-        score: Number(
-          "blendedScore" in p
-            ? p.blendedScore
-            : "modelScore" in p
-            ? p.modelScore
-            : p.score
-        ),
-
-        odd: Number(
-          "avgOdd" in p
-            ? p.avgOdd
-            : p.odd
-        ),
-
-        label: String(p.label || ""),
-      }))
-    : []),
-].slice(0, 3);
-                  if (!parlayPicks.length) return <p className="text-sm text-slate-300">Genera picks primero para analizar el valor del parlay.</p>;
-                  const pAlert = parlayValueAlert(parlayPicks);
-                  const bankForKelly = bankrollStats.currentBank || 0;
-                  const pKelly = bankForKelly > 0 ? kellyStake(pAlert.realProb, pAlert.combinedOdds, bankForKelly) : null;
-                  return (
-                    <div className="space-y-3">
-                      <div className={`rounded-xl border p-3 ${pAlert.color === "green" ? "border-emerald-300/30 bg-emerald-400/10" : pAlert.color === "yellow" ? "border-amber-300/30 bg-amber-400/10" : "border-rose-300/30 bg-rose-400/10"}`}>
-                        <p className={`text-xs font-bold ${pAlert.color === "green" ? "text-emerald-100" : pAlert.color === "yellow" ? "text-amber-100" : "text-rose-100"}`}>{pAlert.message}</p>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-xs">
-                        <div className="rounded-xl bg-white/5 p-3"><p className="text-slate-400">Prob. real</p><b className="text-white">{pAlert.realProb.toFixed(1)}%</b></div>
-                        <div className="rounded-xl bg-white/5 p-3"><p className="text-slate-400">Prob. casa</p><b className="text-white">{pAlert.impliedProbCasa.toFixed(1)}%</b></div>
-                        <div className="rounded-xl bg-white/5 p-3"><p className="text-slate-400">Cuota total</p><b className="text-white">{pAlert.combinedOdds > 1 ? pAlert.combinedOdds.toFixed(2) : "—"}</b></div>
-                      </div>
-                      {pKelly && (
-                        <div className="rounded-xl border border-violet-300/20 bg-violet-400/10 p-3">
-                          <p className="text-xs text-violet-200">Kelly para este parlay:</p>
-                          <p className={`mt-1 text-sm font-black ${pKelly.tier === "fuerte" ? "text-emerald-100" : pKelly.tier === "moderado" ? "text-amber-100" : pKelly.tier === "minimo" ? "text-sky-100" : "text-rose-100"}`}>{pKelly.label}</p>
-                        </div>
-                      )}
-                      <div className="space-y-1">
-                        {parlayPicks.map((p, i) => (
-                          <div key={i} className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2 text-xs">
-                            <span className="text-slate-200">{p.label}</span>
-                            <span className="font-bold">{p.score.toFixed(0)}% · {p.odd > 1 ? p.odd.toFixed(2) : "—"}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          </section>
         )}
 
+        {/* ── TAB: BANKROLL ──────────────────────────────────────────────── */}
+        {activeTab === "bankroll" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#34d399", textTransform: "uppercase", marginBottom: 2 }}>Gestión de Dinero</div>
+              <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>💼 Bankroll Tracker</h2>
+            </div>
 
-   {/* ── HISTORIAL DE ANÁLISIS ────────────────────────────────────────────── */}
-        <section className="mb-5 overflow-hidden rounded-[2rem] border border-indigo-300/20 bg-gradient-to-br from-indigo-400/10 via-slate-900/65 to-blue-500/10 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
-          <div className="rounded-[1.8rem] bg-slate-950/55 p-5">
-            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.35em] text-indigo-200/80">Memoria de partidos</p>
-                <h2 className="mt-1 text-2xl font-black">📂 Historial de análisis</h2>
-                <p className="mt-1 text-sm text-slate-300">Guarda hasta 15 análisis. Puedes cargar cualquiera sin perder el actual — compara partidos y recupera trabajo.</p>
+            {/* Streak & loss alerts */}
+            {streak >= 3 && (
+              <div style={{ background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 12, padding: "12px 16px", marginBottom: 14, color: "#fca5a5", fontSize: 13, fontWeight: 700 }}>
+                🚨 {streak >= 5 ? `Llevas ${streak} pérdidas consecutivas. ¡Para ya!` : `${streak} pérdidas seguidas. Considera pausar.`}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={saveToHistory} className="rounded-2xl bg-indigo-400 px-4 py-3 font-black text-indigo-950">💾 Guardar análisis actual</button>
-                <button onClick={() => setShowHistory((v) => !v)} className="rounded-2xl border border-indigo-300/30 bg-indigo-400/15 px-4 py-3 font-black text-indigo-100">
-                  {showHistory ? "▲ Ocultar" : `▼ Ver historial (${analysisHistory.items.length})`}
-                </button>
+            )}
+            {dailyExceeded && (
+              <div style={{ background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 12, padding: "12px 16px", marginBottom: 14, color: "#fca5a5", fontSize: 13, fontWeight: 700 }}>
+                🚨 Stop-loss diario alcanzado: perdiste ${fmtMoney(todayLoss)} hoy (límite: ${fmtMoney(dailyLimitAmt)})
+              </div>
+            )}
+
+            {/* Stats cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10, marginBottom: 20 }}>
+              {[
+                { label: "Banco actual", val: `$${fmtMoney(stats.currentBank)}`, color: stats.currentBank >= stats.inicial ? "#34d399" : "#f87171" },
+                { label: "P&L total", val: `${stats.totalProfit >= 0 ? "+" : ""}$${fmtMoney(stats.totalProfit)}`, color: stats.totalProfit >= 0 ? "#34d399" : "#f87171" },
+                { label: "ROI", val: `${stats.roi >= 0 ? "+" : ""}${stats.roi.toFixed(1)}%`, color: stats.roi >= 0 ? "#34d399" : "#f87171" },
+                { label: "Win Rate", val: fmtPct(stats.winRate), color: "#818cf8" },
+                { label: "Ganadas", val: stats.wins, color: "#34d399" },
+                { label: "Perdidas", val: stats.losses, color: "#f87171" },
+              ].map(x => (
+                <div key={x.label} style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 12, padding: "14px 12px" }}>
+                  <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>{x.label}</div>
+                  <div style={{ fontSize: 16, fontWeight: 900, color: x.color }}>{x.val}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Config */}
+            <div style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 14, padding: 16, marginBottom: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 4 }}>Banco inicial ($)</label>
+                  <input type="number" value={bankroll.inicial} onChange={e => setBankroll(b => ({ ...b, inicial: e.target.value }))}
+                    placeholder="1000"
+                    style={{ width: "100%", background: "rgba(3,7,18,.6)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "8px 10px", color: "#e2e8f0", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 4 }}>Stop-loss diario (%)</label>
+                  <input type="number" value={dailyLossLimit} onChange={e => setDailyLossLimit(e.target.value)}
+                    placeholder="20"
+                    style={{ width: "100%", background: "rgba(3,7,18,.6)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, padding: "8px 10px", color: "#e2e8f0", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                </div>
               </div>
             </div>
 
-            {showHistory && (
-              <div className="space-y-2">
-                {analysisHistory.items.length === 0 && (
-                  <p className="text-sm text-slate-300">Sin análisis guardados todavía. Carga un partido y pulsa "Guardar análisis actual".</p>
-                )}
-                {analysisHistory.items.map((item) => (
-                  <div key={item.id} className="grid gap-3 rounded-2xl border border-white/10 bg-slate-950/45 p-4 lg:grid-cols-[1fr_auto]">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-black text-indigo-100">{item.matchName}</p>
-                        <span className={`rounded-full px-2 py-1 text-xs font-bold ${item.profile === "abierto" ? "bg-emerald-400/20 text-emerald-100" : item.profile === "cerrado" ? "bg-sky-400/20 text-sky-100" : item.profile === "trampa" ? "bg-rose-400/20 text-rose-100" : "bg-slate-400/20 text-slate-100"}`}>
-                          {item.profile}
-                        </span>
-                        <span className="text-xs text-slate-400">{new Date(item.savedAt).toLocaleDateString("es", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+            {/* Add bet manually */}
+            <div style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 14, padding: 16, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#64748b", marginBottom: 12 }}>+ Registrar apuesta manual</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                {[
+                  { key: "partido", label: "Partido", placeholder: "Real Madrid vs Barça" },
+                  { key: "pick", label: "Pick", placeholder: "Más de 2.5 goles" },
+                  { key: "stake", label: "Monto ($)", placeholder: "10", type: "number" },
+                  { key: "cuota", label: "Cuota", placeholder: "1.85", type: "number" },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label style={{ fontSize: 10, color: "#475569", display: "block", marginBottom: 3 }}>{f.label}</label>
+                    <input type={f.type || "text"} value={betDraft[f.key]} onChange={e => setBetDraft(b => ({ ...b, [f.key]: e.target.value }))}
+                      placeholder={f.placeholder}
+                      style={{ width: "100%", background: "rgba(3,7,18,.6)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 8, padding: "7px 10px", color: "#e2e8f0", fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                ))}
+              </div>
+              <button onClick={addBet} style={{ width: "100%", marginTop: 10, padding: "10px", borderRadius: 10, border: "none", background: "rgba(99,102,241,.2)", color: "#a5b4fc", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+                + Agregar Apuesta
+              </button>
+            </div>
+
+            {/* Bet history */}
+            <button onClick={() => setShowBankHistory(v => !v)} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "1px solid rgba(255,255,255,.07)", background: "transparent", color: "#64748b", fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>📋 Historial de apuestas ({bankroll.apuestas.length})</span>
+              <span>{showBankHistory ? "▲" : "▼"}</span>
+            </button>
+
+            {showBankHistory && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {bankroll.apuestas.length === 0 && <div style={{ textAlign: "center", color: "#475569", padding: 20, fontSize: 13 }}>Sin apuestas registradas</div>}
+                {bankroll.apuestas.slice(0, 30).map(bet => (
+                  <div key={bet.id} style={{ background: "rgba(15,23,42,.5)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 12, padding: "12px 14px" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#e0e7ff" }}>{bet.partido}</div>
+                        <div style={{ fontSize: 12, color: "#64748b" }}>{bet.pick} · ${bet.stake} @ {bet.cuota}</div>
+                        <div style={{ fontSize: 11, color: "#475569" }}>{bet.fecha}</div>
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {item.topPicks.map((pk, i) => (
-                          <span key={i} className={`rounded-full px-2 py-1 text-xs ${pk.grade === "safe" ? "bg-emerald-400/15 text-emerald-100" : pk.grade === "reasonable" ? "bg-amber-400/15 text-amber-100" : "bg-rose-400/15 text-rose-100"}`}>
-                            {pk.label} {pk.score.toFixed(0)}%
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        {bet.estado === "pendiente" && (
+                          <>
+                            <button onClick={() => updateBetStatus(bet.id, "ganada")} style={{ padding: "4px 8px", borderRadius: 6, border: "none", background: "rgba(52,211,153,.2)", color: "#34d399", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✓ W</button>
+                            <button onClick={() => updateBetStatus(bet.id, "perdida")} style={{ padding: "4px 8px", borderRadius: 6, border: "none", background: "rgba(239,68,68,.2)", color: "#f87171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✗ L</button>
+                          </>
+                        )}
+                        {bet.estado !== "pendiente" && (
+                          <span style={{ fontSize: 13, fontWeight: 800, color: bet.estado === "ganada" ? "#34d399" : "#f87171" }}>
+                            {bet.estado === "ganada" ? `+$${fmtMoney(betProfit(bet))}` : `-$${fmtMoney(Math.abs(betProfit(bet)))}`}
                           </span>
-                        ))}
+                        )}
+                        {bet.estado === "pendiente" && <span style={{ fontSize: 11, color: "#475569" }}>pendiente</span>}
+                        <button onClick={() => deleteBet(bet.id)} style={{ padding: "4px 6px", borderRadius: 6, border: "none", background: "rgba(239,68,68,.1)", color: "#f87171", fontSize: 11, cursor: "pointer" }}>🗑</button>
                       </div>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <button onClick={() => loadFromHistory(item)} className="rounded-xl bg-indigo-400/20 px-3 py-2 text-xs font-black text-indigo-100 hover:bg-indigo-400/40">📂 Cargar</button>
-                      <button onClick={() => deleteFromHistory(item.id)} className="rounded-xl bg-rose-500/20 px-3 py-2 text-xs font-black text-rose-100">🗑️</button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
-        </section>
+        )}
 
-{match.local && match.visitante ? (
-  <section className="mb-5 overflow-hidden rounded-[2rem] border border-emerald-300/20 bg-gradient-to-br from-emerald-400/15 via-slate-900/75 to-sky-500/15 p-1 shadow-2xl shadow-black/50 backdrop-blur-xl">
-    <div className="rounded-[1.8rem] bg-slate-950/50">
-      <button
-        onClick={() => toggleSection("bankroll")}
-        className="flex w-full items-center justify-between p-5 text-left"
-      >
-        <div>
-          <p className="text-xs font-black uppercase tracking-[0.35em] text-emerald-200/80">
-            Control real de dinero
-          </p>
-          <h2 className="mt-1 text-3xl font-black">
-            💼 Bankroll tracker
-          </h2>
-          <p className="mt-1 text-sm text-slate-300">
-            Este bloque NO se borra con Limpiar. Solo con Reset bankroll.
-          </p>
-        </div>
-
-        <span className="text-3xl text-emerald-300">
-          {openSections.bankroll ? "▲" : "▼"}
-        </span>
-      </button>
-
-      {openSections.bankroll && (
-        <div className="p-5 pt-0">
-          <div
-            className="rounded-[1.5rem] border border-white/10 p-1"
-            style={{
-              background: `linear-gradient(
-                120deg,
-                ${match.localColor1}55,
-                rgba(15,23,42,.85) 40%,
-                rgba(15,23,42,.85) 60%,
-                ${match.visitColor1}55
-              )`,
-            }}
-          >
-            <div className="rounded-[1.35rem] bg-slate-950/45 p-5 text-center">
-              <p className="mb-3 text-xs font-bold uppercase tracking-[0.35em] text-slate-200">
-                Partido analizado
-              </p>
-
-              <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
-                <TeamBadge
-                  name={match.local}
-                  color1={match.localColor1}
-                  color2={match.localColor2}
-                />
-
-                <div className="text-3xl font-black tracking-wide text-white sm:text-5xl">
-                  {match.local}
-                  <span className="mx-3 text-slate-400">vs</span>
-                  {match.visitante}
-                </div>
-
-                <TeamBadge
-                  name={match.visitante}
-                  color1={match.visitColor1}
-                  color2={match.visitColor2}
-                />
-              </div>
-
-              <div className="mt-5 flex flex-wrap justify-center gap-2 text-xs text-slate-200">
-                <span className="rounded-full bg-white/10 px-3 py-1">
-                  1: {match.oddLocal || "—"}
-                </span>
-
-                <span className="rounded-full bg-white/10 px-3 py-1">
-                  X: {match.oddDraw || "—"}
-                </span>
-
-                <span className="rounded-full bg-white/10 px-3 py-1">
-                  2: {match.oddVisit || "—"}
-                </span>
-              </div>
+        {/* ── TAB: HISTORIAL ─────────────────────────────────────────────── */}
+        {activeTab === "historial" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#818cf8", textTransform: "uppercase", marginBottom: 2 }}>Registro y Tracking</div>
+              <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>📚 Historial de Tickets</h2>
             </div>
-          </div>
-        </div>
-      )}
-    </div>
-  </section>
-) : null}
+
+            {historial.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "60px 20px", color: "#475569" }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>📭</div>
+                <div>Sin tickets guardados aún</div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {historial.map(ticket => (
+                  <div key={ticket.id} style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 15, color: "#e0e7ff" }}>{ticket.partido}</div>
+                        <div style={{ fontSize: 11, color: "#475569" }}>{new Date(ticket.fecha).toLocaleDateString("es", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 14, fontWeight: 900, color: "#818cf8" }}>{ticket.esParlay ? "Parlay" : "Singles"}</div>
+                        <div style={{ fontSize: 13, color: "#34d399" }}>Pot: ${fmtMoney(ticket.potencial - toNum(ticket.stake))}</div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {(ticket.picks || []).map((p, i) => (
+                        <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "rgba(99,102,241,.1)", color: "#a5b4fc", border: "1px solid rgba(99,102,241,.2)" }}>
+                          {p.mercado} {p.linea} @ {p.cuotaCasa}
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+                      <span style={{ fontSize: 12, color: "#64748b" }}>Stake: ${ticket.stake}</span>
+                      <span style={{ fontSize: 12, color: "#64748b" }}>|</span>
+                      <span style={{ fontSize: 12, color: "#64748b" }}>Prob. real: {fmtPct(ticket.probReal)}</span>
+                      <button onClick={() => { if (confirm("¿Eliminar ticket?")) setHistorial(h => h.filter(t => t.id !== ticket.id)); }}
+                        style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 8, border: "none", background: "rgba(239,68,68,.1)", color: "#f87171", fontSize: 11, cursor: "pointer" }}>
+                        🗑 Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
-      </div>
-    </main>
+
+      </main>
+
+      {/* CSS animation */}
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+    </div>
   );
 }
