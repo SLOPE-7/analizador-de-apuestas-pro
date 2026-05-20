@@ -1,3 +1,4 @@
+// @ts-nocheck
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 
@@ -54,7 +55,7 @@ const emptyBet = () => ({ id: makeId(), fecha: new Date().toISOString().slice(0,
 const emptyBankroll = () => ({ inicial: "", apuestas: [] });
 
 // ── FILTROS DE MERCADO ───────────────────────────────────────────────────────
-const MARKET_FILTERS = ["Todos", "1X2", "Doble Oportunidad", "Goles", "Corners", "Tarjetas", "Handicap", "Remates"];
+const MARKET_FILTERS = ["Todos📝", "1X2⚔️", "Doble Oportunidad🛠️", "Goles⚽", "Corners⛳", "Tarjetas🟧🟥", "Handicap🌀", "Remates🦿"];
 function matchesFilter(pick, filter) {
   if (filter === "Todos") return true;
   const m = (pick.mercado || "").toLowerCase();
@@ -418,7 +419,7 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 28 }}>⚽</span>
             <div>
-              <div style={{ fontWeight: 900, fontSize: 18, letterSpacing: "-.02em", color: "#e0e7ff" }}>BetAnalyzer KAL <span style={{ color: "#818cf8" }}>PRO</span></div>
+              <div style={{ fontWeight: 900, fontSize: 18, letterSpacing: "-.02em", color: "#e0e7ff" }}>BetAnalyzer KAL<span style={{ color: "#818cf8" }}>PRO</span></div>
               <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase" }}>IA Predictiva · Gestión de Banca</div>
             </div>
           </div>
@@ -453,8 +454,8 @@ export default function App() {
             {/* Match Input */}
             <section style={{ background: "rgba(30,27,75,.4)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 20, padding: 24, marginBottom: 20 }}>
               <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".12em", textTransform: "uppercase", color: "#818cf8", marginBottom: 4 }}>Datos del Partido</div>
-                <h2 style={{ fontSize: 22, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>⚽Registra el Partido⚽</h2>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".12em", textTransform: "uppercase", color: "#818cf8", marginBottom: 4 }}>⚽Datos del Partido⚽</div>
+                <h2 style={{ fontSize: 22, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>⚽Registrar Partido⚽</h2>
               </div>
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
                 {[
@@ -472,14 +473,14 @@ export default function App() {
               </div>
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(3,1fr)", marginTop: 12 }}>
                 {[
-                  { key: "oddLocal", label: "💵Cuota Local🏡 (1)" },
-                  { key: "oddDraw", label: "💵Cuota Empate⚔️ (X)" },
-                  { key: "oddVisit", label: "💵Cuota Visitante🛩️ (2)" },
+                  { key: "oddLocal", label: "Cuota Local🏡 (1)" },
+                  { key: "oddDraw", label: "Cuota Empate🛡️ (X)" },
+                  { key: "oddVisit", label: "Cuota Visitante🛩️ (2)" },
                 ].map(f => (
                   <div key={f.key}>
                     <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", display: "block", marginBottom: 4 }}>{f.label}</label>
                     <input type="number" step="0.01" value={match[f.key]} onChange={e => setMatch(m => ({ ...m, [f.key]: e.target.value }))}
-                      placeholder="💴1.85💴"
+                      placeholder="💵1.85💵"
                       style={{ width: "100%", background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.1)", borderRadius: 10, padding: "10px 12px", color: "#e2e8f0", fontSize: 14, outline: "none", boxSizing: "border-box" }} />
                   </div>
                 ))}
