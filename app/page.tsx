@@ -198,11 +198,6 @@ export default function App() {
 
       if (!finalText) throw new Error("Sin respuesta de texto de la IA");
 
-      // DEBUG: log exactly what we got
-      console.log("=== AI RAW RESPONSE ===");
-      console.log(finalText);
-      console.log("=== END AI RESPONSE ===");
-
       // Robust JSON extractor — finds outermost { } block
       let parsed;
       try {
@@ -370,8 +365,13 @@ export default function App() {
         if (Array.isArray(data.picks)) setPicks(data.picks);
         if (data.bankroll) setBankroll({ ...emptyBankroll(), ...data.bankroll });
         if (Array.isArray(data.historial)) setHistorial(data.historial);
-        setAiStatus("idle");
-        setAiResult(null);
+        if (data.aiResult) {
+          setAiResult(data.aiResult);
+          setAiStatus("done");
+        } else {
+          setAiResult(null);
+          setAiStatus("idle");
+        }
         setActiveTab("analisis");
         alert("✅ Partido importado correctamente.");
       } catch {
@@ -382,7 +382,7 @@ export default function App() {
   };
 
   const exportData = () => {
-    const data = { match, picks, bankroll, historial, exportedAt: new Date().toISOString() };
+    const data = { match, picks, bankroll, historial, aiResult, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
