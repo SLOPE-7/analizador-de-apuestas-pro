@@ -41,6 +41,7 @@ const BK = "bankroll_ia_pro_v2";
 const HK = "historial_ia_pro_v2";
 const RK = "review_ia_pro_v3";
 const JK = "jornadas_mundial_v1"; // NEW: jornada tracking for mundial mode
+const FK = "favoritos_ia_pro_v1"; // favoritos: clubes + selecciones
 
 function loadState(key, fallback) {
   try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; } catch { return fallback; }
@@ -147,7 +148,29 @@ function calcIAStats(reviews) {
   return { aciertos, fallos, winRate, buckets, streak, streakType, biasAlert, totalPicks: settled.length, overs, unders, biasPct, mercadoStats, failingMarkets, winningMarkets };
 }
 
-// ── TRACK RECORD POR MERCADO ─────────────────────────────────────────────────
+// ── ROI POR COMPETICIÓN ──────────────────────────────────────────────────────
+function calcROIByLiga(reviews) {
+  const byLiga = {};
+  reviews.forEach(r => {
+    const liga = r.liga || "Sin liga";
+    if (!byLiga[liga]) byLiga[liga] = { total: 0, aciertos: 0 };
+    (r.picks || []).forEach(p => {
+      if (p.resultado === "acierto" || p.resultado === "fallo") {
+        byLiga[liga].total++;
+        if (p.resultado === "acierto") byLiga[liga].aciertos++;
+      }
+    });
+  });
+  return Object.entries(byLiga)
+    .filter(([, v]) => v.total >= 3)
+    .map(([liga, v]) => ({
+      liga,
+      total: v.total,
+      aciertos: v.aciertos,
+      rate: (v.aciertos / v.total) * 100,
+    }))
+    .sort((a, b) => b.rate - a.rate);
+}
 function getMarketTrackRecord(reviews, mercado) {
   const allPicks = reviews.flatMap(r => r.picks || []);
   const settled = allPicks.filter(p =>
@@ -222,6 +245,24 @@ function buildJornadaContext(jornadas, local, visitante) {
   }
   ctx += "\nUsa estos datos de jornadas para tu análisis. Son observaciones reales del usuario.";
   return ctx;
+}
+
+// ── FAVORITOS: PROMPT DE BÚSQUEDA DE PARTIDOS ────────────────────────────────
+function buildPartidosPrompt(favoritos) {
+  const clubes = favoritos.filter(f => f.tipo === "club").map(f => `${f.nombre} (${f.ligas?.join(", ") || "todas sus competencias"})`);
+  const selecciones = favoritos.filter(f => f.tipo === "seleccion").map(f => f.nombre);
+  const hoy = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+
+  return `Eres un asistente de apuestas deportivas. Busca en la web los partidos de fútbol de los próximos 3 días (hoy es ${hoy}) para los equipos y selecciones indicados. Considera TODAS sus competencias activas (liga local, copas, Champions, eliminatorias, etc.).
+
+EQUIPOS A BUSCAR:
+${clubes.length ? `Clubes:\n${clubes.map(c => `- ${c}`).join("\n")}` : ""}
+${selecciones.length ? `Selecciones nacionales:\n${selecciones.map(s => `- ${s}`).join("\n")}` : ""}
+
+Para cada partido encontrado, incluye: equipos, competencia exacta, fecha, hora aproximada (si la encuentras). Si un equipo no tiene partido en los próximos 3 días, no lo incluyas.
+
+Responde ÚNICAMENTE con este JSON puro, sin backticks, sin texto extra:
+{"partidos":[{"local":"nombre equipo local","visitante":"nombre equipo visitante","liga":"nombre competencia exacta","fecha":"YYYY-MM-DD","hora":"HH:MM o vacío","tipo":"club o seleccion","equipoFavorito":"nombre del equipo favorito que aparece en este partido"}],"busquedaFecha":"${hoy}","resumen":"cuántos partidos encontraste y de qué equipos"}`;
 }
 
 // ── AI PROMPT BUILDER ────────────────────────────────────────────────────────
@@ -359,11 +400,22 @@ export default function App() {
   const [historial, setHistorial] = useState(() => loadState(HK, []));
   const [reviews, setReviews] = useState(() => loadState(RK, []));
   const [jornadas, setJornadas] = useState(() => loadState(JK, [])); // NEW
+  const [favoritos, setFavoritos] = useState(() => loadState(FK, []));
+  const [partidosBusqueda, setPartidosBusqueda] = useState(() => {
+    const saved = loadState("partidos_busqueda_v1", null);
+    if (!saved) return null;
+    // Expire after 24h
+    const savedAt = new Date(saved.savedAt || 0);
+    const diff = (Date.now() - savedAt.getTime()) / 1000 / 3600;
+    return diff < 24 ? saved : null;
+  });
+  const [buscandoPartidos, setBuscandoPartidos] = useState(false);
+  const [favDraft, setFavDraft] = useState({ nombre: "", tipo: "club", ligas: "" });
   const [activeTab, setActiveTab] = useState("analisis");
   const [showBankHistory, setShowBankHistory] = useState(false);
   const [verifyingValue, setVerifyingValue] = useState(false);
   const [expertMode, setExpertMode] = useState(false);
-  const [dailyLossLimit, setDailyLossLimit] = useState("20");
+  const [dailyLossLimit, setDailyLossLimit] = useState(() => loadState("daily_loss_limit_v1", "20"));
   const [aiError, setAiError] = useState("");
   const [toast, setToast] = useState(null);
   const [modoMundial, setModoMundial] = useState(false);
@@ -377,7 +429,9 @@ export default function App() {
   useEffect(() => { saveState(BK, bankroll); }, [bankroll]);
   useEffect(() => { saveState(HK, historial); }, [historial]);
   useEffect(() => { saveState(RK, reviews); }, [reviews]);
-  useEffect(() => { saveState(JK, jornadas); }, [jornadas]); // NEW
+  useEffect(() => { saveState(JK, jornadas); }, [jornadas]);
+  useEffect(() => { saveState(FK, favoritos); }, [favoritos]);
+  useEffect(() => { saveState("daily_loss_limit_v1", dailyLossLimit); }, [dailyLossLimit]);
 
   const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type, id: makeId() });
@@ -461,7 +515,7 @@ export default function App() {
       setAiStatus("error");
       setAiError(String(err.message || "Error desconocido"));
     }
-  }, [match, modoMundial, reviews, jornadas]);
+  }, [match, modoMundial, reviews, jornadas, userNote]);
 
   // ── VERIFY VALUE ────────────────────────────────────────────────────────
   const verifyValue = useCallback(async () => {
@@ -556,6 +610,7 @@ export default function App() {
       picks: (ticket.picks || []).map(p => ({
         id: p.id, mercado: p.mercado, linea: p.linea, tipo: p.tipo,
         confianza: p.confianza, cuotaCasa: p.cuotaCasa, resultado: "pendiente",
+        justificacion: p.justificacion || "",
       })),
       resultadoReal: { golesLocal: "", golesVisita: "", notas: "" },
     });
@@ -582,7 +637,59 @@ export default function App() {
     showToast("✅ Jornada registrada. El motor la usará en próximos análisis.", "success");
   };
 
-  // ── BANKROLL ───────────────────────────────────────────────────────────
+  // ── FAVORITOS ──────────────────────────────────────────────────────────
+  const addFavorito = () => {
+    if (!favDraft.nombre.trim()) { showToast("Ingresa el nombre del equipo o selección", "error"); return; }
+    const ligasArr = favDraft.ligas.split(",").map(l => l.trim()).filter(Boolean);
+    setFavoritos(prev => [...prev, { id: makeId(), nombre: favDraft.nombre.trim(), tipo: favDraft.tipo, ligas: ligasArr }]);
+    setFavDraft({ nombre: "", tipo: "club", ligas: "" });
+    showToast("⭐ Favorito agregado", "success");
+  };
+  const removeFavorito = (id) => setFavoritos(prev => prev.filter(f => f.id !== id));
+
+  const buscarPartidos = useCallback(async () => {
+    if (!favoritos.length) { showToast("Agrega al menos un favorito primero", "error"); return; }
+    setBuscandoPartidos(true);
+    setPartidosBusqueda(null);
+    try {
+      const resp = await fetch("/api/ai-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 2000,
+          useWebSearch: true,
+          messages: [{ role: "user", content: buildPartidosPrompt(favoritos) }],
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error?.message || `Error ${resp.status}`);
+      const finalText = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+      const cleaned = finalText.replace(/```json|```/g, "").trim();
+      const start = cleaned.indexOf("{");
+      if (start === -1) throw new Error("Sin JSON");
+      let depth = 0, end = -1;
+      for (let i = start; i < cleaned.length; i++) {
+        if (cleaned[i] === "{") depth++;
+        else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+      }
+      const parsed = JSON.parse(cleaned.slice(start, end + 1));
+      setPartidosBusqueda({ ...parsed, savedAt: new Date().toISOString() });
+      saveState("partidos_busqueda_v1", { ...parsed, savedAt: new Date().toISOString() });
+      showToast(`✅ ${parsed.partidos?.length || 0} partidos encontrados`, "success");
+    } catch (err) {
+      showToast(`❌ Error al buscar: ${err.message}`, "error");
+    }
+    setBuscandoPartidos(false);
+  }, [favoritos]);
+
+  const cargarPartido = (p) => {
+    setMatch({ local: p.local, visitante: p.visitante, liga: p.liga, oddLocal: "", oddDraw: "", oddVisit: "", modo: p.tipo === "seleccion" ? "mundial" : "clubes" });
+    if (p.tipo === "seleccion") setModoMundial(true);
+    setActiveTab("analisis");
+    setAiStatus("idle"); setAiResult(null); setPicks([]);
+    showToast(`✅ ${p.local} vs ${p.visitante} cargado`, "success");
+  };
   const addBet = () => {
     if (!betDraft.partido.trim() || !betDraft.pick.trim() || toNum(betDraft.stake) <= 0 || toNum(betDraft.cuota) <= 1) {
       showToast("Completa: partido, pick, monto y cuota > 1", "error"); return;
@@ -623,6 +730,7 @@ export default function App() {
         if (Array.isArray(data.historial)) setHistorial(data.historial);
         if (Array.isArray(data.reviews)) setReviews(data.reviews);
         if (Array.isArray(data.jornadas)) setJornadas(data.jornadas);
+        if (Array.isArray(data.favoritos)) setFavoritos(data.favoritos);
         if (data.aiResult) { setAiResult(data.aiResult); setAiStatus("done"); }
         else { setAiResult(null); setAiStatus("idle"); }
         setActiveTab("analisis");
@@ -633,7 +741,7 @@ export default function App() {
   };
 
   const exportData = () => {
-    const data = { match, picks, bankroll, historial, reviews, jornadas, aiResult, exportedAt: new Date().toISOString() };
+    const data = { match, picks, bankroll, historial, reviews, jornadas, favoritos, aiResult, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
@@ -653,6 +761,7 @@ export default function App() {
     { id: "historial", label: "📚 Historial" },
     { id: "ia-review", label: "🆚 IA vs Real" },
     { id: "ia-stats", label: "📈 Stats IA" },
+    { id: "favoritos", label: "⭐ Favoritos" },
     ...(modoMundial ? [{ id: "jornadas", label: "🏆 Jornadas" }] : []),
   ];
 
@@ -712,9 +821,12 @@ export default function App() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {reviewDraft.picks.map((p, i) => (
                   <div key={p.id || i} style={{ background: "rgba(15,23,42,.6)", border: `1px solid ${p.resultado === "acierto" ? "rgba(52,211,153,.3)" : p.resultado === "fallo" ? "rgba(239,68,68,.3)" : "rgba(255,255,255,.07)"}`, borderRadius: 12, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "#e0e7ff", marginBottom: 6 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#e0e7ff", marginBottom: 4 }}>
                       {p.mercado} {p.linea} <span style={{ fontSize: 11, color: "#64748b" }}>({p.tipo}) · {p.confianza}%</span>
                     </div>
+                    {p.justificacion && (
+                      <p style={{ fontSize: 11, color: "#475569", margin: "0 0 8px", lineHeight: 1.5, fontStyle: "italic" }}>💡 {p.justificacion}</p>
+                    )}
                     <div style={{ display: "flex", gap: 6 }}>
                       {["acierto", "fallo", "nulo"].map(r => (
                         <button key={r} onClick={() => setReviewDraft(rd => ({ ...rd, picks: rd.picks.map((pk, j) => j === i ? { ...pk, resultado: r } : pk) }))}
@@ -807,6 +919,26 @@ export default function App() {
         {/* ── TAB: ANÁLISIS ────────────────────────────────────────────────── */}
         {activeTab === "analisis" && (
           <div>
+            {/* ── ALERTA DE RACHA NEGATIVA ──────────────────────────────────── */}
+            {(() => {
+              const lastSettled = bankroll.apuestas.filter(b => b.estado === "ganada" || b.estado === "perdida");
+              let lossStreak = 0;
+              for (const b of lastSettled) { if (b.estado === "perdida") lossStreak++; else break; }
+              if (lossStreak < 3) return null;
+              return (
+                <div style={{ background: lossStreak >= 5 ? "rgba(220,38,38,.15)" : "rgba(239,68,68,.08)", border: `1px solid ${lossStreak >= 5 ? "rgba(220,38,38,.5)" : "rgba(239,68,68,.3)"}`, borderRadius: 16, padding: "14px 18px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+                  <span style={{ fontSize: 24 }}>{lossStreak >= 5 ? "🚨" : "⚠️"}</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: "#f87171" }}>
+                      {lossStreak >= 5 ? `STOP — ${lossStreak} pérdidas consecutivas` : `Racha de ${lossStreak} pérdidas seguidas`}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#f87171", opacity: .75, marginTop: 2 }}>
+                      {lossStreak >= 5 ? "Para. Revisa tu estrategia antes de apostar de nuevo. El tilt destruye bankrolls." : "Considera reducir el stake en los próximos picks o pausar por hoy."}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             <section style={{ background: "rgba(30,27,75,.35)", border: `1px solid ${modoMundial ? "rgba(251,191,36,.2)" : "rgba(99,102,241,.15)"}`, borderRadius: 20, padding: 24, marginBottom: 20 }}>
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".12em", textTransform: "uppercase", color: modoMundial ? "#fbbf24" : "#6366f1", marginBottom: 4 }}>
@@ -1321,6 +1453,37 @@ export default function App() {
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#6366f1", textTransform: "uppercase", marginBottom: 2 }}>Tickets guardados</div>
               <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>📚 Historial</h2>
             </div>
+
+            {/* ── ROI POR COMPETICIÓN ───────────────────────────────────────── */}
+            {(() => {
+              const roiByLiga = calcROIByLiga(reviews);
+              if (!roiByLiga.length) return null;
+              return (
+                <div style={{ background: "rgba(15,23,42,.5)", border: "1px solid rgba(99,102,241,.15)", borderRadius: 16, padding: 16, marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#6366f1", textTransform: "uppercase", marginBottom: 12 }}>📊 Tu acierto por competición</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {roiByLiga.map(({ liga, total, aciertos, rate }) => {
+                      const color = rate >= 65 ? "#34d399" : rate >= 45 ? "#fbbf24" : "#f87171";
+                      const bg = rate >= 65 ? "rgba(52,211,153,.08)" : rate >= 45 ? "rgba(245,158,11,.08)" : "rgba(239,68,68,.08)";
+                      return (
+                        <div key={liga} style={{ background: bg, border: `1px solid ${color}25`, borderRadius: 12, padding: "10px 14px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: "#e0e7ff" }}>{liga}</span>
+                            <span style={{ fontSize: 13, fontWeight: 900, color }}>{rate.toFixed(0)}% · {aciertos}/{total}</span>
+                          </div>
+                          <div style={{ height: 6, background: "rgba(255,255,255,.05)", borderRadius: 4, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${rate}%`, background: color, borderRadius: 4, transition: "width .5s" }} />
+                          </div>
+                          <div style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>
+                            {rate >= 65 ? "✅ Tu mejor competición — prioriza picks aquí" : rate >= 45 ? "🟡 Rendimiento moderado" : "🔴 Competición difícil — reduce stake o evita"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
             {historial.length === 0 ? (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "#334155" }}>
                 <div style={{ fontSize: 48, marginBottom: 12 }}>📚</div>
@@ -1529,6 +1692,151 @@ export default function App() {
                   </div>
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {/* ── TAB: FAVORITOS ───────────────────────────────────────────────── */}
+        {activeTab === "favoritos" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#fbbf24", textTransform: "uppercase", marginBottom: 2 }}>Mis equipos</div>
+              <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>⭐ Favoritos</h2>
+              <p style={{ fontSize: 13, color: "#334155", marginTop: 4 }}>Agrega tus clubes y selecciones. La IA buscará sus próximos partidos en todas sus competencias de una sola vez.</p>
+            </div>
+
+            {/* Add favorite form */}
+            <div style={{ background: "rgba(30,27,75,.35)", border: "1px solid rgba(251,191,36,.15)", borderRadius: 16, padding: 18, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#fbbf24", marginBottom: 12 }}>➕ Agregar favorito</div>
+              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
+                <div>
+                  <label style={labelStyle}>Nombre</label>
+                  <input value={favDraft.nombre} onChange={e => setFavDraft(d => ({ ...d, nombre: e.target.value }))}
+                    placeholder="Ej: Real Madrid" style={inputStyle}
+                    onKeyDown={e => e.key === "Enter" && addFavorito()} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Tipo</label>
+                  <select value={favDraft.tipo} onChange={e => setFavDraft(d => ({ ...d, tipo: e.target.value }))}
+                    style={{ ...inputStyle, cursor: "pointer" }}>
+                    <option value="club">⚽ Club</option>
+                    <option value="seleccion">🏳️ Selección nacional</option>
+                  </select>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={labelStyle}>
+                    {favDraft.tipo === "club" ? "Competencias (separadas por coma)" : "Torneos activos (opcional)"}
+                  </label>
+                  <input value={favDraft.ligas} onChange={e => setFavDraft(d => ({ ...d, ligas: e.target.value }))}
+                    placeholder={favDraft.tipo === "club" ? "Ej: La Liga, Champions League, Copa del Rey" : "Ej: Eliminatorias CONMEBOL, Copa América"}
+                    style={inputStyle} />
+                  <div style={{ fontSize: 10, color: "#334155", marginTop: 4 }}>Si dejas vacío, la IA busca en todas sus competencias activas.</div>
+                </div>
+              </div>
+              <button onClick={addFavorito}
+                style={{ marginTop: 12, width: "100%", padding: "10px 0", borderRadius: 10, border: "none", background: "rgba(251,191,36,.15)", color: "#fbbf24", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+                ⭐ Agregar
+              </button>
+            </div>
+
+            {/* Favorites list */}
+            {favoritos.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", marginBottom: 10 }}>
+                  Mi lista ({favoritos.length})
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {favoritos.map(f => (
+                    <div key={f.id} style={{ background: "rgba(15,23,42,.5)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 13 }}>{f.tipo === "club" ? "⚽" : "🏳️"}</span>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: "#e0e7ff" }}>{f.nombre}</span>
+                          <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 6, background: f.tipo === "club" ? "rgba(99,102,241,.1)" : "rgba(251,191,36,.1)", color: f.tipo === "club" ? "#a5b4fc" : "#fbbf24", fontWeight: 700 }}>
+                            {f.tipo === "club" ? "Club" : "Selección"}
+                          </span>
+                        </div>
+                        {f.ligas?.length > 0 && (
+                          <div style={{ fontSize: 11, color: "#334155", marginTop: 3 }}>
+                            {f.ligas.join(" · ")}
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={() => removeFavorito(f.id)}
+                        style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 14, padding: 4 }}>🗑</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Search button */}
+            {favoritos.length > 0 && (
+              <button onClick={buscarPartidos} disabled={buscandoPartidos}
+                style={{ width: "100%", padding: "16px 0", borderRadius: 14, border: "none", background: buscandoPartidos ? "rgba(99,102,241,.2)" : "linear-gradient(135deg, #4338ca, #7c3aed)", color: "#fff", fontSize: 15, fontWeight: 900, cursor: buscandoPartidos ? "not-allowed" : "pointer", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: buscandoPartidos ? "none" : "0 4px 20px rgba(67,56,202,.3)" }}>
+                {buscandoPartidos
+                  ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Buscando partidos con IA + web...</>
+                  : <>🔍 Buscar partidos de mis favoritos (próximos 3 días)</>}
+              </button>
+            )}
+
+            {/* Results */}
+            {partidosBusqueda && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>
+                    Partidos encontrados · {partidosBusqueda.busquedaFecha}
+                  </div>
+                  <button onClick={() => { setPartidosBusqueda(null); saveState("partidos_busqueda_v1", null); }}
+                    style={{ fontSize: 11, color: "#334155", background: "none", border: "none", cursor: "pointer" }}>✕ Limpiar</button>
+                </div>
+
+                {partidosBusqueda.resumen && (
+                  <div style={{ background: "rgba(99,102,241,.06)", border: "1px solid rgba(99,102,241,.12)", borderRadius: 10, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: "#a5b4fc" }}>
+                    🧠 {partidosBusqueda.resumen}
+                  </div>
+                )}
+
+                {(!partidosBusqueda.partidos || partidosBusqueda.partidos.length === 0) ? (
+                  <div style={{ textAlign: "center", padding: "30px 20px", color: "#334155", fontSize: 13 }}>
+                    Sin partidos encontrados en los próximos 3 días para tus favoritos.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {partidosBusqueda.partidos.map((p, i) => (
+                      <div key={i} style={{ background: "rgba(15,23,42,.5)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 14, padding: 16 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                              <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 6, background: p.tipo === "seleccion" ? "rgba(251,191,36,.1)" : "rgba(99,102,241,.1)", color: p.tipo === "seleccion" ? "#fbbf24" : "#a5b4fc", fontWeight: 700 }}>
+                                {p.tipo === "seleccion" ? "🏳️ Selección" : "⚽ Club"}
+                              </span>
+                              <span style={{ fontSize: 11, color: "#475569" }}>⭐ {p.equipoFavorito}</span>
+                            </div>
+                            <div style={{ fontSize: 15, fontWeight: 900, color: "#e0e7ff" }}>{p.local} vs {p.visitante}</div>
+                            <div style={{ fontSize: 12, color: "#475569", marginTop: 3 }}>
+                              🏆 {p.liga}
+                              {p.fecha && <> · 📅 {p.fecha}</>}
+                              {p.hora && <> · 🕐 {p.hora}</>}
+                            </div>
+                          </div>
+                          <button onClick={() => cargarPartido(p)}
+                            style={{ padding: "8px 16px", borderRadius: 10, border: "none", background: "linear-gradient(135deg, #059669, #047857)", color: "#fff", fontSize: 12, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap", boxShadow: "0 2px 10px rgba(5,150,105,.25)" }}>
+                            🔍 Analizar →
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {favoritos.length === 0 && (
+              <div style={{ textAlign: "center", padding: "40px 20px", color: "#334155" }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>⭐</div>
+                <div style={{ fontSize: 13, color: "#475569" }}>Agrega tus equipos y selecciones favoritas para buscar sus partidos automáticamente.</div>
+              </div>
             )}
           </div>
         )}
