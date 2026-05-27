@@ -64,18 +64,225 @@ const emptyReview = () => ({
 // NEW: Jornada entry for mundial tracking
 const emptyJornada = () => ({ id: makeId(), seleccion: "", jornada: "", rival: "", resultado: "", goles: "", necesidad: "", formacion: "", jugadoresClave: "", notas: "", fecha: new Date().toISOString().slice(0,10) });
 
-// ── FILTROS DE MERCADO ───────────────────────────────────────────────────────
-const MARKET_FILTERS = ["Todos📝", "1X2⚔️", "Doble Oportunidad🛠️", "Goles⚽", "Corners⛳", "Tarjetas🟧🟥", "Handicap🌀", "Remates🦿"];
-function matchesFilter(pick, filter) {
+// ── SISTEMA MULTIDEPORTE ──────────────────────────────────────────────────────
+const SPORTS = {
+  futbol: {
+    id: "futbol", label: "⚽ Fútbol", emoji: "⚽",
+    color: "#4f46e5", colorSoft: "rgba(79,70,229,.15)", border: "rgba(79,70,229,.3)",
+    gradient: "linear-gradient(135deg, #4f46e5, #7c3aed)",
+    bgGradient: "radial-gradient(ellipse at 20% 20%, rgba(79,70,229,.25) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(124,58,237,.18) 0%, transparent 55%)",
+    hasDraw: true,
+    defaultOddLabel: ["Local (1)", "Empate (X)", "Visitante (2)"],
+    fields: [
+      { key: "local", label: "🏠 Local", placeholder: "Ej: Real Madrid" },
+      { key: "visitante", label: "✈️ Visitante", placeholder: "Ej: Barcelona" },
+      { key: "liga", label: "🏆 Liga", placeholder: "Ej: La Liga" },
+    ],
+    filters: ["Todos📝","1x2 / Doble oportunidad⚔️","Ambos marcan🔥","Goles / Total⚽","1ª mitad⏱️","Corners⛳","Tarjetas🟨","Jugadores / Especiales⭐"],
+  },
+  mlb: {
+    id: "mlb", label: "⚾ MLB", emoji: "⚾",
+    color: "#dc2626", colorSoft: "rgba(220,38,38,.15)", border: "rgba(220,38,38,.3)",
+    gradient: "linear-gradient(135deg, #dc2626, #b91c1c)",
+    bgGradient: "radial-gradient(ellipse at 20% 20%, rgba(220,38,38,.25) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(185,28,28,.18) 0%, transparent 55%)",
+    hasDraw: false,
+    defaultOddLabel: ["Local (ML)", "", "Visitante (ML)"],
+    fields: [
+      { key: "local", label: "🏠 Equipo Local", placeholder: "Ej: New York Yankees" },
+      { key: "visitante", label: "✈️ Equipo Visitante", placeholder: "Ej: Los Angeles Dodgers" },
+      { key: "liga", label: "⚾ División / Serie", placeholder: "Ej: AL East · Regular Season" },
+    ],
+    filters: ["Todos📝","Ganador💰","Primeras 5 entradas⚾","Más/Menos carreras📊","1era entrada sin carrera🎯","Carreras por equipo🏏","Props del Pitcher🔥","Ventaja de carreras🌀"],
+  },
+  nba: {
+    id: "nba", label: "🏀 NBA", emoji: "🏀",
+    color: "#ea580c", colorSoft: "rgba(234,88,12,.15)", border: "rgba(234,88,12,.3)",
+    gradient: "linear-gradient(135deg, #ea580c, #c2410c)",
+    bgGradient: "radial-gradient(ellipse at 20% 20%, rgba(234,88,12,.25) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(194,65,12,.18) 0%, transparent 55%)",
+    hasDraw: false,
+    defaultOddLabel: ["Local (ML)", "", "Visitante (ML)"],
+    fields: [
+      { key: "local", label: "🏠 Equipo Local", placeholder: "Ej: Los Angeles Lakers" },
+      { key: "visitante", label: "✈️ Equipo Visitante", placeholder: "Ej: Boston Celtics" },
+      { key: "liga", label: "🏀 Conferencia / Ronda", placeholder: "Ej: NBA · Western Conference" },
+    ],
+    filters: ["Todos📝","Ganador / Hándicap💰","Totales📊","1ª Mitad🕐","Primer cuarto🏀","Props de jugador⭐","Totales por equipo📊","Especiales🎯"],
+  },
+};
+
+function detectSport(match) {
+  const text = `${match.local} ${match.visitante} ${match.liga}`.toLowerCase();
+  // MLB keywords
+  const mlbTeams = ["yankees","red sox","dodgers","cubs","giants","astros","braves","mets","padres","cardinals","phillies","rangers","angels","athletics","mariners","twins","tigers","white sox","royals","guardians","orioles","rays","blue jays","pirates","reds","brewers","rockies","diamondbacks","marlins","nationals"];
+  const nbaTeams = ["lakers","celtics","bulls","warriors","heat","nets","knicks","bucks","suns","clippers","nuggets","76ers","raptors","mavericks","jazz","pelicans","grizzlies","rockets","thunder","trail blazers","kings","timberwolves","hornets","pistons","pacers","hawks","magic","wizards","cavaliers","spurs"];
+  if (mlbTeams.some(t => text.includes(t)) || text.includes("mlb") || text.includes("béisbol") || text.includes("baseball")) return "mlb";
+  if (nbaTeams.some(t => text.includes(t)) || text.includes("nba") || text.includes("basketball") || text.includes("baloncesto")) return "nba";
+  return "futbol";
+}
+
+function buildMLBPrompt(match, feedbackCtx = "") {
+  const { local, visitante, oddLocal, oddVisit, liga } = match;
+  return `Eres un analista experto en apuestas de MLB (béisbol). Eres CRÍTICO y CONSERVADOR.${feedbackCtx}
+
+PARTIDO MLB: ${local} vs ${visitante}${liga ? ` (${liga})` : ""}
+CUOTAS ML: Local ${oddLocal || "N/D"} | Visitante ${oddVisit || "N/D"}
+
+Busca información reciente y analiza con criterio ESTRICTO:
+1. PITCHER ABRIDOR: ERA, WHIP, xERA, últimas 3 salidas (strikeouts, hits permitidos, carreras), rendimiento en casa/visita
+2. BULLPEN: ERA últimos 7 días, fatiga acumulada, fiabilidad del cierre
+3. BATEO: promedio de bateo reciente, OPS últimas 2 semanas, matchup zurdo/derecho vs el pitcher rival
+4. PARQUE Y CLIMA: factor del parque (a favor de pitcher o bateador), viento, temperatura
+5. UMPIRE: zona de strikes, tendencia (pro-pitcher = más strikeouts, pro-bateador = más hits)
+6. DESCANSO: días de descanso del pitcher, viaje largo reciente, back-to-back
+7. PRIMERA ENTRADA: historial del pitcher en el primer inning específicamente
+8. PRIMERAS 5 ENTRADAS (F5): rendimiento de ambos abridores en innings 1-5
+
+Genera picks usando EXACTAMENTE estos nombres de mercado (los mismos que usa la casa de apuestas):
+
+MERCADOS DISPONIBLES:
+- "Ganador (incl. extra innings)" → quién gana el partido
+- "Totales (incl. extra innings)" → total de carreras Over/Under (ej: Over 8.5)
+- "Hándicap (incl. extra innings)" → ventaja de carreras (ej: ${local} -1.5)
+- "Innings 1 a 5 - Ganador" → quién gana las primeras 5 entradas
+- "Innings 1 a 5 - Total" → total carreras en primeras 5 entradas Over/Under
+- "Innings 1 a 5 - Hándicap" → ventaja en primeras 5 entradas
+- "Primer Inning - Ganador" → quién anota primero en el 1er inning
+- "Primer Inning - Total" → si hay carrera o no en el 1er inning (Over/Under 0.5)
+- "Pitcher Strikeouts Más/Menos de" → total strikeouts del pitcher abridor (ej: Over 6.5)
+- "Lanzador - Outs lanzados Más/Menos" → entradas completadas por el pitcher (ej: Over 17.5 outs)
+- "Lanzador - Hits permitidos Más/Menos" → hits que recibe el pitcher
+- "Jugador - Home Runs Más/Menos" → si un bateador conecta jonrón o no
+- "Jugador - Hits Más/Menos" → hits de un bateador específico
+- "Jugador - Carreras Impulsadas Más/Menos" → RBIs de un bateador
+- "Jugador - Bases Totales Más/Menos" → bases totales de un bateador
+- "Jugador - Strikeouts Más/Menos" → si un bateador poncha o no
+- "Par/Impar (incl. extra innings)" → si el total de carreras es par o impar
+- "Home Runs Más/Menos de" → total home runs del partido
+
+Responde ÚNICAMENTE con este JSON puro, sin backticks:
+{"resumen":"contexto del juego y condiciones clave","pitcherLocal":"pitcher de ${local}: ERA/WHIP/últimas salidas/tendencia strikeouts","pitcherVisitante":"pitcher de ${visitante}: ERA/WHIP/últimas salidas/tendencia strikeouts","condicionesBateo":"matchups zurdo-derecho, parque, viento, umpire","picks":[{"mercado":"nombre EXACTO del mercado como aparece arriba","linea":"línea numérica (ej: 8.5, 6.5, -1.5)","tipo":"over/under/local/visitante","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"razón con datos reales: ERA, matchups, bullpen, parque, umpire","jugador":"nombre del jugador si es prop de jugador, sino vacío","cuotaSugerida":"1.85"}],"pronostico":"resultado más probable con razonamiento","alertas":["alerta concreta"],"perfilPartido":"abierto"}
+
+REGLAS ESTRICTAS MLB:
+- Máximo 5 picks de alta calidad.
+- Confianza mínima: 67%. pesoAnalisis mínimo: 6. Si no cumple ambos, NO lo incluyas.
+- Prioriza: Totales del partido, Innings 1-5, Strikeouts del pitcher — son los más predecibles.
+- Si el pitcher tiene ERA > 4.5 en sus últimas 3 salidas, NO recomiendes Under de carreras.
+- Si hay viento a favor del bateador (>15 mph hacia el outfield), considera Over en totales.
+- Para props de jugadores, solo sugiere si hay matchup claramente favorable zurdo vs derecho.
+- Solo el JSON.`;
+}
+
+function buildNBAPrompt(match, feedbackCtx = "") {
+  const { local, visitante, oddLocal, oddVisit, liga } = match;
+  return `Eres un analista experto en apuestas de NBA (baloncesto). Eres CRÍTICO y CONSERVADOR.${feedbackCtx}
+
+PARTIDO NBA: ${local} vs ${visitante}${liga ? ` (${liga})` : ""}
+CUOTAS ML: Local ${oddLocal || "N/D"} | Visitante ${oddVisit || "N/D"}
+
+Busca información reciente y analiza con criterio ESTRICTO:
+1. PACE Y TOTALES: ritmo de juego, puntos promedio últimos 10 juegos de ambos equipos, OffRtg y DefRtg
+2. LESIONES: jugadores fuera o en duda — es lo más crítico para los props de jugador
+3. BACK-TO-BACK: ¿algún equipo juega segundo partido consecutivo? Baja el ritmo y los totales
+4. MATCHUPS: quién guarda a quién, déficit defensivo perimetral o interior
+5. ÁRBITRO: si está disponible, tendencia de llamadas (más faltas = más tiros libres = más puntos)
+6. ROTACIONES: ¿equipo clasificado o eliminado que puede rotar estrellas?
+7. PRIMER CUARTO: historial de arranques de ambos equipos
+8. PROPS JUGADOR: basado en lesiones del rival, matchup favorable, minutos proyectados
+
+Para cada pick, calcula un PESO DE ANÁLISIS del 1 al 10.
+
+Genera picks usando EXACTAMENTE estos nombres de mercado (como aparecen en la casa de apuestas):
+
+MERCADOS DISPONIBLES:
+— RESULTADO —
+- "Ganador (incl. prórroga)" → quién gana el partido
+- "Hándicap (incl. prórroga)" → ventaja/desventaja de puntos (ej: ${local} -5.5)
+- "Totales (incl. prórroga)" → Over/Under puntos totales del partido (ej: Over 224.5)
+- "1ª Mitad - total" → Over/Under puntos en el 1er tiempo
+- "1ª Mitad - Hándicap" → hándicap en el primer tiempo
+- "1ª Mitad - 1x2" → quién va ganando al descanso
+- "Primer cuarto - Totales" → Over/Under puntos en el 1er cuarto
+- "Primer cuarto - hándicap" → hándicap en el primer cuarto
+- "Primer cuarto - 1x2" → quién va ganando al final del 1er cuarto
+- "Primer cuarto - margen de victoria" → por cuántos va ganando en el 1er cuarto
+- "Mitad/final" → combinado resultado mitad y resultado final
+- "Impar/par (incl. prórroga)" → si el total de puntos es par o impar
+- "Habrá prórroga" → si el partido va a prórroga
+- "Carrera a 20 puntos (incl. prórroga)" → quién llega primero a 20 pts
+- "Carrera a 30 puntos (incl. prórroga)" → quién llega primero a 30 pts
+
+— TOTALES POR EQUIPO —
+- "1 Totales (incl. prórroga)" → puntos del equipo local Over/Under
+- "2 Totales (incl. prórroga)" → puntos del equipo visitante Over/Under
+- "Tiros de tres puntos anotados por el equipo - 1 (incl. prórroga)" → triples del local
+- "Tiros de tres puntos anotados por el equipo - 2 (incl. prórroga)" → triples del visitante
+- "Total de Tiros de tres puntos anotados en el partido (incl. prórroga)" → triples totales
+
+— PROPS DE JUGADOR —
+- "Puntos Más de/Menos de (incl. prórroga)" → puntos de un jugador específico
+- "Rebotes Más de/Menos de (incl. prórroga)" → rebotes de un jugador
+- "Asistencias Más de/Menos de (incl. prórroga)" → asistencias de un jugador
+- "3 Pts anotados Más de/Menos de (incl. prórroga)" → triples de un jugador
+- "Pts-Reb (incl. prórroga)" → puntos+rebotes combinados de un jugador
+- "Pts-Asist. (incl. prórroga)" → puntos+asistencias combinados
+- "Pts-reb-ast (incl. OT)" → puntos+rebotes+asistencias (PRA) de un jugador
+- "Reb-Ast. (incl. prórroga)" → rebotes+asistencias de un jugador
+- "Hacer un doble-doble (incl. prórroga)" → si un jugador logra doble-doble
+- "Tiros Libres Anotados Más de/Menos de (incl. prórroga)" → tiros libres de jugador
+
+— TOTALES DEL PARTIDO —
+- "Total de asistencias (incl. prórroga)" → asistencias totales del partido
+- "Total de robos en el partido (incl. prórroga)" → robos totales
+- "Total de bloqueos en el partido (incl. prórroga)" → bloqueos totales
+
+Responde ÚNICAMENTE con este JSON puro, sin backticks:
+{"resumen":"contexto del partido y condiciones clave","paceTendencia":"análisis de ritmo, puntos promedio y total esperado","lesionesImpacto":"lesiones clave y cómo afectan picks y props","picks":[{"mercado":"nombre EXACTO del mercado como aparece arriba","linea":"línea numérica o selección (ej: Over 224.5, Local, 5.5)","tipo":"over/under/local/visitante","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"razón con datos reales: pace, lesiones, matchup, back-to-back, árbitro","jugador":"nombre completo del jugador si es prop, sino vacío","cuotaSugerida":"1.85"}],"pronostico":"resultado más probable con spread recomendado","alertas":["alerta concreta"],"perfilPartido":"abierto"}
+
+REGLAS ESTRICTAS NBA:
+- Máximo 5 picks de alta calidad.
+- Confianza mínima: 67%. pesoAnalisis mínimo: 6.
+- Si hay back-to-back, baja el total esperado y reduce confianza en props de minutos altos.
+- Para props de jugador, solo sugiere si hay matchup claramente favorable o lesión del rival que libere minutos.
+- Prioriza: Totales del partido, 1er cuarto totales, props con lesiones confirmadas del rival.
+- Solo el JSON.`;
+}
+
+// ── FILTROS POR DEPORTE ──────────────────────────────────────────────────────
+const MARKET_FILTERS_BY_SPORT = {
+  futbol: ["Todos📝","1x2 / Doble oportunidad⚔️","Ambos marcan🔥","Goles / Total⚽","1ª mitad⏱️","Corners⛳","Tarjetas🟨","Jugadores / Especiales⭐"],
+  mlb:    ["Todos📝","Ganador💰","Innings 1-5⚾","Totales📊","Primer inning🎯","Props Pitcher🔥","Props Jugador🏏","Hándicap🌀"],
+  nba:    ["Todos📝","Ganador / Hándicap💰","Totales📊","1ª Mitad🕐","Primer cuarto🏀","Props de jugador⭐","Totales por equipo📊","Especiales🎯"],
+};
+function matchesFilterMulti(pick, filter, sport) {
   if (filter === "Todos") return true;
   const m = (pick.mercado || "").toLowerCase();
-  if (filter === "1X2") return m.includes("ganador") || m.includes("1x2") || m.includes("local") || m.includes("visitante") || m.includes("empate");
-  if (filter === "Doble Oportunidad") return m.includes("doble") || m.includes("1x") || m.includes("x2") || m.includes("12");
-  if (filter === "Goles") return m.includes("gol") || m.includes("btts") || m.includes("ambos marcan") || m.includes("over") || m.includes("under");
-  if (filter === "Corners") return m.includes("corner") || m.includes("saque");
-  if (filter === "Tarjetas") return m.includes("tarjeta") || m.includes("amarilla") || m.includes("roja");
-  if (filter === "Handicap") return m.includes("handicap") || m.includes("hándicap");
-  if (filter === "Remates") return m.includes("remate") || m.includes("shot") || m.includes("disparo");
+  const j = (pick.jugador || "").toLowerCase();
+  if (sport === "mlb") {
+    if (filter === "Ganador") return m.includes("ganador") || m.includes("moneyline") || m.includes(" ml");
+    if (filter === "Innings 1-5") return m.includes("innings 1 a 5") || m.includes("f5") || m.includes("5 entradas") || m.includes("primeras 5");
+    if (filter === "Totales") return (m.includes("totales") || m.includes("total") || m.includes("over") || m.includes("under") || m.includes("más/menos")) && !m.includes("innings 1 a 5") && !m.includes("primer inning") && !m.includes("jugador");
+    if (filter === "Primer inning") return m.includes("primer inning") || m.includes("1er inning") || m.includes("primera entrada") || m.includes("nrfi") || m.includes("yrfi");
+    if (filter === "Props Pitcher") return m.includes("pitcher") || m.includes("lanzador") || m.includes("strikeout") || m.includes("outs lanzados");
+    if (filter === "Props Jugador") return m.includes("jugador") || (pick.jugador && pick.jugador.length > 0) || m.includes("home runs más") || m.includes("hits más") || m.includes("rbi") || m.includes("carreras impulsadas") || m.includes("bases totales");
+    if (filter === "Hándicap") return m.includes("hándicap") || m.includes("handicap") || m.includes("-1.5") || m.includes("+1.5") || m.includes("run line");
+  }
+  if (sport === "nba") {
+    if (filter === "Ganador / Hándicap") return m.includes("ganador") || m.includes("moneyline") || m.includes("hándicap") || m.includes("handicap") || m.includes("mitad/final");
+    if (filter === "Totales") return (m.includes("totales (incl") || m.includes("over") || m.includes("under") || m.includes("más de") || m.includes("menos de")) && !m.includes("1ª mitad") && !m.includes("primer cuarto") && !m.includes("1 totales") && !m.includes("2 totales") && !m.includes("jugador") && !pick.jugador;
+    if (filter === "1ª Mitad") return m.includes("1ª mitad") || m.includes("primera mitad") || m.includes("1er tiempo") || m.includes("primer tiempo");
+    if (filter === "Primer cuarto") return m.includes("primer cuarto") || m.includes("1er cuarto") || m.includes("1q");
+    if (filter === "Props de jugador") return !!pick.jugador || m.includes("puntos más") || m.includes("rebotes más") || m.includes("asistencias más") || m.includes("pts-reb") || m.includes("pts-asist") || m.includes("reb-ast") || m.includes("doble-doble") || m.includes("3 pts anotados más") || m.includes("tiros libres anotados");
+    if (filter === "Totales por equipo") return m.includes("1 totales") || m.includes("2 totales") || m.includes("del equipo - 1") || m.includes("del equipo - 2") || m.includes("del equipo 1") || m.includes("del equipo 2");
+    if (filter === "Especiales") return m.includes("impar/par") || m.includes("par/impar") || m.includes("prórroga") || m.includes("carrera a") || m.includes("robos") || m.includes("bloqueos") || m.includes("asistencias (incl");
+  }
+  // Default fútbol
+  if (filter === "1x2 / Doble oportunidad") return m.includes("1x2") || m.includes("ganador") || m.includes("doble oportunidad") || m.includes("local") || m.includes("visitante") || m.includes("empate") || m.includes("1x") || m.includes("x2") || m.includes("12") || m.includes("hándicap") || m.includes("handicap");
+  if (filter === "Ambos marcan") return m.includes("ambos equipos marcan") || m.includes("btts") || m.includes("ambos marcan");
+  if (filter === "Goles / Total") return (m.includes("total de goles") || m.includes("marcador exacto") || m.includes("goles exacto") || ((m.includes("over") || m.includes("under") || m.includes("más") || m.includes("menos")) && !m.includes("corner") && !m.includes("esquina") && !m.includes("tarjeta") && !m.includes("mitad")));
+  if (filter === "1ª mitad") return m.includes("1ª mitad") || m.includes("1er tiempo") || m.includes("primer tiempo") || m.includes("descanso");
+  if (filter === "Corners") return m.includes("corner") || m.includes("esquina") || m.includes("tiros de esquina");
+  if (filter === "Tarjetas") return m.includes("tarjeta") || m.includes("amarilla") || m.includes("roja") || m.includes("cartón");
+  if (filter === "Jugadores / Especiales") return m.includes("gol") || m.includes("goleador") || m.includes("portería") || m.includes("penalti") || m.includes("par/impar") || m.includes("jugador") || m.includes("primero") || m.includes("último") || m.includes("margen");
   return true;
 }
 
@@ -268,6 +475,8 @@ Responde ÚNICAMENTE con este JSON puro, sin backticks, sin texto extra:
 // ── AI PROMPT BUILDER ────────────────────────────────────────────────────────
 function buildAIPrompt(match, mode = "full", feedbackCtx = "", jornadaCtx = "") {
   const { local, visitante, oddLocal, oddDraw, oddVisit, liga } = match;
+  if (mode === "mlb") return buildMLBPrompt(match, feedbackCtx);
+  if (mode === "nba") return buildNBAPrompt(match, feedbackCtx);
 
   if (mode === "mundial") {
     return `Eres un analista experto en apuestas deportivas de fútbol internacional y mundiales. Eres CRÍTICO y CONSERVADOR. Cada pick debe ganar su lugar con datos reales.${feedbackCtx}${jornadaCtx}
@@ -308,26 +517,78 @@ PARTIDO: ${local} vs ${visitante}${liga ? ` (${liga})` : ""}
 CUOTAS 1X2: Local ${oddLocal || "N/D"} | Empate ${oddDraw || "N/D"} | Visitante ${oddVisit || "N/D"}
 
 Busca información reciente. Analiza con criterio ESTRICTO y profundo:
-1. CONDICIÓN DEL PARTIDO: ¿Qué necesita cada equipo? (pelear el título, evitar descenso, clasificar a Europa, partido sin presión). Esto afecta CÓMO juegan.
-2. LESIONES Y BAJAS: ¿Quién no está? ¿Afecta al sistema ofensivo o defensivo?
-3. FORMA REAL: Últimos 5 partidos con goles reales — no "forma buena" genérica
+1. CONDICIÓN DEL PARTIDO: ¿Qué necesita cada equipo? (título, descenso, Europa, sin presión)
+2. LESIONES Y BAJAS: ¿Quién no está? ¿Afecta ataque o defensa?
+3. FORMA REAL: Últimos 5 partidos con goles, corners y tarjetas reales
 4. CONTEXTO LOCAL vs VISITANTE: rendimiento específico en casa o fuera
-5. ENFRENTAMIENTOS DIRECTOS: últimos head-to-head relevantes
+5. ENFRENTAMIENTOS DIRECTOS: últimos h2h relevantes
 6. FATIGA / ROTACIÓN: ¿Vienen de Europa? ¿Próximo partido importante?
+7. CORNERS: promedio de corners por partido de ambos equipos
+8. TARJETAS: historial de tarjetas, árbitro designado si está disponible
 
-Para cada pick, calcula un PESO DE ANÁLISIS del 1 al 10 según cuántos factores sólidos lo respaldan.
+Para cada pick, calcula un PESO DE ANÁLISIS del 1 al 10.
+
+Genera picks usando EXACTAMENTE estos nombres de mercado (como aparecen en la casa de apuestas):
+
+MERCADOS DISPONIBLES:
+— RESULTADO —
+- "1x2" → resultado final (1=local, X=empate, 2=visitante)
+- "Doble oportunidad" → 1X, X2 o 12
+- "Ambos equipos marcan" → Sí o No
+- "Hándicap" → ventaja/desventaja de goles (ej: ${local} -1)
+- "Margen de victoria" → por cuántos goles gana
+- "1ª mitad - 1x2" → resultado al descanso
+- "1ª mitad / doble oportunidad" → doble oportunidad en 1er tiempo
+- "Ambos equipos marcan 1ª mitad" → BTTS en el primer tiempo
+- "Par/Impar" → si el total de goles es par o impar
+
+— GOLES —
+- "Total de goles" → Over/Under total del partido (ej: Over 2.5)
+- "1ª mitad - total" → Over/Under goles en 1er tiempo (ej: Over 1.5)
+- "2ª mitad - total" → Over/Under goles en 2do tiempo
+- "Marcador exacto" → resultado exacto del partido
+- "Total de goles exacto" → número exacto de goles (ej: 2 goles)
+- "Ambos equipos marcan 2 goles o más" → ambos anotan 2+
+- "1 gano ambas mitades" → el local gana los dos tiempos
+- "1 marco en ambos tiempos" → el local marca en los dos tiempos
+
+— CORNERS (Tiros de esquina) —
+- "Total tiros de esquina" → Over/Under corners totales (ej: Over 9.5)
+- "1ª mitad - total tiros de esquina" → corners en 1er tiempo
+- "Total tiros de esquina Par/Impar" → par o impar total corners
+- "Carrera a 5 tiros de esquina" → quién llega primero a 5 corners
+- "Carrera a 7 tiros de esquina" → quién llega primero a 7 corners
+- "1 tiros de esquina" → corners solo del equipo local
+- "2 tiros de esquina" → corners solo del equipo visitante
+
+— TARJETAS —
+- "Total de tarjetas" → Over/Under tarjetas totales (ej: Over 3.5)
+- "1ª mitad - total tarjetas" → tarjetas en primer tiempo
+- "Tarjetas exactas" → número exacto de tarjetas
+- "Jugador recibe una tarjeta" → pick sobre jugador específico
+
+— JUGADORES —
+- "Primer gol" → quién marca el primer gol
+- "Último gol" → quién marca el último gol
+- "Goleador en cualquier momento" → jugador que marca en cualquier momento
+- "Primer goleador y marcador exacto" → combinado goleador + resultado
+
+— ESPECIALES —
+- "Portería a cero" → equipo que no recibe gol
+- "Penalti en el encuentro" → si habrá penalti o no
+- "1er tiempo - ambos equipos marcan" → BTTS primer tiempo
+- "Impacto o más de 2.5" → goles especiales
 
 Responde ÚNICAMENTE con este JSON puro, sin texto antes ni después, sin backticks:
 
-{"resumen":"contexto preciso del partido","condicionPartido":"qué necesita cada equipo y cómo eso define el estilo de juego esperado","formaLocal":"forma real de ${local} últimos 5 partidos con goles","formaVisitante":"forma real de ${visitante} últimos 5 partidos con goles","picks":[{"mercado":"nombre exacto","linea":"línea numérica","tipo":"over o under","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"razón específica con datos: goles promedio, lesionados, forma, h2h","condicionPartido":"cómo la necesidad de cada equipo afecta este pick","cuotaSugerida":"1.75","exigenciaEquipo":"qué exige el partido a cada equipo"}],"pronostico":"resultado más probable con razonamiento","alertas":["alerta concreta"],"perfilPartido":"abierto"}
+{"resumen":"contexto preciso del partido","condicionPartido":"qué necesita cada equipo y cómo define el estilo de juego","formaLocal":"forma real de ${local} últimos 5 partidos con goles/corners/tarjetas","formaVisitante":"forma real de ${visitante} últimos 5 partidos con goles/corners/tarjetas","picks":[{"mercado":"nombre EXACTO del mercado como aparece arriba","linea":"línea o selección (ej: Over 2.5, Sí, Local, 1X)","tipo":"over/under/si/no/local/visitante/empate","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"razón específica con datos: goles promedio, lesionados, forma, h2h, corners","condicionPartido":"cómo la situación del partido afecta este pick","cuotaSugerida":"1.75","exigenciaEquipo":"qué exige el partido a cada equipo"}],"pronostico":"resultado más probable con razonamiento","alertas":["alerta concreta"],"perfilPartido":"abierto"}
 
 REGLAS ESTRICTAS:
-- Máximo 5 picks. Si no tienes 5 sólidos, pon 3. Calidad sobre cantidad.
-- Equilibra overs y unders según datos reales — no pongas 4 overs si los equipos son defensivos
-- Confianza mínima: 67%. pesoAnalisis mínimo: 6. Si no cumple ambos, NO lo incluyas.
-- condicionPartido es OBLIGATORIO para cada pick — explica cómo la situación del partido afecta la apuesta
-- Un under bien fundamentado vale más que tres overs dudosos
-- Si hay picks con track record negativo en el historial del usuario, ajusta hacia abajo
+- Máximo 5 picks. Calidad sobre cantidad.
+- Equilibra mercados: no solo goles — incluye corners o tarjetas si los datos lo justifican.
+- Confianza mínima: 67%. pesoAnalisis mínimo: 6.
+- condicionPartido es OBLIGATORIO para cada pick.
+- Un under bien fundamentado vale más que tres overs dudosos.
 - Solo el JSON.`;
   }
 
@@ -389,6 +650,9 @@ function PesoBadge({ peso }) {
 export default function App() {
   // ── STATE ──────────────────────────────────────────────────────────────
   const [match, setMatch] = useState(emptyMatch);
+  const [activeSport, setActiveSport] = useState("futbol"); // "futbol" | "mlb" | "nba"
+  const sport = SPORTS[activeSport];
+  const aiStatus_ref = useRef("idle");
   const [aiStatus, setAiStatus] = useState("idle");
   const [aiResult, setAiResult] = useState(null);
   const [picks, setPicks] = useState([]);
@@ -448,13 +712,10 @@ export default function App() {
     setAiResult(null);
     setPicks([]);
     try {
-      const promptMode = modoMundial ? "mundial" : "full";
+      const promptMode = activeSport === "mlb" ? "mlb" : activeSport === "nba" ? "nba" : modoMundial ? "mundial" : "full";
       const feedbackCtx = buildFeedbackContext(reviews);
-      const jornadaCtx = modoMundial ? buildJornadaContext(jornadas, match.local, match.visitante) : "";
-      // Nota del usuario inyectada directamente al prompt
-      const notaCtx = userNote.trim()
-        ? `\n\n📝 NOTA DEL ANALISTA (dato que la IA debe considerar): ${userNote.trim()}`
-        : "";
+      const jornadaCtx = modoMundial && activeSport === "futbol" ? buildJornadaContext(jornadas, match.local, match.visitante) : "";
+      const notaCtx = userNote.trim() ? `\n\n📝 NOTA DEL ANALISTA: ${userNote.trim()}` : "";
       const prompt = buildAIPrompt(match, promptMode, feedbackCtx + notaCtx, jornadaCtx);
 
       const resp = await fetch("/api/ai-analysis", {
@@ -515,7 +776,7 @@ export default function App() {
       setAiStatus("error");
       setAiError(String(err.message || "Error desconocido"));
     }
-  }, [match, modoMundial, reviews, jornadas, userNote]);
+  }, [match, modoMundial, reviews, jornadas, userNote, activeSport]);
 
   // ── VERIFY VALUE ────────────────────────────────────────────────────────
   const verifyValue = useCallback(async () => {
@@ -581,7 +842,7 @@ export default function App() {
       id: makeId(), fecha: new Date().toISOString(),
       partido: `${match.local} vs ${match.visitante}`,
       local: match.local, visitante: match.visitante,
-      liga: match.liga, modo: modoMundial ? "mundial" : "clubes",
+      liga: match.liga, modo: modoMundial ? "mundial" : "clubes", deporte: activeSport,
       picks: sel, stake: ticketStake, esParlay, ...ticket,
       estado: "pendiente",
       resumenIA: aiResult?.resumen || "",
@@ -725,6 +986,7 @@ export default function App() {
       try {
         const data = JSON.parse(e.target?.result);
         if (data.match) setMatch({ ...emptyMatch(), ...data.match });
+        if (data.activeSport && SPORTS[data.activeSport]) setActiveSport(data.activeSport);
         if (Array.isArray(data.picks)) setPicks(data.picks);
         if (data.bankroll) setBankroll({ ...emptyBankroll(), ...data.bankroll });
         if (Array.isArray(data.historial)) setHistorial(data.historial);
@@ -741,7 +1003,7 @@ export default function App() {
   };
 
   const exportData = () => {
-    const data = { match, picks, bankroll, historial, reviews, jornadas, favoritos, aiResult, exportedAt: new Date().toISOString() };
+    const data = { match, picks, bankroll, historial, reviews, jornadas, favoritos, aiResult, activeSport, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
@@ -749,8 +1011,11 @@ export default function App() {
     a.download = `${matchName}_${today}.json`; a.click(); URL.revokeObjectURL(url);
   };
 
-  const filteredPicks = picks.filter(p => matchesFilter(p, marketFilter));
+  const currentFilters = MARKET_FILTERS_BY_SPORT[activeSport] || MARKET_FILTERS_BY_SPORT.futbol;
+  const filteredPicks = picks.filter(p => matchesFilterMulti(p, marketFilter, activeSport));
   const hasFeedback = reviews.length >= 3;
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
   // ── TABS ───────────────────────────────────────────────────────────────
   const tabs = [
@@ -771,7 +1036,7 @@ export default function App() {
 
   // ═══════════════════════════════════════════════════════════════════════
   return (
-    <div style={{ fontFamily: "'Segoe UI', system-ui, sans-serif", background: "#020817", minHeight: "100vh", color: "#f1f5f9" }}>
+    <div style={{ fontFamily: "'Segoe UI', system-ui, sans-serif", background: `#020817`, backgroundImage: sport.bgGradient || "", minHeight: "100vh", color: "#f1f5f9", transition: "background-image .4s ease" }}>
       {/* Background */}
       <div style={{ position: "fixed", inset: 0, background: "radial-gradient(ellipse 70% 40% at 50% 0%, rgba(99,102,241,.15), transparent), radial-gradient(ellipse 40% 30% at 80% 80%, rgba(16,185,129,.06), transparent)", pointerEvents: "none", zIndex: 0 }} />
 
@@ -848,35 +1113,49 @@ export default function App() {
       )}
 
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
-      <header style={{ borderBottom: "1px solid rgba(99,102,241,.15)", background: "rgba(2,8,23,.9)", backdropFilter: "blur(20px)", position: "sticky", top: 0, zIndex: 50 }}>
-        <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 16px", height: 60, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #4f46e5, #7c3aed)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>
-              {modoMundial ? "🏆" : "⚽"}
-            </div>
-            <div>
-              <div style={{ fontWeight: 900, fontSize: 16, letterSpacing: "-.02em", color: "#e0e7ff" }}>
-                BetAnalyzer KAL<span style={{ color: "#818cf8" }}>PRO</span>
-                {modoMundial && <span style={{ color: "#fbbf24", fontSize: 11, marginLeft: 6, background: "rgba(251,191,36,.1)", padding: "1px 6px", borderRadius: 4 }}>MUNDIAL</span>}
-              </div>
-              <div style={{ fontSize: 10, color: "#334155", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>
-                IA · {hasFeedback ? `Motor calibrado (${reviews.length} reviews)` : "Sin calibración aún"}
-              </div>
-            </div>
+      <header style={{ borderBottom: `1px solid ${sport.border}`, background: "rgba(2,8,23,.95)", backdropFilter: "blur(20px)", position: "sticky", top: 0, zIndex: 50, transition: "border-color .3s" }}>
+        <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 16px" }}>
+          {/* Sport selector bar */}
+          <div style={{ display: "flex", gap: 4, paddingTop: 8, paddingBottom: 4 }}>
+            {Object.values(SPORTS).map(s => (
+              <button key={s.id} onClick={() => { setActiveSport(s.id); setMarketFilter("Todos"); setModoMundial(false); }}
+                style={{ padding: "4px 12px", borderRadius: 20, border: `1px solid ${activeSport === s.id ? s.color : "rgba(255,255,255,.08)"}`, background: activeSport === s.id ? s.colorSoft : "transparent", color: activeSport === s.id ? "#e0e7ff" : "#475569", cursor: "pointer", fontWeight: 800, fontSize: 12, transition: "all .2s" }}>
+                {s.label}
+              </button>
+            ))}
           </div>
-          <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
-            <button onClick={() => setModoMundial(v => !v)}
-              style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: `1px solid ${modoMundial ? "rgba(251,191,36,.5)" : "rgba(255,255,255,.08)"}`, background: modoMundial ? "rgba(251,191,36,.12)" : "transparent", color: modoMundial ? "#fbbf24" : "#475569", cursor: "pointer", fontWeight: 700 }}>
-              🏆 {modoMundial ? "Mundial ON" : "Mundial"}
-            </button>
-            <button onClick={() => setExpertMode(v => !v)}
-              style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: `1px solid ${expertMode ? "rgba(99,102,241,.4)" : "rgba(255,255,255,.08)"}`, background: expertMode ? "rgba(99,102,241,.15)" : "transparent", color: expertMode ? "#a5b4fc" : "#475569", cursor: "pointer", fontWeight: 700 }}>
-              {expertMode ? "🧠 Experto" : "📊 Básico"}
-            </button>
-            <button onClick={clearAll} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(239,68,68,.25)", background: "rgba(239,68,68,.08)", color: "#f87171", cursor: "pointer", fontWeight: 700 }}>🗑 Nuevo</button>
-            <button onClick={() => importRef.current?.click()} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(56,189,248,.25)", background: "rgba(56,189,248,.08)", color: "#7dd3fc", cursor: "pointer", fontWeight: 700 }}>📂</button>
-            <button onClick={exportData} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(255,255,255,.08)", background: "transparent", color: "#475569", cursor: "pointer", fontWeight: 700 }}>⬇</button>
-            <input ref={importRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => importData(e.target.files?.[0] || null)} />
+          <div style={{ height: 52, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 10, background: sport.gradient, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, transition: "background .3s" }}>
+                {modoMundial ? "🏆" : sport.emoji}
+              </div>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 15, letterSpacing: "-.02em", color: "#e0e7ff" }}>
+                  BetAnalyzer KAL<span style={{ color: sport.color }}>PRO</span>
+                  {modoMundial && <span style={{ color: "#fbbf24", fontSize: 10, marginLeft: 6, background: "rgba(251,191,36,.1)", padding: "1px 6px", borderRadius: 4 }}>MUNDIAL</span>}
+                  <span style={{ color: sport.color, fontSize: 10, marginLeft: 6, background: sport.colorSoft, padding: "1px 6px", borderRadius: 4, border: `1px solid ${sport.border}` }}>{sport.label}</span>
+                </div>
+                <div style={{ fontSize: 10, color: "#334155", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>
+                  IA · {mounted ? (hasFeedback ? `Motor calibrado (${reviews.length} reviews)` : "Sin calibración aún") : "Cargando..."}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+              {activeSport === "futbol" && (
+                <button onClick={() => setModoMundial(v => !v)}
+                  style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: `1px solid ${modoMundial ? "rgba(251,191,36,.5)" : "rgba(255,255,255,.08)"}`, background: modoMundial ? "rgba(251,191,36,.12)" : "transparent", color: modoMundial ? "#fbbf24" : "#475569", cursor: "pointer", fontWeight: 700 }}>
+                  🏆 {modoMundial ? "Mundial ON" : "Mundial"}
+                </button>
+              )}
+              <button onClick={() => setExpertMode(v => !v)}
+                style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: `1px solid ${expertMode ? `${sport.color}66` : "rgba(255,255,255,.08)"}`, background: expertMode ? sport.colorSoft : "transparent", color: expertMode ? "#a5b4fc" : "#475569", cursor: "pointer", fontWeight: 700 }}>
+                {expertMode ? "🧠 Experto" : "📊 Básico"}
+              </button>
+              <button onClick={clearAll} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(239,68,68,.25)", background: "rgba(239,68,68,.08)", color: "#f87171", cursor: "pointer", fontWeight: 700 }}>🗑 Nuevo</button>
+              <button onClick={() => importRef.current?.click()} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(56,189,248,.25)", background: "rgba(56,189,248,.08)", color: "#7dd3fc", cursor: "pointer", fontWeight: 700 }}>📂</button>
+              <button onClick={exportData} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(255,255,255,.08)", background: "transparent", color: "#475569", cursor: "pointer", fontWeight: 700 }}>⬇</button>
+              <input ref={importRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => importData(e.target.files?.[0] || null)} />
+            </div>
           </div>
         </div>
       </header>
@@ -886,7 +1165,7 @@ export default function App() {
         <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 16px", display: "flex", gap: 0, overflowX: "auto" }}>
           {tabs.map(t => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
-              style={{ padding: "11px 13px", fontSize: 12, fontWeight: activeTab === t.id ? 800 : 600, whiteSpace: "nowrap", border: "none", background: "transparent", color: activeTab === t.id ? "#a5b4fc" : "#334155", cursor: "pointer", borderBottom: `2px solid ${activeTab === t.id ? "#6366f1" : "transparent"}`, transition: "all .15s" }}>
+              style={{ padding: "11px 13px", fontSize: 12, fontWeight: activeTab === t.id ? 800 : 600, whiteSpace: "nowrap", border: "none", background: "transparent", color: activeTab === t.id ? "#e0e7ff" : "#334155", cursor: "pointer", borderBottom: `2px solid ${activeTab === t.id ? sport.color : "transparent"}`, transition: "all .15s" }}>
               {t.label}
             </button>
           ))}
@@ -901,7 +1180,7 @@ export default function App() {
       )}
 
       {/* Feedback banner */}
-      {hasFeedback && (
+      {mounted && hasFeedback && (
         <div style={{ background: "rgba(52,211,153,.05)", borderBottom: "1px solid rgba(52,211,153,.1)", padding: "5px 16px", textAlign: "center" }}>
           <span style={{ fontSize: 11, color: "#6ee7b7" }}>🧠 Motor calibrado con {reviews.length} reviews · Win rate IA: <strong>{fmtPct(iaStats.winRate)}</strong> · El próximo análisis usa este historial</span>
         </div>
@@ -939,21 +1218,25 @@ export default function App() {
                 </div>
               );
             })()}
-            <section style={{ background: "rgba(30,27,75,.35)", border: `1px solid ${modoMundial ? "rgba(251,191,36,.2)" : "rgba(99,102,241,.15)"}`, borderRadius: 20, padding: 24, marginBottom: 20 }}>
+            <section style={{ background: `rgba(15,15,30,.5)`, border: `1px solid ${modoMundial ? "rgba(251,191,36,.25)" : sport.border}`, borderRadius: 20, padding: 24, marginBottom: 20, backdropFilter: "blur(8px)" }}>
               <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".12em", textTransform: "uppercase", color: modoMundial ? "#fbbf24" : "#6366f1", marginBottom: 4 }}>
-                  {modoMundial ? "🏆 Selecciones" : "⚽ Partido"}
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".12em", textTransform: "uppercase", color: modoMundial ? "#fbbf24" : sport.color, marginBottom: 4 }}>
+                  {sport.emoji} {activeSport === "mlb" ? "JUEGO MLB" : activeSport === "nba" ? "PARTIDO NBA" : modoMundial ? "SELECCIONES" : "PARTIDO"}
                 </div>
                 <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>
-                  {modoMundial ? "Registrar Partido de Selecciones" : "Registrar Partido"}
+                  {activeSport === "mlb" ? "⚾ Registrar Juego MLB" : activeSport === "nba" ? "🏀 Registrar Partido NBA" : modoMundial ? "🏆 Registrar Partido de Selecciones" : "⚽ Registrar Partido"}
                 </h2>
               </div>
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
-                {[
-                  { key: "local", label: modoMundial ? "🏠 Selección Local" : "🏠 Local", placeholder: modoMundial ? "Ej: Argentina" : "Ej: Real Madrid" },
-                  { key: "visitante", label: modoMundial ? "✈️ Selección Visitante" : "✈️ Visitante", placeholder: modoMundial ? "Ej: Francia" : "Ej: Barcelona" },
-                  { key: "liga", label: modoMundial ? "🏆 Fase / Torneo" : "🏆 Liga", placeholder: modoMundial ? "Ej: Mundial 2026 — Octavos" : "Ej: La Liga" },
-                ].map(f => (
+                {(modoMundial ? [
+                  { key: "local", label: "🏠 Selección Local", placeholder: "Ej: Argentina" },
+                  { key: "visitante", label: "✈️ Selección Visitante", placeholder: "Ej: Francia" },
+                  { key: "liga", label: "🏆 Fase / Torneo", placeholder: "Ej: Mundial 2026 — Octavos" },
+                ] : (sport.fields || [
+                  { key: "local", label: "🏠 Local", placeholder: "Ej: Real Madrid" },
+                  { key: "visitante", label: "✈️ Visitante", placeholder: "Ej: Barcelona" },
+                  { key: "liga", label: "🏆 Liga", placeholder: "Ej: La Liga" },
+                ])).map(f => (
                   <div key={f.key}>
                     <label style={labelStyle}>{f.label}</label>
                     <input value={match[f.key]} onChange={e => setMatch(m => ({ ...m, [f.key]: e.target.value }))}
@@ -961,11 +1244,11 @@ export default function App() {
                   </div>
                 ))}
               </div>
-              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(3,1fr)", marginTop: 12 }}>
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: sport.hasDraw ? "repeat(3,1fr)" : "repeat(2,1fr)", marginTop: 12 }}>
                 {[
-                  { key: "oddLocal", label: "Cuota Local (1)" },
-                  { key: "oddDraw", label: "Cuota Empate (X)" },
-                  { key: "oddVisit", label: "Cuota Visitante (2)" },
+                  { key: "oddLocal", label: sport.defaultOddLabel[0] || "Cuota Local" },
+                  ...(sport.hasDraw ? [{ key: "oddDraw", label: "Cuota Empate (X)" }] : []),
+                  { key: "oddVisit", label: sport.defaultOddLabel[2] || "Cuota Visitante" },
                 ].map(f => (
                   <div key={f.key}>
                     <label style={labelStyle}>{f.label}</label>
@@ -974,11 +1257,11 @@ export default function App() {
                   </div>
                 ))}
               </div>
-              {match.oddLocal && match.oddDraw && match.oddVisit && (
+              {match.oddLocal && match.oddVisit && (
                 <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {[
                     { label: match.local || "Local", p: impliedProb(toNum(match.oddLocal)), color: "#34d399" },
-                    { label: "Empate", p: impliedProb(toNum(match.oddDraw)), color: "#94a3b8" },
+                    ...(sport.hasDraw && match.oddDraw ? [{ label: "Empate", p: impliedProb(toNum(match.oddDraw)), color: "#94a3b8" }] : []),
                     { label: match.visitante || "Visitante", p: impliedProb(toNum(match.oddVisit)), color: "#f87171" },
                   ].map(x => (
                     <div key={x.label} style={{ background: "rgba(15,23,42,.5)", borderRadius: 8, padding: "5px 10px", fontSize: 12 }}>
@@ -992,7 +1275,7 @@ export default function App() {
             </section>
 
             {/* Feedback context indicator */}
-            {hasFeedback && (
+            {mounted && hasFeedback && (
               <div style={{ background: "rgba(52,211,153,.06)", border: "1px solid rgba(52,211,153,.15)", borderRadius: 12, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 16 }}>🧠</span>
                 <div>
@@ -1027,11 +1310,11 @@ export default function App() {
             </div>
 
             <button onClick={runAIAnalysis} disabled={aiStatus === "loading"}
-              style={{ width: "100%", padding: "18px 24px", borderRadius: 16, border: "none", background: aiStatus === "loading" ? "rgba(99,102,241,.25)" : modoMundial ? "linear-gradient(135deg, #78350f, #b45309)" : "linear-gradient(135deg, #4338ca, #7c3aed)", color: "#fff", fontSize: 16, fontWeight: 900, cursor: aiStatus === "loading" ? "not-allowed" : "pointer", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: aiStatus === "loading" ? "none" : modoMundial ? "0 4px 24px rgba(180,83,9,.3)" : "0 4px 24px rgba(67,56,202,.35)", transition: "all .2s" }}>
+              style={{ width: "100%", padding: "18px 24px", borderRadius: 16, border: "none", background: aiStatus === "loading" ? "rgba(99,102,241,.25)" : sport.gradient, color: "#fff", fontSize: 16, fontWeight: 900, cursor: aiStatus === "loading" ? "not-allowed" : "pointer", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: aiStatus === "loading" ? "none" : `0 4px 24px ${sport.color}55`, transition: "all .2s" }}>
               {aiStatus === "loading" ? (
-                <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Analizando con IA + Web Search{hasFeedback ? " + historial" : ""}...</>
+                <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Analizando {sport.label} con IA + Web Search{mounted && hasFeedback ? " + historial" : ""}...</>
               ) : (
-                <><span>{modoMundial ? "🏆" : "🤖"}</span> {modoMundial ? "Analizar Selecciones con IA" : "Analizar Partido con IA"}{hasFeedback ? " (motor calibrado)" : ""}</>
+                <><span>{sport.emoji}</span> Analizar {activeSport === "mlb" ? "Juego MLB" : activeSport === "nba" ? "Partido NBA" : modoMundial ? "Selecciones" : "Partido"} con IA{mounted && hasFeedback ? " (motor calibrado)" : ""}</>
               )}
             </button>
 
@@ -1158,7 +1441,7 @@ export default function App() {
             {picks.length > 0 && (
               <>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
-                  {MARKET_FILTERS.map(f => (
+                  {currentFilters.map(f => (
                     <button key={f} onClick={() => setMarketFilter(f)}
                       style={{ padding: "4px 10px", borderRadius: 20, border: `1px solid ${marketFilter === f ? "rgba(99,102,241,.4)" : "rgba(255,255,255,.06)"}`, background: marketFilter === f ? "rgba(99,102,241,.15)" : "transparent", color: marketFilter === f ? "#a5b4fc" : "#334155", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                       {f}
