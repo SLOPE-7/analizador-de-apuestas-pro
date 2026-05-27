@@ -2,6 +2,18 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 
+// ── RESPONSIVE HOOK ───────────────────────────────────────────────────────────
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+  return isMobile;
+}
+
 // ── UTILS ────────────────────────────────────────────────────────────────────
 const makeId = () => Math.random().toString(36).slice(2, 10);
 const toNum = (v) => { const n = parseFloat(String(v || "").replace(",", ".")); return Number.isFinite(n) ? n : 0; };
@@ -648,6 +660,7 @@ function PesoBadge({ peso }) {
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
 export default function App() {
+  const isMobile = useIsMobile();
   // ── STATE ──────────────────────────────────────────────────────────────
   const [match, setMatch] = useState(emptyMatch);
   const [activeSport, setActiveSport] = useState("futbol"); // "futbol" | "mlb" | "nba"
@@ -1113,47 +1126,52 @@ export default function App() {
       )}
 
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
       <header style={{ borderBottom: `1px solid ${sport.border}`, background: "rgba(2,8,23,.95)", backdropFilter: "blur(20px)", position: "sticky", top: 0, zIndex: 50, transition: "border-color .3s" }}>
-        <div style={{ maxWidth: 960, margin: "0 auto", padding: "0 16px" }}>
-          {/* Sport selector bar */}
-          <div style={{ display: "flex", gap: 4, paddingTop: 8, paddingBottom: 4 }}>
+        <div style={{ maxWidth: 960, margin: "0 auto", padding: isMobile ? "0 10px" : "0 16px" }}>
+          {/* Sport selector */}
+          <div style={{ display: "flex", gap: 4, paddingTop: 6, paddingBottom: 4, overflowX: "auto", scrollbarWidth: "none" }}>
             {Object.values(SPORTS).map(s => (
               <button key={s.id} onClick={() => { setActiveSport(s.id); setMarketFilter("Todos"); setModoMundial(false); }}
-                style={{ padding: "4px 12px", borderRadius: 20, border: `1px solid ${activeSport === s.id ? s.color : "rgba(255,255,255,.08)"}`, background: activeSport === s.id ? s.colorSoft : "transparent", color: activeSport === s.id ? "#e0e7ff" : "#475569", cursor: "pointer", fontWeight: 800, fontSize: 12, transition: "all .2s" }}>
+                style={{ padding: isMobile ? "3px 10px" : "4px 12px", borderRadius: 20, border: `1px solid ${activeSport === s.id ? s.color : "rgba(255,255,255,.08)"}`, background: activeSport === s.id ? s.colorSoft : "transparent", color: activeSport === s.id ? "#e0e7ff" : "#475569", cursor: "pointer", fontWeight: 800, fontSize: isMobile ? 11 : 12, transition: "all .2s", whiteSpace: "nowrap", flexShrink: 0 }}>
                 {s.label}
               </button>
             ))}
           </div>
-          <div style={{ height: 52, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 34, height: 34, borderRadius: 10, background: sport.gradient, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, transition: "background .3s" }}>
+          <div style={{ minHeight: isMobile ? 44 : 52, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+            {/* Logo */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
+              <div style={{ width: isMobile ? 28 : 34, height: isMobile ? 28 : 34, flexShrink: 0, borderRadius: 10, background: sport.gradient, display: "flex", alignItems: "center", justifyContent: "center", fontSize: isMobile ? 15 : 18 }}>
                 {modoMundial ? "🏆" : sport.emoji}
               </div>
-              <div>
-                <div style={{ fontWeight: 900, fontSize: 15, letterSpacing: "-.02em", color: "#e0e7ff" }}>
-                  BetAnalyzer KAL<span style={{ color: sport.color }}>PRO</span>
-                  {modoMundial && <span style={{ color: "#fbbf24", fontSize: 10, marginLeft: 6, background: "rgba(251,191,36,.1)", padding: "1px 6px", borderRadius: 4 }}>MUNDIAL</span>}
-                  <span style={{ color: sport.color, fontSize: 10, marginLeft: 6, background: sport.colorSoft, padding: "1px 6px", borderRadius: 4, border: `1px solid ${sport.border}` }}>{sport.label}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 900, fontSize: isMobile ? 13 : 15, letterSpacing: "-.02em", color: "#e0e7ff" }}>
+                  BetAnalyzer<span style={{ color: sport.color }}>PRO</span>
+                  {modoMundial && <span style={{ color: "#fbbf24", fontSize: 9, marginLeft: 4, background: "rgba(251,191,36,.1)", padding: "1px 4px", borderRadius: 4 }}>🏆</span>}
+                  {!isMobile && <span style={{ color: sport.color, fontSize: 10, marginLeft: 5, background: sport.colorSoft, padding: "1px 5px", borderRadius: 4, border: `1px solid ${sport.border}` }}>{sport.label}</span>}
                 </div>
-                <div style={{ fontSize: 10, color: "#334155", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>
-                  IA · {mounted ? (hasFeedback ? `Motor calibrado (${reviews.length} reviews)` : "Sin calibración aún") : "Cargando..."}
+                <div style={{ fontSize: 9, color: "#334155", fontWeight: 700, letterSpacing: ".05em", textTransform: "uppercase" }}>
+                  {mounted ? (hasFeedback ? `Calibrado · ${reviews.length} reviews` : "Sin calibración") : "..."}
                 </div>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap" }}>
+            {/* Action buttons */}
+            <div style={{ display: "flex", gap: isMobile ? 3 : 5, alignItems: "center", flexShrink: 0 }}>
               {activeSport === "futbol" && (
                 <button onClick={() => setModoMundial(v => !v)}
-                  style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: `1px solid ${modoMundial ? "rgba(251,191,36,.5)" : "rgba(255,255,255,.08)"}`, background: modoMundial ? "rgba(251,191,36,.12)" : "transparent", color: modoMundial ? "#fbbf24" : "#475569", cursor: "pointer", fontWeight: 700 }}>
-                  🏆 {modoMundial ? "Mundial ON" : "Mundial"}
+                  style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: `1px solid ${modoMundial ? "rgba(251,191,36,.5)" : "rgba(255,255,255,.08)"}`, background: modoMundial ? "rgba(251,191,36,.12)" : "transparent", color: modoMundial ? "#fbbf24" : "#475569", cursor: "pointer", fontWeight: 700 }}>
+                  {isMobile ? "🏆" : `🏆 ${modoMundial ? "Mundial ON" : "Mundial"}`}
                 </button>
               )}
-              <button onClick={() => setExpertMode(v => !v)}
-                style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: `1px solid ${expertMode ? `${sport.color}66` : "rgba(255,255,255,.08)"}`, background: expertMode ? sport.colorSoft : "transparent", color: expertMode ? "#a5b4fc" : "#475569", cursor: "pointer", fontWeight: 700 }}>
-                {expertMode ? "🧠 Experto" : "📊 Básico"}
-              </button>
-              <button onClick={clearAll} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(239,68,68,.25)", background: "rgba(239,68,68,.08)", color: "#f87171", cursor: "pointer", fontWeight: 700 }}>🗑 Nuevo</button>
-              <button onClick={() => importRef.current?.click()} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(56,189,248,.25)", background: "rgba(56,189,248,.08)", color: "#7dd3fc", cursor: "pointer", fontWeight: 700 }}>📂</button>
-              <button onClick={exportData} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: "1px solid rgba(255,255,255,.08)", background: "transparent", color: "#475569", cursor: "pointer", fontWeight: 700 }}>⬇</button>
+              {!isMobile && (
+                <button onClick={() => setExpertMode(v => !v)}
+                  style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: `1px solid ${expertMode ? `${sport.color}66` : "rgba(255,255,255,.08)"}`, background: expertMode ? sport.colorSoft : "transparent", color: expertMode ? "#a5b4fc" : "#475569", cursor: "pointer", fontWeight: 700 }}>
+                  {expertMode ? "🧠 Experto" : "📊 Básico"}
+                </button>
+              )}
+              <button onClick={clearAll} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(239,68,68,.25)", background: "rgba(239,68,68,.08)", color: "#f87171", cursor: "pointer", fontWeight: 700 }}>{isMobile ? "🗑" : "🗑 Nuevo"}</button>
+              <button onClick={() => importRef.current?.click()} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(56,189,248,.25)", background: "rgba(56,189,248,.08)", color: "#7dd3fc", cursor: "pointer", fontWeight: 700 }}>📂</button>
+              <button onClick={exportData} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(255,255,255,.08)", background: "transparent", color: "#475569", cursor: "pointer", fontWeight: 700 }}>⬇</button>
               <input ref={importRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => importData(e.target.files?.[0] || null)} />
             </div>
           </div>
@@ -1193,7 +1211,7 @@ export default function App() {
         </div>
       )}
 
-      <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 16px 80px", position: "relative", zIndex: 1 }}>
+      <main style={{ maxWidth: 960, margin: "0 auto", padding: isMobile ? "16px 12px 80px" : "24px 16px 80px", position: "relative", zIndex: 1 }}>
 
         {/* ── TAB: ANÁLISIS ────────────────────────────────────────────────── */}
         {activeTab === "analisis" && (
@@ -1218,7 +1236,7 @@ export default function App() {
                 </div>
               );
             })()}
-            <section style={{ background: `rgba(15,15,30,.5)`, border: `1px solid ${modoMundial ? "rgba(251,191,36,.25)" : sport.border}`, borderRadius: 20, padding: 24, marginBottom: 20, backdropFilter: "blur(8px)" }}>
+            <section style={{ background: `rgba(15,15,30,.5)`, border: `1px solid ${modoMundial ? "rgba(251,191,36,.25)" : sport.border}`, borderRadius: 20, padding: isMobile ? 16 : 24, marginBottom: 20, backdropFilter: "blur(8px)" }}>
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".12em", textTransform: "uppercase", color: modoMundial ? "#fbbf24" : sport.color, marginBottom: 4 }}>
                   {sport.emoji} {activeSport === "mlb" ? "JUEGO MLB" : activeSport === "nba" ? "PARTIDO NBA" : modoMundial ? "SELECCIONES" : "PARTIDO"}
@@ -1244,7 +1262,7 @@ export default function App() {
                   </div>
                 ))}
               </div>
-              <div style={{ display: "grid", gap: 12, gridTemplateColumns: sport.hasDraw ? "repeat(3,1fr)" : "repeat(2,1fr)", marginTop: 12 }}>
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: sport.hasDraw ? (isMobile ? "1fr 1fr" : "repeat(3,1fr)") : "repeat(2,1fr)", marginTop: 12 }}>
                 {[
                   { key: "oddLocal", label: sport.defaultOddLabel[0] || "Cuota Local" },
                   ...(sport.hasDraw ? [{ key: "oddDraw", label: "Cuota Empate (X)" }] : []),
@@ -1327,7 +1345,7 @@ export default function App() {
             {aiStatus === "done" && aiResult && (
               <div ref={resultsRef}>
                 {/* Perfil badges row */}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
                   {aiResult.perfilPartido && (
                     <span style={{ background: aiResult.perfilPartido === "abierto" ? "rgba(52,211,153,.12)" : aiResult.perfilPartido === "cerrado" ? "rgba(56,189,248,.12)" : "rgba(239,68,68,.12)", border: `1px solid ${aiResult.perfilPartido === "abierto" ? "rgba(52,211,153,.25)" : aiResult.perfilPartido === "cerrado" ? "rgba(56,189,248,.25)" : "rgba(239,68,68,.25)"}`, borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 800, color: aiResult.perfilPartido === "abierto" ? "#34d399" : aiResult.perfilPartido === "cerrado" ? "#38bdf8" : "#f87171" }}>
                       Perfil: {aiResult.perfilPartido}
@@ -1335,6 +1353,14 @@ export default function App() {
                   )}
                   <span style={{ fontSize: 12, color: "#334155", alignSelf: "center" }}>{match.local} vs {match.visitante}</span>
                   {picks.length > 0 && <span style={{ fontSize: 12, background: "rgba(99,102,241,.12)", color: "#a5b4fc", padding: "4px 12px", borderRadius: 20, fontWeight: 800 }}>{picks.length} picks generados</span>}
+                  {/* Botón rápido de resultado */}
+                  {historial.length > 0 && historial[0].partido === `${match.local} vs ${match.visitante}` && (
+                    <button
+                      onClick={() => openReviewModal(historial[0])}
+                      style={{ marginLeft: "auto", padding: "6px 14px", borderRadius: 20, border: "1px solid rgba(52,211,153,.4)", background: "rgba(52,211,153,.1)", color: "#34d399", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                      📝 ¿Cómo terminó?
+                    </button>
+                  )}
                 </div>
 
                 {/* Alerts */}
@@ -1354,7 +1380,7 @@ export default function App() {
                 )}
 
                 {/* Main cards */}
-                <div style={{ display: "grid", gap: 14, gridTemplateColumns: expertMode ? "1fr 1fr" : "1fr", marginBottom: 16 }}>
+                <div style={{ display: "grid", gap: 14, gridTemplateColumns: expertMode && !isMobile ? "1fr 1fr" : "1fr", marginBottom: 16 }}>
                   <div style={{ background: "rgba(30,27,75,.35)", border: "1px solid rgba(99,102,241,.15)", borderRadius: 16, padding: 18 }}>
                     <div style={{ fontSize: 11, fontWeight: 800, color: "#6366f1", marginBottom: 8, textTransform: "uppercase" }}>📋 Resumen</div>
                     <p style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.6, margin: 0 }}>{aiResult.resumen}</p>
@@ -1645,7 +1671,56 @@ export default function App() {
               <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>💼 Bankroll</h2>
             </div>
 
-            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", marginBottom: 20 }}>
+            {/* ── RESUMEN DEL DÍA ──────────────────────────────────────────── */}
+            {(() => {
+              const today = new Date().toISOString().slice(0, 10);
+              const todayBets = bankroll.apuestas.filter(b => b.fecha === today);
+              const todaySettled = todayBets.filter(b => b.estado === "ganada" || b.estado === "perdida");
+              const todayPending = todayBets.filter(b => b.estado === "pendiente");
+              const todayPnl = todaySettled.reduce((s, b) => s + betProfit(b), 0);
+              const todayWins = todaySettled.filter(b => b.estado === "ganada").length;
+              const todayStaked = todaySettled.reduce((s, b) => s + toNum(b.stake), 0);
+              if (!todayBets.length) return null;
+              return (
+                <div style={{ background: `${todayPnl >= 0 ? "rgba(52,211,153,.08)" : "rgba(239,68,68,.08)"}`, border: `1px solid ${todayPnl >= 0 ? "rgba(52,211,153,.2)" : "rgba(239,68,68,.2)"}`, borderRadius: 16, padding: "14px 18px", marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: todayPnl >= 0 ? "#34d399" : "#f87171", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>
+                    📅 Resumen de hoy — {new Date().toLocaleDateString("es", { weekday: "long", day: "numeric", month: "long" })}
+                  </div>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: "#475569" }}>Apuestas hoy</div>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff" }}>{todayBets.length}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: "#475569" }}>Resultadas</div>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff" }}>{todaySettled.length} {todayPending.length > 0 && <span style={{ fontSize: 11, color: "#fbbf24" }}>({todayPending.length} pend.)</span>}</div>
+                    </div>
+                    {todaySettled.length > 0 && (
+                      <>
+                        <div>
+                          <div style={{ fontSize: 10, color: "#475569" }}>Win rate hoy</div>
+                          <div style={{ fontSize: 20, fontWeight: 900, color: todayWins / todaySettled.length >= 0.5 ? "#34d399" : "#f87171" }}>
+                            {((todayWins / todaySettled.length) * 100).toFixed(0)}%
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 10, color: "#475569" }}>P&L hoy</div>
+                          <div style={{ fontSize: 20, fontWeight: 900, color: todayPnl >= 0 ? "#34d399" : "#f87171" }}>
+                            {todayPnl >= 0 ? "+" : ""}${fmtMoney(todayPnl)}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 10, color: "#475569" }}>Apostado hoy</div>
+                          <div style={{ fontSize: 20, fontWeight: 900, color: "#94a3b8" }}>${fmtMoney(todayStaked)}</div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(auto-fit, minmax(130px, 1fr))", marginBottom: 20 }}>
               {[
                 { label: "Banco inicial", val: `$${fmtMoney(stats.inicial)}`, color: "#94a3b8" },
                 { label: "Banco actual", val: `$${fmtMoney(stats.currentBank)}`, color: stats.currentBank >= stats.inicial ? "#34d399" : "#f87171" },
