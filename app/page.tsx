@@ -177,10 +177,20 @@ Responde ÚNICAMENTE con este JSON puro, sin backticks:
 REGLAS ESTRICTAS MLB:
 - Máximo 5 picks de alta calidad.
 - Confianza mínima: 67%. pesoAnalisis mínimo: 6. Si no cumple ambos, NO lo incluyas.
-- Prioriza: Totales del partido, Innings 1-5, Strikeouts del pitcher — son los más predecibles.
+- Prioriza: Innings 1-5, Strikeouts del pitcher dominante, Hándicap cuando hay diferencia clara de calidad.
 - Si el pitcher tiene ERA > 4.5 en sus últimas 3 salidas, NO recomiendes Under de carreras.
 - Si hay viento a favor del bateador (>15 mph hacia el outfield), considera Over en totales.
 - Para props de jugadores, solo sugiere si hay matchup claramente favorable zurdo vs derecho.
+
+⚠️ REGLA CRÍTICA — ERA ALTO DEL PITCHER RIVAL:
+Si el pitcher del equipo débil tiene ERA > 5.00 en sus últimas 3 salidas o ERA de temporada > 5.50:
+- NO sugieras Under del total del partido completo. El equipo fuerte anotará muchas carreras sobre ese pitcher.
+- El Under solo aplica para F5/Innings 1-5 si el pitcher del equipo fuerte es dominante con ERA < 3.00.
+- En este caso prioriza: Over total del partido, Hándicap -1.5 del equipo fuerte, Innings 1-5 Over o Ganador.
+- Lógica: pitcher malo = muchas carreras concedidas = total alto aunque el pitcher rival sea bueno.
+
+⚠️ REGLA CRÍTICA — CONTRADICCIÓN PITCHER DOMINANTE + TOTAL:
+Si recomiendas Ganador claro o Hándicap del equipo fuerte con alta confianza (>75%), es CONTRADICTORIO recomendar Under del total — el equipo fuerte va a anotar muchas carreras. En ese caso: Over total o no incluir el mercado de totales.
 - Solo el JSON.`;
 }
 
@@ -519,6 +529,13 @@ REGLAS ESTRICTAS:
 - Confianza mínima: 68%. pesoAnalisis mínimo: 6. Si no cumple ambos, NO lo incluyas.
 - Cada pick debe tener condicionPartido explicando cómo la situación del torneo lo afecta
 - Si un pick tiene track record malo en el historial del usuario, baja su confianza o elimínalo
+
+⚠️ REGLA CRÍTICA — FINALES Y SEMIFINALES DE TORNEO:
+Si es Final, Semifinal, o partido de eliminación directa en un Mundial/Eurocopa/Copa América/Champions:
+- BAJA la confianza en Over de goles un 20%. Las finales de selecciones promedian 1.4 goles.
+- BAJA la confianza en Over de corners un 20%. Más control, menos transiciones.
+- Confianza MÁXIMA para Over goles en una final/semifinal: 60%.
+- En eliminatorias directas los equipos juegan para no perder, no para ganar. Prioriza: 1x2, Under, empate en la primera mitad, resultado al descanso.
 - Solo el JSON.`;
   }
 
@@ -601,6 +618,14 @@ REGLAS ESTRICTAS:
 - Confianza mínima: 67%. pesoAnalisis mínimo: 6.
 - condicionPartido es OBLIGATORIO para cada pick.
 - Un under bien fundamentado vale más que tres overs dudosos.
+
+⚠️ REGLA CRÍTICA — FINALES Y ELIMINATORIAS:
+Si el partido es una FINAL (Copa del Rey, FA Cup, Conference League, Europa League, Champions, cualquier final de torneo) o partido decisivo de eliminatoria:
+- BAJA automáticamente la confianza en Over de goles un 20%. Las finales promedian 1.6 goles vs 2.7 en liga.
+- BAJA automáticamente la confianza en Over de corners un 20%. Las finales tienen más control y menos transiciones.
+- Confianza MÁXIMA para Over goles en una final: 62% aunque el historial ofensivo diga lo contrario.
+- Los equipos en finales priorizan NO perder sobre atacar. La presión táctica cierra espacios.
+- En finales prioriza: 1x2, resultado al descanso, Under goles, Ambos marcan NO, hándicap.
 - Solo el JSON.`;
   }
 
@@ -736,7 +761,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
-          max_tokens: 3000,
+          max_tokens: 4000,
           useWebSearch: true,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -762,8 +787,16 @@ export default function App() {
           if (cleaned[ci] === "{") depth++;
           else if (cleaned[ci] === "}") { depth--; if (depth === 0) { end = ci; break; } }
         }
-        if (end === -1) throw new Error("no_json");
-        parsed = JSON.parse(cleaned.slice(start, end + 1));
+        let jsonStr = end > -1 ? cleaned.slice(start, end + 1) : cleaned.slice(start);
+        if (end === -1) {
+          // JSON truncado — intentar cerrar arrays y objetos abiertos
+          jsonStr = jsonStr.replace(/,?\s*\{[^{}]*$/, "").replace(/,?\s*"[^"]*$/, "");
+          const ob = (jsonStr.match(/\{/g)||[]).length - (jsonStr.match(/\}/g)||[]).length;
+          const ab = (jsonStr.match(/\[/g)||[]).length - (jsonStr.match(/\]/g)||[]).length;
+          for (let i=0;i<ab;i++) jsonStr+="]";
+          for (let i=0;i<ob;i++) jsonStr+="}";
+        }
+        parsed = JSON.parse(jsonStr);
       } catch (_e) {
         throw new Error("La IA no devolvió JSON válido. Intenta de nuevo.");
       }
@@ -802,7 +835,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
-          max_tokens: 1500,
+          max_tokens: 2000,
           useWebSearch: false,
           messages: [{ role: "user", content: buildAIPrompt({ ...match, picks: withOdds.map(p => ({ id: p.id, mercado: p.mercado, linea: p.linea, confianza: p.confianza, cuotaCasa: p.cuotaCasa })) }, "verify") }]
         })
@@ -879,6 +912,7 @@ export default function App() {
       ...emptyReview(), id: makeId(), fecha: new Date().toISOString(),
       partido: ticket.partido, local: ticket.local || "", visitante: ticket.visitante || "",
       liga: ticket.liga || "", modo: ticket.modo || "clubes",
+      deporte: ticket.deporte || activeSport || "futbol",
       resumenIA: ticket.resumenIA || "", pronosticoIA: ticket.pronosticoIA || "",
       ticketId: ticket.id,
       picks: (ticket.picks || []).map(p => ({
@@ -1077,13 +1111,13 @@ export default function App() {
               <div style={{ fontSize: 12, fontWeight: 800, color: "#64748b", marginBottom: 8, textTransform: "uppercase" }}>Resultado real</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
                 <div>
-                  <label style={labelStyle}>{reviewDraft.local || "Local"} (goles)</label>
+                  <label style={labelStyle}>{reviewDraft.local || "Local"} {reviewDraft.deporte === "mlb" ? "(carreras)" : reviewDraft.deporte === "nba" ? "(puntos)" : "(goles)"}</label>
                   <input type="number" value={reviewDraft.resultadoReal.golesLocal}
                     onChange={e => setReviewDraft(r => ({ ...r, resultadoReal: { ...r.resultadoReal, golesLocal: e.target.value } }))}
                     placeholder="0" style={inputStyle} />
                 </div>
                 <div>
-                  <label style={labelStyle}>{reviewDraft.visitante || "Visitante"} (goles)</label>
+                  <label style={labelStyle}>{reviewDraft.visitante || "Visitante"} {reviewDraft.deporte === "mlb" ? "(carreras)" : reviewDraft.deporte === "nba" ? "(puntos)" : "(goles)"}</label>
                   <input type="number" value={reviewDraft.resultadoReal.golesVisita}
                     onChange={e => setReviewDraft(r => ({ ...r, resultadoReal: { ...r.resultadoReal, golesVisita: e.target.value } }))}
                     placeholder="0" style={inputStyle} />
@@ -1091,7 +1125,8 @@ export default function App() {
               </div>
               <input value={reviewDraft.resultadoReal.notas}
                 onChange={e => setReviewDraft(r => ({ ...r, resultadoReal: { ...r.resultadoReal, notas: e.target.value } }))}
-                placeholder="Notas: corners, tarjetas, etc." style={inputStyle} />
+                placeholder={reviewDraft.deporte === "mlb" ? "Notas: innings, strikeouts, HR, etc." : reviewDraft.deporte === "nba" ? "Notas: puntos 1er cuarto, parciales, etc." : "Notas: corners, tarjetas, etc."}
+                style={inputStyle} />
             </div>
 
             <div style={{ marginBottom: 20 }}>
@@ -1146,7 +1181,7 @@ export default function App() {
               </div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 900, fontSize: isMobile ? 13 : 15, letterSpacing: "-.02em", color: "#e0e7ff" }}>
-                  BetAnalyzer<span style={{ color: sport.color }}>PRO</span>
+                  KALBet Analyzer<span style={{ color: sport.color }}>PRO</span>
                   {modoMundial && <span style={{ color: "#fbbf24", fontSize: 9, marginLeft: 4, background: "rgba(251,191,36,.1)", padding: "1px 4px", borderRadius: 4 }}>🏆</span>}
                   {!isMobile && <span style={{ color: sport.color, fontSize: 10, marginLeft: 5, background: sport.colorSoft, padding: "1px 5px", borderRadius: 4, border: `1px solid ${sport.border}` }}>{sport.label}</span>}
                 </div>
