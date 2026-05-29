@@ -182,6 +182,21 @@ REGLAS ESTRICTAS MLB:
 - Si hay viento a favor del bateador (>15 mph hacia el outfield), considera Over en totales.
 - Para props de jugadores, solo sugiere si hay matchup claramente favorable zurdo vs derecho.
 
+⚠️ REGLA CRÍTICA — FAVORITO CLARO MLB (diferencia récord +12 juegos o más):
+Cuando hay diferencia clara entre equipos (ej: 34-20 vs 20-35):
+- El equipo débil tiene pitcher malo que recibirá muchas carreras del equipo fuerte.
+- Over total del partido es casi siempre correcto en estos casos.
+- NO sugieras Under total si el equipo fuerte tiene cuota ML menor a 1.55.
+- El equipo fuerte anotará 6+ carreras sobre el pitcher débil — eso solo ya supera casi cualquier línea Under.
+
+⚠️ REGLA CRÍTICA — FAVORITO CLARO NBA (spread de 8+ puntos):
+Cuando hay diferencia clara entre equipos (spread de 8 puntos o más):
+- El equipo favorito jugará rápido, atacará con confianza y anotará muchos puntos.
+- El equipo débil intentará el contragolpe pero concederá mucho.
+- Prioriza Over total del partido — ambos equipos anotarán más de lo normal.
+- El equipo favorito cubrirá el spread en casa la mayoría de las veces.
+- No sugieras Under total cuando hay favorito claro — los partidos desequilibrados tienden a tener más puntos, no menos.
+
 ⚠️ REGLA CRÍTICA — ERA ALTO DEL PITCHER RIVAL:
 Si el pitcher del equipo débil tiene ERA > 5.00 en sus últimas 3 salidas o ERA de temporada > 5.50:
 - NO sugieras Under del total del partido completo. El equipo fuerte anotará muchas carreras sobre ese pitcher.
@@ -530,6 +545,13 @@ REGLAS ESTRICTAS:
 - Cada pick debe tener condicionPartido explicando cómo la situación del torneo lo afecta
 - Si un pick tiene track record malo en el historial del usuario, baja su confianza o elimínalo
 
+⚠️ REGLA CRÍTICA — FAVORITO CLARO EN SELECCIONES:
+Cuando hay diferencia clara de nivel entre selecciones (cuota local 1.50 o menos, o diferencia de ranking FIFA >30 posiciones):
+- El partido es ABIERTO — la selección favorita ataca con confianza y la rival intenta el contragolpe.
+- No sugieras Under de goles ni "Ambos no marcan" basándote solo en que el favorito es fuerte.
+- Prioriza Over goles y Over corners cuando hay favoritismo claro.
+- En fase de grupos, los equipos grandes atacan más porque necesitan diferencia de goles.
+
 ⚠️ REGLA CRÍTICA — FINALES Y SEMIFINALES DE TORNEO:
 Si es Final, Semifinal, o partido de eliminación directa en un Mundial/Eurocopa/Copa América/Champions:
 - BAJA la confianza en Over de goles un 20%. Las finales de selecciones promedian 1.4 goles.
@@ -618,6 +640,14 @@ REGLAS ESTRICTAS:
 - Confianza mínima: 67%. pesoAnalisis mínimo: 6.
 - condicionPartido es OBLIGATORIO para cada pick.
 - Un under bien fundamentado vale más que tres overs dudosos.
+
+⚠️ REGLA CRÍTICA — FAVORITO CLARO (local @1.50 o menos):
+Cuando la cuota del local es 1.50 o menor, o hay diferencia grande entre equipos:
+- El partido es ABIERTO por defecto — el favorito ataca desde el inicio con confianza.
+- NUNCA sugieras "Ambos no marcan" solo porque el favorito es fuerte — el visitante intentará el contragolpe.
+- Prioriza Over goles sobre Under en estos partidos.
+- En Copa Libertadores y Copa Sudamericana con equipo brasileño de local (Palmeiras, Flamengo, Fluminense, Botafogo, Atlético Mineiro): el perfil es MUY ABIERTO — estos equipos promedian 2.5+ goles en casa. Over goles y Over corners son los mercados correctos.
+- "Ambos no marcan" solo si el visitante tiene datos reales de ataque muy débil (menos de 0.8 goles por partido fuera).
 
 ⚠️ REGLA CRÍTICA — FINALES Y ELIMINATORIAS:
 Si el partido es una FINAL (Copa del Rey, FA Cup, Conference League, Europa League, Champions, cualquier final de torneo) o partido decisivo de eliminatoria:
@@ -716,6 +746,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("analisis");
   const [showBankHistory, setShowBankHistory] = useState(false);
   const [verifyingValue, setVerifyingValue] = useState(false);
+  const [validatingTicket, setValidatingTicket] = useState(false);
+  const [ticketValidation, setTicketValidation] = useState(null);
   const [expertMode, setExpertMode] = useState(false);
   const [dailyLossLimit, setDailyLossLimit] = useState(() => loadState("daily_loss_limit_v1", "20"));
   const [aiError, setAiError] = useState("");
@@ -817,6 +849,7 @@ export default function App() {
       });
       setPicks(newPicks);
       setAiStatus("done");
+      setTicketValidation(null);
       setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 200);
     } catch (err) {
       setAiStatus("error");
@@ -825,6 +858,73 @@ export default function App() {
   }, [match, modoMundial, reviews, jornadas, userNote, activeSport]);
 
   // ── VERIFY VALUE ────────────────────────────────────────────────────────
+  const validateTicket = useCallback(async () => {
+    const ticketPicks = picks.filter(p => p.enTicket);
+    if (ticketPicks.length < 2) {
+      setTicketValidation({ status: "ok", alerts: [], message: "Agrega al menos 2 picks al ticket para validar." });
+      return;
+    }
+    setValidatingTicket(true);
+    setTicketValidation(null);
+    try {
+      const picksContext = ticketPicks.map((p, i) =>
+        `Pick ${i+1}: "${p.mercado}${p.linea ? ` ${p.linea}` : ""}" (${p.tipo?.toUpperCase()}) — Confianza: ${p.confianza}% — Justificación: ${p.justificacion || "sin justificación"}`
+      ).join("\n");
+
+      const prompt = `Eres un analista experto en apuestas deportivas. Analiza este ticket de apuestas y detecta problemas.
+
+PARTIDO: ${match.local} vs ${match.visitante}
+DEPORTE: ${activeSport}
+PERFIL IA: ${aiResult?.perfilPartido || "desconocido"}
+
+PICKS SELECCIONADOS:
+${picksContext}
+
+Analiza si hay:
+1. CONTRADICCIONES: picks que se anulan entre sí (ej: Over goles + Under goles, o Local gana + Ambos marcan No con equipo débil)
+2. SOLAPAMIENTO: picks del mismo mercado disfrazados (ej: Over 2.5 goles + BTTS Sí — si Over falla, BTTS también falla casi siempre)
+3. RIESGO OCULTO: picks que parecen independientes pero están correlacionados negativamente
+4. PICK MÁS DÉBIL: el pick que tiene menos base y debería quitarse del ticket
+
+Responde SOLO con este JSON sin backticks:
+{"status":"ok","alerts":[{"tipo":"contradiccion","picks":"Pick 1 y Pick 2","mensaje":"explicación concisa de por qué se contradicen o solapan","accion":"Quita uno de los dos","severidad":"alta"}],"mejorTicket":"cuáles picks conservar si tuvieras que elegir solo 2","consejo":"consejo final en una línea"}
+
+Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"todos","consejo":"Ticket limpio, sin contradicciones detectadas"}`;
+
+      const resp = await fetch("/api/ai-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 1000,
+          useWebSearch: false,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const data = await resp.json();
+      const textBlock = (data.content || []).find(b => b.type === "text");
+      if (!textBlock) throw new Error();
+      const raw = textBlock.text.replace(/```json|```/g, "").trim();
+      const start = raw.indexOf("{");
+      let result;
+      try {
+        let depth = 0, end = -1;
+        for (let ci = start; ci < raw.length; ci++) {
+          if (raw[ci] === "{") depth++;
+          else if (raw[ci] === "}") { depth--; if (depth === 0) { end = ci; break; } }
+        }
+        result = JSON.parse(raw.slice(start, end + 1));
+      } catch (_e) {
+        result = { status: "ok", alerts: [], mejorTicket: "todos", consejo: "No se pudo analizar el ticket." };
+      }
+      setTicketValidation(result);
+    } catch (_e) {
+      setTicketValidation({ status: "error", alerts: [], consejo: "Error al validar. Intenta de nuevo." });
+    } finally {
+      setValidatingTicket(false);
+    }
+  }, [picks, match, activeSport, aiResult]);
+
   const verifyValue = useCallback(async () => {
     const withOdds = picks.filter(p => toNum(p.cuotaCasa) > 1);
     if (!withOdds.length) return;
@@ -1181,7 +1281,7 @@ export default function App() {
               </div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 900, fontSize: isMobile ? 13 : 15, letterSpacing: "-.02em", color: "#e0e7ff" }}>
-                  KALBet Analyzer<span style={{ color: sport.color }}>PRO</span>
+                  BetAnalyzer<span style={{ color: sport.color }}>PRO</span>
                   {modoMundial && <span style={{ color: "#fbbf24", fontSize: 9, marginLeft: 4, background: "rgba(251,191,36,.1)", padding: "1px 4px", borderRadius: 4 }}>🏆</span>}
                   {!isMobile && <span style={{ color: sport.color, fontSize: 10, marginLeft: 5, background: sport.colorSoft, padding: "1px 5px", borderRadius: 4, border: `1px solid ${sport.border}` }}>{sport.label}</span>}
                 </div>
@@ -1686,6 +1786,57 @@ export default function App() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {/* ── VALIDACIÓN DEL TICKET CON IA ─────────────────────────── */}
+                {picks.filter(p => p.enTicket).length >= 2 && (
+                  <div style={{ marginBottom: 16 }}>
+                    <button onClick={validateTicket} disabled={validatingTicket}
+                      style={{ width: "100%", padding: 12, borderRadius: 14, border: "1px solid rgba(99,102,241,.3)", background: "rgba(99,102,241,.1)", color: "#a5b4fc", fontSize: 13, fontWeight: 800, cursor: validatingTicket ? "not-allowed" : "pointer", marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      {validatingTicket ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Analizando ticket...</> : "🔍 Validar ticket con IA"}
+                    </button>
+
+                    {ticketValidation && (
+                      <div style={{ background: "rgba(15,23,42,.6)", border: `1px solid ${ticketValidation.alerts?.length > 0 ? "rgba(251,191,36,.3)" : "rgba(52,211,153,.3)"}`, borderRadius: 14, padding: 14 }}>
+                        {/* Alerts */}
+                        {ticketValidation.alerts?.length > 0 ? (
+                          <div style={{ marginBottom: 10 }}>
+                            {ticketValidation.alerts.map((alert, i) => (
+                              <div key={i} style={{ background: alert.severidad === "alta" ? "rgba(239,68,68,.1)" : "rgba(251,191,36,.1)", border: `1px solid ${alert.severidad === "alta" ? "rgba(239,68,68,.3)" : "rgba(251,191,36,.3)"}`, borderRadius: 10, padding: "10px 12px", marginBottom: 8 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                                  <span style={{ fontSize: 14 }}>{alert.severidad === "alta" ? "❌" : "⚠️"}</span>
+                                  <span style={{ fontSize: 12, fontWeight: 900, color: alert.severidad === "alta" ? "#f87171" : "#fbbf24", textTransform: "uppercase", letterSpacing: ".05em" }}>
+                                    {alert.tipo === "contradiccion" ? "Contradicción" : alert.tipo === "solapamiento" ? "Solapamiento" : "Riesgo oculto"}
+                                  </span>
+                                  <span style={{ fontSize: 11, color: "#64748b" }}>{alert.picks}</span>
+                                </div>
+                                <p style={{ fontSize: 12, color: "#e0e7ff", margin: "0 0 4px" }}>{alert.mensaje}</p>
+                                <p style={{ fontSize: 11, color: "#6366f1", margin: 0, fontWeight: 700 }}>👉 {alert.accion}</p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                            <span style={{ fontSize: 18 }}>✅</span>
+                            <span style={{ fontSize: 13, fontWeight: 800, color: "#34d399" }}>Ticket limpio — sin contradicciones detectadas</span>
+                          </div>
+                        )}
+
+                        {/* Mejor ticket sugerido */}
+                        {ticketValidation.mejorTicket && ticketValidation.mejorTicket !== "todos" && ticketValidation.alerts?.length > 0 && (
+                          <div style={{ background: "rgba(99,102,241,.1)", borderRadius: 8, padding: "8px 12px", marginBottom: 8 }}>
+                            <span style={{ fontSize: 11, fontWeight: 800, color: "#a5b4fc" }}>💡 Mejor combinación: </span>
+                            <span style={{ fontSize: 11, color: "#e0e7ff" }}>{ticketValidation.mejorTicket}</span>
+                          </div>
+                        )}
+
+                        {/* Consejo final */}
+                        {ticketValidation.consejo && (
+                          <p style={{ fontSize: 12, color: "#64748b", margin: 0, fontStyle: "italic" }}>"{ticketValidation.consejo}"</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
