@@ -326,6 +326,70 @@ function matchesFilterMulti(pick, filter, sport) {
 }
 
 // ── BANKROLL CALCS ───────────────────────────────────────────────────────────
+// ── SISTEMA DE ESTRELLAS ─────────────────────────────────────────────────────
+function calcPickStars(pick, reviews) {
+  let score = 0;
+
+  // 1. Confianza IA (0-3 pts)
+  const conf = toNum(pick.confianza);
+  if (conf >= 85) score += 3;
+  else if (conf >= 78) score += 2.5;
+  else if (conf >= 72) score += 2;
+  else if (conf >= 70) score += 1.5;
+  else score += 1;
+
+  // 2. Peso del análisis (0-1 pt)
+  const peso = toNum(pick.pesoAnalisis);
+  if (peso >= 9) score += 1;
+  else if (peso >= 7) score += 0.5;
+
+  // 3. Track record personal en ese mercado (0-1 pt)
+  const allPicks = reviews.flatMap(r => r.picks || []);
+  const settled = allPicks.filter(p =>
+    (p.resultado === "acierto" || p.resultado === "fallo") &&
+    (p.mercado || "").toLowerCase().includes((pick.mercado || "").toLowerCase().slice(0, 6))
+  );
+  if (settled.length >= 3) {
+    const rate = settled.filter(p => p.resultado === "acierto").length / settled.length;
+    if (rate >= 0.70) score += 1;
+    else if (rate >= 0.55) score += 0.5;
+    else score -= 0.5; // mercado con mal track record penaliza
+  }
+
+  // 4. Value de cuota (0-0.5 pt)
+  const cuota = toNum(pick.cuotaSugerida) || toNum(pick.cuotaCasa);
+  if (cuota >= 1.8) score += 0.5;
+
+  // Clamp 1-5 estrellas
+  const stars = Math.min(5, Math.max(1, Math.round(score)));
+  const color = stars >= 5 ? "#fbbf24" : stars >= 4 ? "#f97316" : stars >= 3 ? "#a78bfa" : stars >= 2 ? "#64748b" : "#334155";
+  const label = stars >= 5 ? "Pick Premium" : stars >= 4 ? "Pick Sólido" : stars >= 3 ? "Pick Normal" : stars >= 2 ? "Pick Dudoso" : "Evitar";
+  return { stars, color, label };
+}
+function detectTotalMarkets(picks) {
+  const markets = [];
+  const seen = new Set();
+  picks.forEach(p => {
+    const m = (p.mercado || "").toLowerCase();
+    if ((m.includes("gol") || m.includes("total de goles")) && !seen.has("goles")) {
+      seen.add("goles"); markets.push({ key: "goles", label: "⚽ Goles", icon: "⚽" });
+    }
+    if ((m.includes("corner") || m.includes("esquina")) && !seen.has("corners")) {
+      seen.add("corners"); markets.push({ key: "corners", label: "⛳ Corners", icon: "⛳" });
+    }
+    if ((m.includes("tarjeta") || m.includes("cartón")) && !seen.has("tarjetas")) {
+      seen.add("tarjetas"); markets.push({ key: "tarjetas", label: "🟨 Tarjetas", icon: "🟨" });
+    }
+    if ((m.includes("carrera") || m.includes("totales (incl")) && !seen.has("carreras")) {
+      seen.add("carreras"); markets.push({ key: "carreras", label: "⚾ Carreras", icon: "⚾" });
+    }
+    if ((m.includes("punto") || m.includes("totales (incl. prórroga)")) && !seen.has("puntos")) {
+      seen.add("puntos"); markets.push({ key: "puntos", label: "🏀 Puntos", icon: "🏀" });
+    }
+  });
+  return markets;
+}
+
 function betProfit(bet) {
   const s = toNum(bet.stake), o = toNum(bet.cuota);
   if (bet.estado === "ganada") return o > 1 ? s * (o - 1) : 0;
@@ -538,7 +602,28 @@ function calcDashboard(bankroll, reviews) {
   const currentBank = inicial + totalPnl;
   const roi = totalStaked > 0 ? (totalPnl / totalStaked) * 100 : 0;
 
-  return { bankCurve, sortedDays, marketStats, teamStats, totalStaked, totalPnl, currentBank, roi, inicial };
+  // Yield por deporte
+  const sportMap = { futbol: { staked: 0, pnl: 0 }, mlb: { staked: 0, pnl: 0 }, nba: { staked: 0, pnl: 0 } };
+  apuestas.filter(b => b.estado === "ganada" || b.estado === "perdida").forEach(b => {
+    const sp = b.deporte || "futbol";
+    if (!sportMap[sp]) sportMap[sp] = { staked: 0, pnl: 0 };
+    const stake = toNum(b.stake);
+    const cuota = toNum(b.cuota);
+    sportMap[sp].staked += stake;
+    sportMap[sp].pnl += b.estado === "ganada" ? stake * (cuota - 1) : -stake;
+  });
+  const yieldBySport = Object.entries(sportMap)
+    .filter(([, v]) => v.staked > 0)
+    .map(([sport, v]) => ({
+      sport,
+      label: sport === "futbol" ? "⚽ Fútbol" : sport === "mlb" ? "⚾ MLB" : "🏀 NBA",
+      staked: v.staked,
+      pnl: v.pnl,
+      yield: (v.pnl / v.staked) * 100,
+    }))
+    .sort((a, b) => b.yield - a.yield);
+
+  return { bankCurve, sortedDays, marketStats, teamStats, totalStaked, totalPnl, currentBank, roi, inicial, yieldBySport };
 }
 
 // Mini bar chart component (SVG inline)
@@ -814,7 +899,42 @@ Responde SOLO con este JSON sin texto extra:
 {"evaluaciones":[{"id":"id_del_pick","tieneValue":true,"edge":5.2,"recomendacion":"✅ Tiene value","alerta":""}],"mejorPick":"id","advertencia":""}`;
 }
 
-// ── TICKET CALCS ─────────────────────────────────────────────────────────────
+// ── TIMING DEL ANÁLISIS ──────────────────────────────────────────────────────
+function getTimingStatus(matchDateTime, sport) {
+  if (!matchDateTime) return null;
+  const now = new Date();
+  const match = new Date(matchDateTime);
+  const diffMs = match - now;
+  const diffHours = diffMs / 1000 / 3600;
+
+  // Partido ya comenzó o terminó
+  if (diffHours < -2) return { status: "finished", color: "#475569", icon: "⚫", title: "Partido ya terminó", msg: "Este partido ya finalizó.", canAnalyze: false, canOverride: false };
+  if (diffHours < 0) return { status: "live", color: "#fbbf24", icon: "🔴", title: "Partido en curso", msg: "El partido ya comenzó — análisis pre-partido no aplica.", canAnalyze: false, canOverride: false };
+
+  // Rangos ideales por deporte
+  const ranges = {
+    futbol: { ideal: [2, 6], early: [6, 24], tooEarly: 24 },
+    mlb:    { ideal: [3, 6], early: [6, 12], tooEarly: 12 },
+    nba:    { ideal: [1, 4], early: [4, 8],  tooEarly: 8  },
+  };
+  const r = ranges[sport] || ranges.futbol;
+  const tips = {
+    futbol: "Las alineaciones y noticias de última hora salen 2-3h antes.",
+    mlb:    "El pitcher abridor se confirma 2-3h antes. Sin eso, el análisis es incompleto.",
+    nba:    "El injury report oficial sale 1h antes. Las lesiones son clave en NBA.",
+  };
+
+  if (diffHours <= r.ideal[1] && diffHours >= r.ideal[0]) {
+    return { status: "ideal", color: "#34d399", icon: "🟢", title: "Momento ideal para analizar", msg: `Faltan ${diffHours.toFixed(1)}h — ${tips[sport]}`, canAnalyze: true, canOverride: false, hoursLeft: diffHours };
+  }
+  if (diffHours < r.ideal[0]) {
+    return { status: "close", color: "#fbbf24", icon: "🟡", title: "Muy cerca del partido", msg: `Faltan ${(diffHours * 60).toFixed(0)} minutos. Verifica las alineaciones antes de apostar.`, canAnalyze: true, canOverride: false, hoursLeft: diffHours };
+  }
+  if (diffHours <= r.early[1]) {
+    return { status: "early", color: "#fb923c", icon: "🟠", title: "Un poco pronto", msg: `Faltan ${diffHours.toFixed(1)}h. ${tips[sport]} Puedes analizar pero vuelve a verificar más cerca.`, canAnalyze: false, canOverride: true, hoursLeft: diffHours };
+  }
+  return { status: "tooEarly", color: "#f87171", icon: "🔴", title: "Demasiado pronto", msg: `Faltan ${diffHours.toFixed(0)}h. Los datos clave aún no están confirmados. Espera.`, canAnalyze: false, canOverride: true, hoursLeft: diffHours };
+}
 function calcTicket(picks, monto, esParlay) {
   const sel = picks.filter(p => p.seleccionado && toNum(p.cuotaCasa) > 1);
   if (!sel.length) return { combinada: 0, potencial: 0, probReal: 0, probCasa: 0, value: 0 };
@@ -905,6 +1025,12 @@ export default function App() {
   const [showJornadaForm, setShowJornadaForm] = useState(false);
   const [jornadaDraft, setJornadaDraft] = useState(emptyJornada);
   const [userNote, setUserNote] = useState(""); // nota del usuario antes de analizar
+  const [matchDateTime, setMatchDateTime] = useState("");
+  const [timingOverride, setTimingOverride] = useState(false);
+  const [showLineAnalyzer, setShowLineAnalyzer] = useState(false);
+  const [lineInputs, setLineInputs] = useState({}); // { "goles": {overLine, overOdd, underLine, underOdd}, ... }
+  const [lineAnalysis, setLineAnalysis] = useState(null);
+  const [analyzingLines, setAnalyzingLines] = useState(false);
   const resultsRef = useRef(null);
 
   useEffect(() => { saveState(BK, bankroll); }, [bankroll]);
@@ -1007,6 +1133,78 @@ export default function App() {
   }, [match, modoMundial, reviews, jornadas, userNote, activeSport]);
 
   // ── VERIFY VALUE ────────────────────────────────────────────────────────
+  const analyzeLines = async () => {
+    const markets = detectTotalMarkets(picks);
+    const filledMarkets = markets.filter(m => {
+      const inp = lineInputs[m.key] || {};
+      return inp.overLine && inp.overOdd && inp.underLine && inp.underOdd;
+    });
+    if (!filledMarkets.length) return;
+
+    setAnalyzingLines(true);
+    setLineAnalysis(null);
+    try {
+      const marketContext = filledMarkets.map(m => {
+        const inp = lineInputs[m.key];
+        return `${m.label}: Over ${inp.overLine} a cuota ${inp.overOdd} | Under ${inp.underLine} a cuota ${inp.underOdd}`;
+      }).join("\n");
+
+      const picksContext = picks.map(p =>
+        `${p.mercado} (${p.tipo?.toUpperCase()}) — Confianza IA: ${p.confianza}% — Justificación: ${p.justificacion || ""}`
+      ).join("\n");
+
+      const prompt = `Eres un experto en detección de value betting y líneas infladas por casas de apuestas.
+
+PARTIDO: ${match.local} vs ${match.visitante}
+ANÁLISIS IA PREVIO:
+${picksContext}
+
+LÍNEAS REALES DE LA CASA DE APUESTAS:
+${marketContext}
+
+TAREA: Analiza si la casa de apuestas está inflando las líneas para ganar más. Para cada mercado:
+1. Calcula la probabilidad implícita del Over y del Under según las cuotas reales
+2. Compara con la estimación de la IA
+3. Detecta si hay valor en Over o Under según los números reales
+4. Identifica si la casa infló la línea (ej: ponen Over 2.5 muy barato para atraer apostadores pero el valor real está en Under 2.5 o en Over diferente)
+
+Responde SOLO con este JSON sin backticks:
+{"mercados":[{"mercado":"nombre","lineaOver":"2.5","cuotaOver":"1.75","probImplicitaOver":"57.1%","lineaUnder":"2.5","cuotaUnder":"2.05","probImplicitaUnder":"48.8%","totalImplicita":"105.9%","margenCasa":"5.9%","valueReal":"under","razon":"La casa infló el Over — probabilidad implícita total >105% indica margen alto. Con estimación IA de 55% de goles, el Under tiene value real","alerta":"⚠️ La casa pone Over muy accesible para atraer apostadores — el dinero inteligente está en el Under","confianzaAjustada":72}],"mejorApuesta":"descripción del mejor pick considerando las líneas reales","advertencia":"advertencia general si aplica"}`;
+
+      const resp = await fetch("/api/ai-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 1500,
+          useWebSearch: false,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      const data = await resp.json();
+      const textBlock = (data.content || []).find(b => b.type === "text");
+      if (!textBlock) throw new Error();
+      const raw = textBlock.text.replace(/```json|```/g, "").trim();
+      const start = raw.indexOf("{");
+      let result;
+      try {
+        let depth = 0, end = -1;
+        for (let ci = start; ci < raw.length; ci++) {
+          if (raw[ci] === "{") depth++;
+          else if (raw[ci] === "}") { depth--; if (depth === 0) { end = ci; break; } }
+        }
+        result = JSON.parse(raw.slice(start, end + 1));
+      } catch (_e) {
+        result = { mercados: [], mejorApuesta: "Error al analizar", advertencia: "" };
+      }
+      setLineAnalysis(result);
+    } catch (_e) {
+      setLineAnalysis({ mercados: [], mejorApuesta: "Error al analizar. Intenta de nuevo.", advertencia: "" });
+    } finally {
+      setAnalyzingLines(false);
+    }
+  };
+
   const validateTicket = useCallback(async () => {
     const ticketPicks = picks.filter(p => p.enTicket);
     if (ticketPicks.length < 2) {
@@ -1271,7 +1469,7 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
 
   const clearAll = () => {
     if (!window.confirm("¿Limpiar partido actual? El bankroll e historial se conservan.")) return;
-    setMatch(emptyMatch()); setAiStatus("idle"); setAiResult(null); setPicks([]); setAiError(""); setMarketFilter("Todos"); setActiveTab("analisis"); setModoMundial(false); setUserNote("");
+    setMatch(emptyMatch()); setAiStatus("idle"); setAiResult(null); setPicks([]); setAiError(""); setMarketFilter("Todos"); setActiveTab("analisis"); setModoMundial(false); setUserNote(""); setMatchDateTime(""); setTimingOverride(false);
   };
 
   const importRef = useRef(null);
@@ -1596,20 +1794,92 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
               </div>
             )}
 
+            {/* ── FECHA Y HORA DEL PARTIDO ─────────────────────────────────── */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", textTransform: "uppercase", color: "#64748b", marginBottom: 6 }}>
+                🕐 Fecha y hora del partido <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "#334155" }}>(para saber si es buen momento de analizar)</span>
+              </div>
+              <input
+                type="datetime-local"
+                value={matchDateTime}
+                onChange={e => { setMatchDateTime(e.target.value); setTimingOverride(false); }}
+                style={{ width: "100%", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(99,102,241,.2)", background: "rgba(15,23,42,.6)", color: "#e0e7ff", fontSize: 13, outline: "none", boxSizing: "border-box", colorScheme: "dark" }}
+              />
+            </div>
+
+            {/* ── ALERTA DE TIMING ─────────────────────────────────────────── */}
+            {(() => {
+              const timing = getTimingStatus(matchDateTime, activeSport);
+              if (!timing) return null;
+              return (
+                <div style={{ background: `${timing.color}15`, border: `1px solid ${timing.color}40`, borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 18 }}>{timing.icon}</span>
+                    <span style={{ fontSize: 13, fontWeight: 900, color: timing.color }}>{timing.title}</span>
+                  </div>
+                  <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 8px" }}>{timing.msg}</p>
+
+                  {/* Guía de timing por deporte */}
+                  {(timing.status === "early" || timing.status === "tooEarly") && (
+                    <div style={{ fontSize: 11, color: "#475569", marginBottom: 10, lineHeight: 1.6 }}>
+                      {activeSport === "futbol" && "⚽ Fútbol: analiza 2-6h antes. Las alineaciones oficiales salen ~1h antes."}
+                      {activeSport === "mlb" && "⚾ MLB: analiza 3-6h antes. El pitcher se confirma 2-3h antes — sin eso el análisis es incompleto."}
+                      {activeSport === "nba" && "🏀 NBA: analiza 1-4h antes. El injury report oficial sale 1h antes del tip-off."}
+                    </div>
+                  )}
+
+                  {/* Botón de desbloqueo manual */}
+                  {timing.canOverride && !timingOverride && (
+                    <button
+                      onClick={() => {
+                        if (window.confirm(
+                          `⚠️ Analizar demasiado pronto puede dar picks incorrectos.\n\n` +
+                          `${activeSport === "mlb" ? "El pitcher abridor puede no estar confirmado aún." : activeSport === "nba" ? "Las lesiones clave pueden no estar reportadas aún." : "Las alineaciones y noticias de última hora no están disponibles aún."}\n\n` +
+                          `¿Confirmas que quieres analizar de todas formas?`
+                        )) {
+                          setTimingOverride(true);
+                        }
+                      }}
+                      style={{ fontSize: 11, padding: "6px 12px", borderRadius: 8, border: `1px solid ${timing.color}50`, background: `${timing.color}15`, color: timing.color, cursor: "pointer", fontWeight: 700 }}>
+                      🔓 Analizar de todas formas
+                    </button>
+                  )}
+                  {timingOverride && (
+                    <div style={{ fontSize: 11, color: "#fbbf24", fontWeight: 700 }}>
+                      ⚠️ Análisis desbloqueado manualmente — los datos pueden estar incompletos
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* ── NOTA DEL ANALISTA ───────────────────────────────────────── */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", textTransform: "uppercase", color: "#64748b", marginBottom: 6 }}>
-                📝 Nota del analista <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "#334155" }}>(opcional — la IA la considerará)</span>
+                📝 Nota del analista <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "#334155" }}>(opcional — solo si sabes algo extra)</span>
               </div>
               <textarea
                 value={userNote}
                 onChange={e => setUserNote(e.target.value)}
-                placeholder={modoMundial
-                  ? "Ej: Francia sin Mbappé, España necesita ganar sí o sí para clasificar, historial de tarjetas altas entre ellos..."
-                  : "Ej: Barça sin Pedri y Gavi, rival en zona de descenso jugará muy defensivo, campo artificial..."}
+                placeholder={
+                  modoMundial
+                    ? "Ej: Francia sin Mbappé, España necesita ganar para clasificar, historial de tarjetas altas..."
+                    : activeSport === "mlb"
+                    ? "Ej: Pitcher de Oakland ERA 6.2 esta semana, Yankees vienen de 3 victorias, viento a favor del bateador..."
+                    : activeSport === "nba"
+                    ? "Ej: LeBron jugó 42 min ayer (back-to-back), rival sin base titular, árbitro favorece locales..."
+                    : "Ej: Arsenal sin Saka (lesionado), PSG ya clasificado puede rotar, es una final = partido cerrado..."
+                }
                 rows={2}
                 style={{ width: "100%", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(99,102,241,.2)", background: "rgba(15,23,42,.6)", color: "#e0e7ff", fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box" }}
               />
+              <div style={{ marginTop: 6, fontSize: 11, color: "#334155" }}>
+                {activeSport === "mlb"
+                  ? "💡 Útil para: ERA del pitcher, clima, back-to-back, lesiones de bateadores clave"
+                  : activeSport === "nba"
+                  ? "💡 Útil para: minutos del día anterior, lesiones, back-to-back, rotaciones confirmadas"
+                  : "💡 Útil para: lesiones recientes, contexto del partido, rotaciones, condiciones del campo"}
+              </div>
               {userNote.trim() && (
                 <div style={{ marginTop: 4, fontSize: 11, color: "#6366f1", fontWeight: 700 }}>
                   ✓ La IA recibirá esta nota como contexto prioritario
@@ -1629,14 +1899,23 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
               </button>
             </div>
 
-            <button onClick={runAIAnalysis} disabled={aiStatus === "loading"}
-              style={{ width: "100%", padding: "18px 24px", borderRadius: 16, border: "none", background: aiStatus === "loading" ? "rgba(99,102,241,.25)" : sport.gradient, color: "#fff", fontSize: 16, fontWeight: 900, cursor: aiStatus === "loading" ? "not-allowed" : "pointer", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: aiStatus === "loading" ? "none" : `0 4px 24px ${sport.color}55`, transition: "all .2s" }}>
-              {aiStatus === "loading" ? (
-                <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Analizando{useWebSearch ? " + buscando en web" : ""}...</>
-              ) : (
-                <><span>{sport.emoji}</span> Analizar {activeSport === "mlb" ? "Juego MLB" : activeSport === "nba" ? "Partido NBA" : modoMundial ? "Selecciones" : "Partido"} con IA</>
-              )}
-            </button>
+            {(() => {
+              const timing = getTimingStatus(matchDateTime, activeSport);
+              const isBlocked = timing && !timing.canAnalyze && !timingOverride;
+              return (
+                <button onClick={isBlocked ? undefined : runAIAnalysis}
+                  disabled={aiStatus === "loading" || isBlocked}
+                  style={{ width: "100%", padding: "18px 24px", borderRadius: 16, border: "none", background: aiStatus === "loading" ? "rgba(99,102,241,.25)" : isBlocked ? "rgba(100,116,139,.2)" : sport.gradient, color: isBlocked ? "#475569" : "#fff", fontSize: 16, fontWeight: 900, cursor: isBlocked ? "not-allowed" : aiStatus === "loading" ? "not-allowed" : "pointer", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: isBlocked || aiStatus === "loading" ? "none" : `0 4px 24px ${sport.color}55`, transition: "all .2s" }}>
+                  {aiStatus === "loading" ? (
+                    <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Analizando{useWebSearch ? " + buscando en web" : ""}...</>
+                  ) : isBlocked ? (
+                    <><span>🔒</span> Análisis bloqueado — muy pronto para analizar</>
+                  ) : (
+                    <><span>{sport.emoji}</span> Analizar {activeSport === "mlb" ? "Juego MLB" : activeSport === "nba" ? "Partido NBA" : modoMundial ? "Selecciones" : "Partido"} con IA</>
+                  )}
+                </button>
+              );
+            })()}
 
             {aiError && (
               <div style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.25)", borderRadius: 12, padding: "12px 16px", marginBottom: 20 }}>
@@ -1752,13 +2031,143 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
                 <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#6366f1", textTransform: "uppercase", marginBottom: 2 }}>Predicciones IA</div>
                 <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>🎯 Picks del Partido</h2>
               </div>
-              {picks.some(p => toNum(p.cuotaCasa) > 1) && (
-                <button onClick={verifyValue} disabled={verifyingValue}
-                  style={{ padding: "8px 16px", borderRadius: 10, border: "1px solid rgba(99,102,241,.25)", background: "rgba(99,102,241,.08)", color: "#a5b4fc", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-                  {verifyingValue ? "⚙️ Verificando..." : "🔍 Verificar Value"}
-                </button>
-              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                {picks.length > 0 && detectTotalMarkets(picks).length > 0 && (
+                  <button onClick={() => { setShowLineAnalyzer(v => !v); setLineAnalysis(null); }}
+                    style={{ padding: "8px 16px", borderRadius: 10, border: `1px solid ${showLineAnalyzer ? "rgba(251,191,36,.5)" : "rgba(251,191,36,.2)"}`, background: showLineAnalyzer ? "rgba(251,191,36,.15)" : "rgba(251,191,36,.06)", color: "#fbbf24", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                    📊 {showLineAnalyzer ? "Cerrar" : "Analizar líneas"}
+                  </button>
+                )}
+                {picks.some(p => toNum(p.cuotaCasa) > 1) && (
+                  <button onClick={verifyValue} disabled={verifyingValue}
+                    style={{ padding: "8px 16px", borderRadius: 10, border: "1px solid rgba(99,102,241,.25)", background: "rgba(99,102,241,.08)", color: "#a5b4fc", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                    {verifyingValue ? "⚙️ Verificando..." : "🔍 Verificar Value"}
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* ── ANALIZADOR DE LÍNEAS ─────────────────────────────────────── */}
+            {showLineAnalyzer && picks.length > 0 && (() => {
+              const totalMarkets = detectTotalMarkets(picks);
+              if (!totalMarkets.length) return null;
+              const allFilled = totalMarkets.every(m => {
+                const inp = lineInputs[m.key] || {};
+                return inp.overLine && inp.overOdd && inp.underLine && inp.underOdd;
+              });
+              return (
+                <div style={{ background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.2)", borderRadius: 16, padding: 16, marginBottom: 20 }}>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: "#fbbf24", marginBottom: 4 }}>📊 Detector de líneas infladas</div>
+                  <p style={{ fontSize: 11, color: "#94a3b8", margin: "0 0 14px", lineHeight: 1.5 }}>
+                    Ingresa las líneas exactas de Hondubet. La IA detectará si la casa inflö alguna línea y dónde está el value real.
+                  </p>
+
+                  {totalMarkets.map(mkt => {
+                    const inp = lineInputs[mkt.key] || {};
+                    const update = (field, val) => setLineInputs(prev => ({ ...prev, [mkt.key]: { ...(prev[mkt.key] || {}), [field]: val } }));
+                    return (
+                      <div key={mkt.key} style={{ background: "rgba(15,23,42,.5)", borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "#e0e7ff", marginBottom: 10 }}>{mkt.label}</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                          <div>
+                            <label style={{ fontSize: 10, color: "#34d399", fontWeight: 700, display: "block", marginBottom: 4 }}>📈 OVER — Línea más baja</label>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input type="number" step="0.5" placeholder="2.5" value={inp.overLine || ""}
+                                onChange={e => update("overLine", e.target.value)}
+                                style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(52,211,153,.2)", background: "rgba(52,211,153,.06)", color: "#e0e7ff", fontSize: 12, outline: "none" }} />
+                              <input type="number" step="0.01" placeholder="1.75" value={inp.overOdd || ""}
+                                onChange={e => update("overOdd", e.target.value)}
+                                style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(52,211,153,.2)", background: "rgba(52,211,153,.06)", color: "#e0e7ff", fontSize: 12, outline: "none" }} />
+                            </div>
+                            <div style={{ display: "flex", gap: 4, marginTop: 3 }}>
+                              <span style={{ fontSize: 9, color: "#475569" }}>línea</span>
+                              <span style={{ fontSize: 9, color: "#475569", marginLeft: 30 }}>cuota</span>
+                            </div>
+                          </div>
+                          <div>
+                            <label style={{ fontSize: 10, color: "#f87171", fontWeight: 700, display: "block", marginBottom: 4 }}>📉 UNDER — Línea más alta</label>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <input type="number" step="0.5" placeholder="3.5" value={inp.underLine || ""}
+                                onChange={e => update("underLine", e.target.value)}
+                                style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(239,68,68,.2)", background: "rgba(239,68,68,.06)", color: "#e0e7ff", fontSize: 12, outline: "none" }} />
+                              <input type="number" step="0.01" placeholder="2.10" value={inp.underOdd || ""}
+                                onChange={e => update("underOdd", e.target.value)}
+                                style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(239,68,68,.2)", background: "rgba(239,68,68,.06)", color: "#e0e7ff", fontSize: 12, outline: "none" }} />
+                            </div>
+                            <div style={{ display: "flex", gap: 4, marginTop: 3 }}>
+                              <span style={{ fontSize: 9, color: "#475569" }}>línea</span>
+                              <span style={{ fontSize: 9, color: "#475569", marginLeft: 30 }}>cuota</span>
+                            </div>
+                          </div>
+                        </div>
+                        {/* Cálculo rápido de prob implícita */}
+                        {inp.overOdd && inp.underOdd && (
+                          <div style={{ fontSize: 10, color: "#64748b", display: "flex", gap: 12 }}>
+                            <span>Over impl: <strong style={{ color: "#34d399" }}>{(100 / toNum(inp.overOdd)).toFixed(1)}%</strong></span>
+                            <span>Under impl: <strong style={{ color: "#f87171" }}>{(100 / toNum(inp.underOdd)).toFixed(1)}%</strong></span>
+                            <span>Margen casa: <strong style={{ color: (100/toNum(inp.overOdd) + 100/toNum(inp.underOdd) - 100) > 6 ? "#f87171" : "#fbbf24" }}>
+                              {(100/toNum(inp.overOdd) + 100/toNum(inp.underOdd) - 100).toFixed(1)}%
+                            </strong></span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  <button onClick={analyzeLines} disabled={!allFilled || analyzingLines}
+                    style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", background: allFilled ? "linear-gradient(135deg, #d97706, #b45309)" : "rgba(100,116,139,.2)", color: allFilled ? "#fff" : "#475569", fontSize: 13, fontWeight: 900, cursor: allFilled ? "pointer" : "not-allowed", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    {analyzingLines ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Analizando líneas...</> : "🔍 Detectar líneas infladas"}
+                  </button>
+
+                  {!allFilled && <p style={{ fontSize: 10, color: "#475569", textAlign: "center", margin: "6px 0 0" }}>Completa todas las líneas y cuotas para analizar</p>}
+
+                  {/* Resultado del análisis */}
+                  {lineAnalysis && (
+                    <div style={{ marginTop: 14 }}>
+                      {lineAnalysis.mercados?.map((m, i) => {
+                        const isOver = m.valueReal === "over";
+                        const valueColor = isOver ? "#34d399" : "#f87171";
+                        return (
+                          <div key={i} style={{ background: `${valueColor}10`, border: `1px solid ${valueColor}30`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                              <span style={{ fontSize: 13, fontWeight: 900, color: "#e0e7ff" }}>{m.mercado}</span>
+                              <span style={{ fontSize: 12, fontWeight: 900, color: valueColor, background: `${valueColor}20`, padding: "2px 10px", borderRadius: 20 }}>
+                                Value: {m.valueReal?.toUpperCase()} {m.lineaOver && (isOver ? m.lineaOver : m.lineaUnder)}
+                              </span>
+                            </div>
+                            <div style={{ display: "flex", gap: 16, marginBottom: 8, fontSize: 11 }}>
+                              <div>
+                                <span style={{ color: "#475569" }}>Over impl: </span>
+                                <span style={{ color: "#34d399", fontWeight: 700 }}>{m.probImplicitaOver}</span>
+                              </div>
+                              <div>
+                                <span style={{ color: "#475569" }}>Under impl: </span>
+                                <span style={{ color: "#f87171", fontWeight: 700 }}>{m.probImplicitaUnder}</span>
+                              </div>
+                              <div>
+                                <span style={{ color: "#475569" }}>Margen casa: </span>
+                                <span style={{ color: "#fbbf24", fontWeight: 700 }}>{m.margenCasa}</span>
+                              </div>
+                            </div>
+                            <p style={{ fontSize: 12, color: "#94a3b8", margin: "0 0 6px", lineHeight: 1.5 }}>{m.razon}</p>
+                            {m.alerta && <p style={{ fontSize: 11, color: "#fbbf24", fontWeight: 700, margin: 0 }}>{m.alerta}</p>}
+                          </div>
+                        );
+                      })}
+                      {lineAnalysis.mejorApuesta && (
+                        <div style={{ background: "rgba(99,102,241,.1)", border: "1px solid rgba(99,102,241,.25)", borderRadius: 12, padding: 12 }}>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: "#6366f1", marginBottom: 4 }}>💡 Mejor apuesta según las líneas reales</div>
+                          <p style={{ fontSize: 12, color: "#e0e7ff", margin: 0 }}>{lineAnalysis.mejorApuesta}</p>
+                        </div>
+                      )}
+                      {lineAnalysis.advertencia && (
+                        <p style={{ fontSize: 11, color: "#fbbf24", margin: "8px 0 0", fontWeight: 700 }}>⚠️ {lineAnalysis.advertencia}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {picks.length === 0 && (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "#334155" }}>
@@ -1790,16 +2199,26 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
                     const hasOdd = toNum(pick.cuotaCasa) > 1;
                     const vr = hasOdd ? valueAndRisk(pick.confianza, toNum(pick.cuotaCasa)) : null;
                     const isTopPick = idx === 0 && (pick.pesoAnalisis || 0) >= 7;
+                    const starRating = calcPickStars(pick, reviews);
                     return (
                       <div key={pick.id} style={{
                         background: pick.seleccionado ? "rgba(99,102,241,.1)" : "rgba(15,23,42,.5)",
-                        border: `1px solid ${isTopPick ? "rgba(251,191,36,.3)" : pick.seleccionado ? "rgba(99,102,241,.35)" : "rgba(255,255,255,.06)"}`,
+                        border: `1px solid ${starRating.stars >= 5 ? "rgba(251,191,36,.4)" : starRating.stars >= 4 ? "rgba(249,115,22,.3)" : isTopPick ? "rgba(251,191,36,.3)" : pick.seleccionado ? "rgba(99,102,241,.35)" : "rgba(255,255,255,.06)"}`,
                         borderRadius: 16, padding: 16, transition: "all .15s",
-                        boxShadow: isTopPick ? "0 0 20px rgba(251,191,36,.08)" : "none"
+                        boxShadow: starRating.stars >= 5 ? "0 0 24px rgba(251,191,36,.12)" : starRating.stars >= 4 ? "0 0 20px rgba(249,115,22,.08)" : "none"
                       }}>
-                        {isTopPick && (
-                          <div style={{ fontSize: 10, fontWeight: 900, color: "#fbbf24", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>⭐ MEJOR PICK SEGÚN EL MOTOR</div>
-                        )}
+                        {/* Estrellas + label premium */}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <div style={{ display: "flex", gap: 1 }}>
+                              {[1,2,3,4,5].map(s => (
+                                <span key={s} style={{ fontSize: 13, opacity: s <= starRating.stars ? 1 : 0.15, filter: s <= starRating.stars ? "none" : "grayscale(1)" }}>⭐</span>
+                              ))}
+                            </div>
+                            <span style={{ fontSize: 10, fontWeight: 800, color: starRating.color, textTransform: "uppercase", letterSpacing: ".07em" }}>{starRating.label}</span>
+                          </div>
+                          {isTopPick && <div style={{ fontSize: 10, fontWeight: 900, color: "#fbbf24", textTransform: "uppercase", letterSpacing: ".1em" }}>🏆 Mejor pick</div>}
+                        </div>
                         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                           <div style={{ flex: 1 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
@@ -2080,7 +2499,36 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
               </div>
             )}
 
-            {/* Grid: Mercados + Equipos */}
+            {/* Yield por deporte */}
+            {dashboard.yieldBySport?.length > 0 && (
+              <div style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#6366f1", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 12 }}>🏅 Yield por deporte</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {dashboard.yieldBySport.map((s, i) => {
+                    const color = s.yield >= 5 ? "#34d399" : s.yield >= 0 ? "#fbbf24" : "#f87171";
+                    const barW = Math.min(100, Math.abs(s.yield) * 4);
+                    return (
+                      <div key={i}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#e0e7ff" }}>{s.label}</span>
+                          <div style={{ display: "flex", gap: 12, fontSize: 11 }}>
+                            <span style={{ color: "#475569" }}>Apostado: <strong style={{ color: "#94a3b8" }}>${fmtMoney(s.staked)}</strong></span>
+                            <span style={{ color: "#475569" }}>P&L: <strong style={{ color: s.pnl >= 0 ? "#34d399" : "#f87171" }}>{s.pnl >= 0 ? "+" : ""}${fmtMoney(s.pnl)}</strong></span>
+                            <span style={{ color: "#475569" }}>Yield: <strong style={{ color }}>{s.yield >= 0 ? "+" : ""}{s.yield.toFixed(1)}%</strong></span>
+                          </div>
+                        </div>
+                        <div style={{ height: 6, background: "rgba(255,255,255,.05)", borderRadius: 3 }}>
+                          <div style={{ height: "100%", width: `${barW}%`, background: color, borderRadius: 3, transition: "width .5s" }} />
+                        </div>
+                        <div style={{ fontSize: 10, color: "#334155", marginTop: 3 }}>
+                          {s.yield >= 10 ? "🔥 Excelente — sigue apostando en este deporte" : s.yield >= 5 ? "✅ Bueno — rentable" : s.yield >= 0 ? "🟡 Neutro — sin pérdidas pero sin ganancias claras" : "🔴 Negativo — reduce stakes aquí"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", marginBottom: 20 }}>
 
               {/* Mercados con más aciertos */}
