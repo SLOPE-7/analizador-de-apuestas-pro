@@ -1705,7 +1705,7 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
         {activeTab === "analisis" && (
           <div>
             {/* ── ALERTA DE RACHA NEGATIVA ──────────────────────────────────── */}
-            {(() => {
+            {mounted && (() => {
               const lastSettled = bankroll.apuestas.filter(b => b.estado === "ganada" || b.estado === "perdida");
               let lossStreak = 0;
               for (const b of lastSettled) { if (b.estado === "perdida") lossStreak++; else break; }
@@ -2456,7 +2456,7 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
                 { label: "Banco actual", val: `$${fmtMoney(dashboard.currentBank)}`, color: dashboard.currentBank >= dashboard.inicial ? "#34d399" : "#f87171", sub: `Inicio: $${fmtMoney(dashboard.inicial)}` },
                 { label: "P&L total", val: `${dashboard.totalPnl >= 0 ? "+" : ""}$${fmtMoney(dashboard.totalPnl)}`, color: dashboard.totalPnl >= 0 ? "#34d399" : "#f87171", sub: `Apostado: $${fmtMoney(dashboard.totalStaked)}` },
                 { label: "ROI", val: `${dashboard.roi >= 0 ? "+" : ""}${dashboard.roi.toFixed(1)}%`, color: dashboard.roi >= 5 ? "#34d399" : dashboard.roi >= 0 ? "#fbbf24" : "#f87171", sub: "Retorno sobre apostado" },
-                { label: "Win rate picks", val: `${reviews.length ? ((reviews.flatMap(r => r.picks||[]).filter(p=>p.resultado==="acierto").length / Math.max(reviews.flatMap(r=>r.picks||[]).filter(p=>p.resultado==="acierto"||p.resultado==="fallo").length,1))*100).toFixed(0) : 0}%`, color: "#a5b4fc", sub: `${reviews.flatMap(r=>r.picks||[]).filter(p=>p.resultado==="acierto"||p.resultado==="fallo").length} picks evaluados` },
+                { label: "Win rate picks", val: mounted ? `${reviews.length ? ((reviews.flatMap(r => r.picks||[]).filter(p=>p.resultado==="acierto").length / Math.max(reviews.flatMap(r=>r.picks||[]).filter(p=>p.resultado==="acierto"||p.resultado==="fallo").length,1))*100).toFixed(0) : 0}%` : "—", color: "#a5b4fc", sub: mounted ? `${reviews.flatMap(r=>r.picks||[]).filter(p=>p.resultado==="acierto"||p.resultado==="fallo").length} picks evaluados` : "Cargando..." },
               ].map((kpi, i) => (
                 <div key={i} style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: "14px 16px" }}>
                   <div style={{ fontSize: 10, color: "#475569", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>{kpi.label}</div>
@@ -2628,7 +2628,7 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
             </div>
 
             {/* ── RESUMEN DEL DÍA ──────────────────────────────────────────── */}
-            {(() => {
+            {mounted && (() => {
               const today = new Date().toISOString().slice(0, 10);
               const todayBets = bankroll.apuestas.filter(b => b.fecha === today);
               const todaySettled = todayBets.filter(b => b.estado === "ganada" || b.estado === "perdida");
