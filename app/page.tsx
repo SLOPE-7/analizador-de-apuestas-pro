@@ -175,9 +175,11 @@ Responde ÚNICAMENTE con este JSON puro, sin backticks:
 {"resumen":"contexto del juego y condiciones clave","pitcherLocal":"pitcher de ${local}: ERA/WHIP/últimas salidas/tendencia strikeouts","pitcherVisitante":"pitcher de ${visitante}: ERA/WHIP/últimas salidas/tendencia strikeouts","condicionesBateo":"matchups zurdo-derecho, parque, viento, umpire","picks":[{"mercado":"nombre EXACTO del mercado como aparece arriba","linea":"línea numérica (ej: 8.5, 6.5, -1.5)","tipo":"over/under/local/visitante","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"razón con datos reales: ERA, matchups, bullpen, parque, umpire","jugador":"nombre del jugador si es prop de jugador, sino vacío","cuotaSugerida":"1.85"}],"pronostico":"resultado más probable con razonamiento","alertas":["alerta concreta"],"perfilPartido":"abierto"}
 
 REGLAS ESTRICTAS MLB:
-- Máximo 5 picks de alta calidad.
-- Confianza mínima: 67%. pesoAnalisis mínimo: 6. Si no cumple ambos, NO lo incluyas.
-- Prioriza: Innings 1-5, Strikeouts del pitcher dominante, Hándicap cuando hay diferencia clara de calidad.
+- Máximo 3 picks de alta calidad.
+- Confianza mínima: 70%. pesoAnalisis mínimo: 7. Si no cumple ambos, NO lo incluyas.
+- Prioriza: Innings 1-5 Ganador, Hándicap cuando hay diferencia clara de calidad, Totales Over cuando hay pitcher débil rival.
+- ⭐ "Innings 1 a 5 - Ganador" es el mercado más predecible en MLB — priorízalo cuando el pitcher dominante es claro.
+- ⚠️ Confianza 85%+: solo si tienes 3+ factores sólidos (ERA, matchup, parque, bullpen). Si no, baja a 75% máximo.
 - Si el pitcher tiene ERA > 4.5 en sus últimas 3 salidas, NO recomiendes Under de carreras.
 - Si hay viento a favor del bateador (>15 mph hacia el outfield), considera Over en totales.
 - Para props de jugadores, solo sugiere si hay matchup claramente favorable zurdo vs derecho.
@@ -462,11 +464,149 @@ function buildFeedbackContext(reviews) {
   ctx += biasPct >= 70 ? "SESGO ALTO HACIA OVERS, evítalos salvo que los datos sean muy claros\n" : "equilibrado\n";
   if (failingMkts.length) ctx += `- MERCADOS QUE FALLAN: ${failingMkts.join(", ")} → REDUCE confianza en estos\n`;
   if (winningMkts.length) ctx += `- MERCADOS EXITOSOS: ${winningMkts.join(", ")} → puedes dar más peso a estos\n`;
+  ctx += `- ❌ MARCADOR EXACTO tiene 0% acierto en el historial — NO sugerir este mercado.\n`;
+  ctx += `- ⚠️ Picks con confianza 85%+ solo aciertan el 50% — trata esa confianza como si fuera 70% real.\n`;
+  ctx += `- ⭐ "Total de goles" Over/Under tiene 83% de acierto — prioriza este mercado cuando los datos lo respalden.\n`;
   ctx += `Usa este historial para calibrar tus picks. Si un mercado tiene track record malo, baja la confianza o no lo incluyas.`;
   return ctx;
 }
 
-// ── JORNADA CONTEXT FOR MUNDIAL ──────────────────────────────────────────────
+// ── DASHBOARD VISUAL ─────────────────────────────────────────────────────────
+function calcDashboard(bankroll, reviews) {
+  const apuestas = bankroll.apuestas || [];
+  const inicial = toNum(bankroll.inicial) || 0;
+
+  // P&L por día (últimos 14 días)
+  const dayMap = {};
+  apuestas.forEach(b => {
+    if (b.estado !== "ganada" && b.estado !== "perdida") return;
+    const day = b.fecha?.slice(0, 10) || "?";
+    if (!dayMap[day]) dayMap[day] = { pnl: 0, ganadas: 0, perdidas: 0 };
+    const stake = toNum(b.stake);
+    const cuota = toNum(b.cuota);
+    if (b.estado === "ganada") { dayMap[day].pnl += stake * (cuota - 1); dayMap[day].ganadas++; }
+    else { dayMap[day].pnl -= stake; dayMap[day].perdidas++; }
+  });
+  const sortedDays = Object.entries(dayMap).sort(([a], [b]) => a.localeCompare(b)).slice(-14);
+
+  // Curva de bankroll acumulada
+  let running = inicial;
+  const bankCurve = [{ day: "Inicio", val: inicial }];
+  sortedDays.forEach(([day, data]) => {
+    running += data.pnl;
+    bankCurve.push({ day: day.slice(5), val: Math.max(0, running) });
+  });
+
+  // Mercados con más aciertos
+  const allPicks = reviews.flatMap(r => r.picks || []);
+  const settled = allPicks.filter(p => p.resultado === "acierto" || p.resultado === "fallo");
+  const mktMap = {};
+  settled.forEach(p => {
+    const key = (p.mercado || "Otro").replace(/\s*(Over|Under)\s*[\d.]+/i, "").trim().slice(0, 28);
+    if (!mktMap[key]) mktMap[key] = { hits: 0, total: 0 };
+    mktMap[key].total++;
+    if (p.resultado === "acierto") mktMap[key].hits++;
+  });
+  const marketStats = Object.entries(mktMap)
+    .filter(([, v]) => v.total >= 2)
+    .map(([k, v]) => ({ label: k, hits: v.hits, total: v.total, rate: (v.hits / v.total) * 100 }))
+    .sort((a, b) => b.rate - a.rate);
+
+  // Equipos que más te hacen ganar
+  const teamMap = {};
+  reviews.forEach(r => {
+    const teams = [r.local, r.visitante].filter(Boolean);
+    const picksR = (r.picks || []).filter(p => p.resultado === "acierto" || p.resultado === "fallo");
+    if (!picksR.length) return;
+    const hits = picksR.filter(p => p.resultado === "acierto").length;
+    teams.forEach(t => {
+      if (!t) return;
+      if (!teamMap[t]) teamMap[t] = { hits: 0, total: 0 };
+      teamMap[t].total += picksR.length;
+      teamMap[t].hits += hits;
+    });
+  });
+  const teamStats = Object.entries(teamMap)
+    .filter(([, v]) => v.total >= 2)
+    .map(([k, v]) => ({ label: k, hits: v.hits, total: v.total, rate: (v.hits / v.total) * 100 }))
+    .sort((a, b) => b.rate - a.rate)
+    .slice(0, 8);
+
+  // Totales rápidos
+  const totalStaked = apuestas.filter(b => b.estado !== "pendiente").reduce((s, b) => s + toNum(b.stake), 0);
+  const totalPnl = sortedDays.reduce((s, [, d]) => s + d.pnl, 0);
+  const currentBank = inicial + totalPnl;
+  const roi = totalStaked > 0 ? (totalPnl / totalStaked) * 100 : 0;
+
+  return { bankCurve, sortedDays, marketStats, teamStats, totalStaked, totalPnl, currentBank, roi, inicial };
+}
+
+// Mini bar chart component (SVG inline)
+function MiniBarChart({ data, height = 80, color = "#6366f1" }) {
+  if (!data.length) return null;
+  const max = Math.max(...data.map(d => Math.abs(d.val)), 1);
+  const w = 100 / data.length;
+  return (
+    <svg viewBox={`0 0 100 ${height}`} style={{ width: "100%", height }} preserveAspectRatio="none">
+      {data.map((d, i) => {
+        const barH = (Math.abs(d.val) / max) * (height * 0.85);
+        const isPos = d.val >= 0;
+        const barColor = isPos ? "#34d399" : "#f87171";
+        const y = isPos ? height - barH : height / 2;
+        return (
+          <g key={i}>
+            <rect x={i * w + 0.5} y={y} width={w - 1} height={barH}
+              fill={barColor} opacity={0.8} rx={1} />
+          </g>
+        );
+      })}
+      <line x1={0} y1={height / 2} x2={100} y2={height / 2} stroke="rgba(255,255,255,.1)" strokeWidth={0.5} />
+    </svg>
+  );
+}
+
+// Line chart for bankroll curve
+function BankCurve({ data }) {
+  if (data.length < 2) return <div style={{ color: "#475569", fontSize: 12, padding: 20, textAlign: "center" }}>Registra apuestas para ver la curva</div>;
+  const vals = data.map(d => d.val);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min || 1;
+  const W = 300; const H = 80;
+  const pts = data.map((d, i) => {
+    const x = (i / (data.length - 1)) * W;
+    const y = H - ((d.val - min) / range) * (H - 10) - 5;
+    return `${x},${y}`;
+  }).join(" ");
+  const lastVal = vals[vals.length - 1];
+  const firstVal = vals[0];
+  const lineColor = lastVal >= firstVal ? "#34d399" : "#f87171";
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="bankGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={lineColor} stopOpacity={0.3} />
+          <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <polyline points={pts} fill="none" stroke={lineColor} strokeWidth={2} strokeLinejoin="round" />
+      {data.map((d, i) => {
+        const x = (i / (data.length - 1)) * W;
+        const y = H - ((d.val - min) / range) * (H - 10) - 5;
+        return <circle key={i} cx={x} cy={y} r={3} fill={lineColor} />;
+      })}
+      {/* Labels */}
+      {data.map((d, i) => {
+        if (i === 0 || i === data.length - 1 || data.length < 6) {
+          const x = (i / (data.length - 1)) * W;
+          const y = H - ((d.val - min) / range) * (H - 10) - 5;
+          return <text key={`l${i}`} x={x} y={Math.min(y - 5, H - 15)} textAnchor="middle" fontSize={8} fill="rgba(255,255,255,.5)">{d.day}</text>;
+        }
+        return null;
+      })}
+    </svg>
+  );
+}
 function buildJornadaContext(jornadas, local, visitante) {
   const jorLocal = jornadas.filter(j => j.seleccion.toLowerCase().includes(local.toLowerCase().slice(0, 4)));
   const jorVisit = jornadas.filter(j => j.seleccion.toLowerCase().includes(visitante.toLowerCase().slice(0, 4)));
@@ -539,9 +679,12 @@ Responde ÚNICAMENTE con este JSON puro, sin texto antes ni después, sin backti
 {"resumen":"contexto y fase del torneo","condicionPartido":"descripción de qué necesita cada selección y cómo afecta el juego","formaLocal":"forma reciente de ${local} con datos de lesiones y disponibilidad","formaVisitante":"forma reciente de ${visitante} con datos de lesiones y disponibilidad","historialDirecto":"últimos 3-5 enfrentamientos entre ambas","formacionesClaves":"formaciones probables de ambas y jugadores clave titulares","picks":[{"mercado":"nombre exacto","linea":"línea numérica","tipo":"over o under","confianza":72,"prioridad":"alta","pesoAnalisis":7,"justificacion":"razón con datos específicos: lesionados, necesidad, forma, historial","condicionPartido":"cómo la necesidad de cada selección afecta este pick","cuotaSugerida":"1.75"}],"pronostico":"resultado más probable","alertas":["alerta concreta"],"perfilPartido":"cerrado","clavesTacticas":"análisis táctico basado en formaciones y jugadores clave"}
 
 REGLAS ESTRICTAS:
-- Máximo 4 picks de alta calidad. Las selecciones son impredecibles — menos es más.
+- Máximo 3 picks de alta calidad. Las selecciones son impredecibles — menos es más.
 - Prioriza unders y mercados de resultado — las selecciones juegan más defensivas en torneos
-- Confianza mínima: 68%. pesoAnalisis mínimo: 6. Si no cumple ambos, NO lo incluyas.
+- Confianza mínima: 70%. pesoAnalisis mínimo: 7. Si no cumple ambos, NO lo incluyas.
+- ⭐ PRIORIZA "Total de goles" Over/Under y "1x2" — son los más predecibles en selecciones.
+- ❌ NUNCA sugieras "Marcador exacto" — probabilidad real menor al 10%.
+- ⚠️ Confianza 85%+: solo si tienes 3+ factores sólidos independientes. Si no, baja a 75% máximo.
 - Cada pick debe tener condicionPartido explicando cómo la situación del torneo lo afecta
 - Si un pick tiene track record malo en el historial del usuario, baja su confianza o elimínalo
 
@@ -594,10 +737,10 @@ MERCADOS DISPONIBLES:
 - "Par/Impar" → si el total de goles es par o impar
 
 — GOLES —
-- "Total de goles" → Over/Under total del partido (ej: Over 2.5)
+- "Total de goles" → Over/Under total del partido (ej: Over 2.5) ⭐ MERCADO PRIORITARIO
 - "1ª mitad - total" → Over/Under goles en 1er tiempo (ej: Over 1.5)
 - "2ª mitad - total" → Over/Under goles en 2do tiempo
-- "Marcador exacto" → resultado exacto del partido
+- "Marcador exacto" → resultado exacto del partido ⛔ NO SUGERIR — muy difícil, baja probabilidad real
 - "Total de goles exacto" → número exacto de goles (ej: 2 goles)
 - "Ambos equipos marcan 2 goles o más" → ambos anotan 2+
 - "1 gano ambas mitades" → el local gana los dos tiempos
@@ -635,11 +778,14 @@ Responde ÚNICAMENTE con este JSON puro, sin texto antes ni después, sin backti
 {"resumen":"contexto preciso del partido","condicionPartido":"qué necesita cada equipo y cómo define el estilo de juego","formaLocal":"forma real de ${local} últimos 5 partidos con goles/corners/tarjetas","formaVisitante":"forma real de ${visitante} últimos 5 partidos con goles/corners/tarjetas","picks":[{"mercado":"nombre EXACTO del mercado como aparece arriba","linea":"línea o selección (ej: Over 2.5, Sí, Local, 1X)","tipo":"over/under/si/no/local/visitante/empate","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"razón específica con datos: goles promedio, lesionados, forma, h2h, corners","condicionPartido":"cómo la situación del partido afecta este pick","cuotaSugerida":"1.75","exigenciaEquipo":"qué exige el partido a cada equipo"}],"pronostico":"resultado más probable con razonamiento","alertas":["alerta concreta"],"perfilPartido":"abierto"}
 
 REGLAS ESTRICTAS:
-- Máximo 5 picks. Calidad sobre cantidad.
+- Máximo 3 picks. Calidad sobre cantidad — 3 picks sólidos ganan más que 5 mediocres.
 - Equilibra mercados: no solo goles — incluye corners o tarjetas si los datos lo justifican.
-- Confianza mínima: 67%. pesoAnalisis mínimo: 6.
+- Confianza mínima: 70%. pesoAnalisis mínimo: 7. Si no cumple ambos, NO lo incluyas.
 - condicionPartido es OBLIGATORIO para cada pick.
 - Un under bien fundamentado vale más que tres overs dudosos.
+- ⭐ PRIORIZA "Total de goles" Over/Under — es el mercado más predecible y con mejor track record histórico.
+- ❌ NUNCA sugieras "Marcador exacto" — tiene menos del 10% de probabilidad real y distorsiona el análisis.
+- ⚠️ Los picks con confianza 85%+ deben tener al menos 3 factores sólidos independientes. Si no los tienes, baja la confianza a 75% máximo.
 
 ⚠️ REGLA CRÍTICA — FAVORITO CLARO (local @1.50 o menos):
 Cuando la cuota del local es 1.50 o menor, o hay diferencia grande entre equipos:
@@ -748,6 +894,7 @@ export default function App() {
   const [verifyingValue, setVerifyingValue] = useState(false);
   const [validatingTicket, setValidatingTicket] = useState(false);
   const [ticketValidation, setTicketValidation] = useState(null);
+  const [useWebSearch, setUseWebSearch] = useState(true);
   const [expertMode, setExpertMode] = useState(false);
   const [dailyLossLimit, setDailyLossLimit] = useState(() => loadState("daily_loss_limit_v1", "20"));
   const [aiError, setAiError] = useState("");
@@ -766,6 +913,8 @@ export default function App() {
   useEffect(() => { saveState(JK, jornadas); }, [jornadas]);
   useEffect(() => { saveState(FK, favoritos); }, [favoritos]);
   useEffect(() => { saveState("daily_loss_limit_v1", dailyLossLimit); }, [dailyLossLimit]);
+
+  const dashboard = calcDashboard(bankroll, reviews);
 
   const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type, id: makeId() });
@@ -1159,7 +1308,8 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
   };
 
   const currentFilters = MARKET_FILTERS_BY_SPORT[activeSport] || MARKET_FILTERS_BY_SPORT.futbol;
-  const filteredPicks = picks.filter(p => matchesFilterMulti(p, marketFilter, activeSport));
+  const cleanFilter = (f) => f.replace(/[^\w\s\/ªáéíóúüñÁÉÍÓÚÜÑ·-]/g, "").trim();
+  const filteredPicks = picks.filter(p => matchesFilterMulti(p, cleanFilter(marketFilter), activeSport));
   const hasFeedback = reviews.length >= 3;
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
@@ -1307,6 +1457,11 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
               <button onClick={clearAll} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(239,68,68,.25)", background: "rgba(239,68,68,.08)", color: "#f87171", cursor: "pointer", fontWeight: 700 }}>{isMobile ? "🗑" : "🗑 Nuevo"}</button>
               <button onClick={() => importRef.current?.click()} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(56,189,248,.25)", background: "rgba(56,189,248,.08)", color: "#7dd3fc", cursor: "pointer", fontWeight: 700 }}>📂</button>
               <button onClick={exportData} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(255,255,255,.08)", background: "transparent", color: "#475569", cursor: "pointer", fontWeight: 700 }}>⬇</button>
+              {/* Botón Hondubet */}
+              <a href="https://hondubet.com/" target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: isMobile ? 11 : 11, padding: isMobile ? "5px 8px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(234,179,8,.35)", background: "rgba(234,179,8,.12)", color: "#fbbf24", cursor: "pointer", fontWeight: 800, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                🎰 {!isMobile && "Hondubet"}
+              </a>
               <input ref={importRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => importData(e.target.files?.[0] || null)} />
             </div>
           </div>
@@ -1462,18 +1617,36 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
               )}
             </div>
 
+            {/* ── TOGGLE WEB / SIN WEB ────────────────────────────────────── */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <button onClick={() => setUseWebSearch(true)}
+                style={{ flex: 1, padding: "10px 0", borderRadius: 12, border: `2px solid ${useWebSearch ? "#0ea5e9" : "rgba(255,255,255,.08)"}`, background: useWebSearch ? "rgba(14,165,233,.15)" : "transparent", color: useWebSearch ? "#38bdf8" : "#475569", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+                🌐 Con web <span style={{ fontSize: 10, display: "block", fontWeight: 500, opacity: .7 }}>~$0.20 · más preciso</span>
+              </button>
+              <button onClick={() => setUseWebSearch(false)}
+                style={{ flex: 1, padding: "10px 0", borderRadius: 12, border: `2px solid ${!useWebSearch ? "#10b981" : "rgba(255,255,255,.08)"}`, background: !useWebSearch ? "rgba(16,185,129,.15)" : "transparent", color: !useWebSearch ? "#34d399" : "#475569", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+                ⚡ Sin web <span style={{ fontSize: 10, display: "block", fontWeight: 500, opacity: .7 }}>~$0.05 · más rápido</span>
+              </button>
+            </div>
+
             <button onClick={runAIAnalysis} disabled={aiStatus === "loading"}
               style={{ width: "100%", padding: "18px 24px", borderRadius: 16, border: "none", background: aiStatus === "loading" ? "rgba(99,102,241,.25)" : sport.gradient, color: "#fff", fontSize: 16, fontWeight: 900, cursor: aiStatus === "loading" ? "not-allowed" : "pointer", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: aiStatus === "loading" ? "none" : `0 4px 24px ${sport.color}55`, transition: "all .2s" }}>
               {aiStatus === "loading" ? (
-                <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Analizando {sport.label} con IA + Web Search{mounted && hasFeedback ? " + historial" : ""}...</>
+                <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⚙️</span> Analizando{useWebSearch ? " + buscando en web" : ""}...</>
               ) : (
-                <><span>{sport.emoji}</span> Analizar {activeSport === "mlb" ? "Juego MLB" : activeSport === "nba" ? "Partido NBA" : modoMundial ? "Selecciones" : "Partido"} con IA{mounted && hasFeedback ? " (motor calibrado)" : ""}</>
+                <><span>{sport.emoji}</span> Analizar {activeSport === "mlb" ? "Juego MLB" : activeSport === "nba" ? "Partido NBA" : modoMundial ? "Selecciones" : "Partido"} con IA</>
               )}
             </button>
 
             {aiError && (
-              <div style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.25)", borderRadius: 12, padding: "12px 16px", marginBottom: 20, color: "#fca5a5", fontSize: 13 }}>
-                ⚠️ {aiError}
+              <div style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.25)", borderRadius: 12, padding: "12px 16px", marginBottom: 20 }}>
+                <p style={{ color: "#fca5a5", fontSize: 13, margin: "0 0 10px" }}>⚠️ {aiError}</p>
+                {(aiError.toLowerCase().includes("credit") || aiError.toLowerCase().includes("billing") || aiError.toLowerCase().includes("balance") || aiError.toLowerCase().includes("quota") || aiError.toLowerCase().includes("crédito")) && (
+                  <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: "rgba(239,68,68,.2)", border: "1px solid rgba(239,68,68,.4)", color: "#fca5a5", fontSize: 12, fontWeight: 800, textDecoration: "none" }}>
+                    💳 Recargar créditos en Anthropic →
+                  </a>
+                )}
               </div>
             )}
 
@@ -1604,7 +1777,7 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
                   {currentFilters.map(f => (
                     <button key={f} onClick={() => setMarketFilter(f)}
-                      style={{ padding: "4px 10px", borderRadius: 20, border: `1px solid ${marketFilter === f ? "rgba(99,102,241,.4)" : "rgba(255,255,255,.06)"}`, background: marketFilter === f ? "rgba(99,102,241,.15)" : "transparent", color: marketFilter === f ? "#a5b4fc" : "#334155", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      style={{ padding: "4px 10px", borderRadius: 20, border: `1px solid ${cleanFilter(marketFilter) === cleanFilter(f) ? "rgba(99,102,241,.4)" : "rgba(255,255,255,.06)"}`, background: cleanFilter(marketFilter) === cleanFilter(f) ? "rgba(99,102,241,.15)" : "transparent", color: cleanFilter(marketFilter) === cleanFilter(f) ? "#a5b4fc" : "#334155", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                       {f}
                     </button>
                   ))}
@@ -1854,7 +2027,156 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
           <div>
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#6366f1", textTransform: "uppercase", marginBottom: 2 }}>Gestión</div>
-              <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>💼 Bankroll</h2>
+              <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>💼 Bankroll · Dashboard</h2>
+            </div>
+
+            {/* ══ DASHBOARD VISUAL ══════════════════════════════════════════ */}
+            {/* Tarjetas KPI */}
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", marginBottom: 16 }}>
+              {[
+                { label: "Banco actual", val: `$${fmtMoney(dashboard.currentBank)}`, color: dashboard.currentBank >= dashboard.inicial ? "#34d399" : "#f87171", sub: `Inicio: $${fmtMoney(dashboard.inicial)}` },
+                { label: "P&L total", val: `${dashboard.totalPnl >= 0 ? "+" : ""}$${fmtMoney(dashboard.totalPnl)}`, color: dashboard.totalPnl >= 0 ? "#34d399" : "#f87171", sub: `Apostado: $${fmtMoney(dashboard.totalStaked)}` },
+                { label: "ROI", val: `${dashboard.roi >= 0 ? "+" : ""}${dashboard.roi.toFixed(1)}%`, color: dashboard.roi >= 5 ? "#34d399" : dashboard.roi >= 0 ? "#fbbf24" : "#f87171", sub: "Retorno sobre apostado" },
+                { label: "Win rate picks", val: `${reviews.length ? ((reviews.flatMap(r => r.picks||[]).filter(p=>p.resultado==="acierto").length / Math.max(reviews.flatMap(r=>r.picks||[]).filter(p=>p.resultado==="acierto"||p.resultado==="fallo").length,1))*100).toFixed(0) : 0}%`, color: "#a5b4fc", sub: `${reviews.flatMap(r=>r.picks||[]).filter(p=>p.resultado==="acierto"||p.resultado==="fallo").length} picks evaluados` },
+              ].map((kpi, i) => (
+                <div key={i} style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: "14px 16px" }}>
+                  <div style={{ fontSize: 10, color: "#475569", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>{kpi.label}</div>
+                  <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: kpi.color }}>{kpi.val}</div>
+                  <div style={{ fontSize: 10, color: "#334155", marginTop: 2 }}>{kpi.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Curva del bankroll */}
+            {dashboard.bankCurve.length >= 2 && (
+              <div style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#6366f1", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 10 }}>📈 Evolución del banco</div>
+                <BankCurve data={dashboard.bankCurve} />
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                  <span style={{ fontSize: 10, color: "#334155" }}>${fmtMoney(dashboard.bankCurve[0]?.val || 0)}</span>
+                  <span style={{ fontSize: 10, color: dashboard.currentBank >= dashboard.inicial ? "#34d399" : "#f87171", fontWeight: 800 }}>${fmtMoney(dashboard.currentBank)}</span>
+                </div>
+              </div>
+            )}
+
+            {/* P&L por día */}
+            {dashboard.sortedDays.length > 0 && (
+              <div style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: "#6366f1", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 10 }}>📊 P&L por día</div>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 60 }}>
+                  {dashboard.sortedDays.map(([day, data], i) => {
+                    const maxPnl = Math.max(...dashboard.sortedDays.map(([,d]) => Math.abs(d.pnl)), 1);
+                    const barH = Math.max((Math.abs(data.pnl) / maxPnl) * 50, 4);
+                    const isPos = data.pnl >= 0;
+                    return (
+                      <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                        <div style={{ fontSize: 8, color: isPos ? "#34d399" : "#f87171", fontWeight: 800 }}>{isPos ? "+" : ""}{data.pnl.toFixed(0)}</div>
+                        <div style={{ width: "100%", height: barH, background: isPos ? "rgba(52,211,153,.7)" : "rgba(239,68,68,.7)", borderRadius: "3px 3px 0 0" }} />
+                        <div style={{ fontSize: 8, color: "#334155" }}>{day.slice(5)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Grid: Mercados + Equipos */}
+            <div style={{ display: "grid", gap: 12, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", marginBottom: 20 }}>
+
+              {/* Mercados con más aciertos */}
+              {dashboard.marketStats.length > 0 && (
+                <div style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#6366f1", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 12 }}>🎯 Mercados por acierto</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {dashboard.marketStats.slice(0, 6).map((m, i) => {
+                      const color = m.rate >= 65 ? "#34d399" : m.rate >= 45 ? "#fbbf24" : "#f87171";
+                      return (
+                        <div key={i}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                            <span style={{ fontSize: 11, color: "#e0e7ff", fontWeight: 600, maxWidth: "70%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.label}</span>
+                            <span style={{ fontSize: 11, fontWeight: 900, color }}>{m.rate.toFixed(0)}% ({m.hits}/{m.total})</span>
+                          </div>
+                          <div style={{ height: 4, background: "rgba(255,255,255,.05)", borderRadius: 2 }}>
+                            <div style={{ height: "100%", width: `${m.rate}%`, background: color, borderRadius: 2, transition: "width .5s" }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Equipos que más ganan */}
+              {dashboard.teamStats.length > 0 && (
+                <div style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#6366f1", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 12 }}>⭐ Equipos rentables</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {dashboard.teamStats.map((t, i) => {
+                      const color = t.rate >= 65 ? "#34d399" : t.rate >= 45 ? "#fbbf24" : "#f87171";
+                      const isFav = favoritos.some(f => f.nombre.toLowerCase() === t.label.toLowerCase());
+                      return (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ fontSize: 11, color: "#e0e7ff", fontWeight: 600 }}>{t.label}</span>
+                                {isFav && <span style={{ fontSize: 10 }}>⭐</span>}
+                              </div>
+                              <span style={{ fontSize: 11, fontWeight: 900, color }}>{t.rate.toFixed(0)}%</span>
+                            </div>
+                            <div style={{ height: 4, background: "rgba(255,255,255,.05)", borderRadius: 2 }}>
+                              <div style={{ height: "100%", width: `${t.rate}%`, background: color, borderRadius: 2 }} />
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              if (isFav) {
+                                setFavoritos(prev => prev.filter(f => f.nombre.toLowerCase() !== t.label.toLowerCase()));
+                              } else {
+                                setFavoritos(prev => [...prev, { id: makeId(), nombre: t.label, tipo: "club", ligas: "" }]);
+                              }
+                            }}
+                            style={{ fontSize: 14, background: "none", border: "none", cursor: "pointer", opacity: isFav ? 1 : 0.3, transition: "opacity .2s" }}
+                            title={isFav ? "Quitar de favoritos" : "Agregar a favoritos"}
+                          >⭐</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Mensaje si no hay datos */}
+            {!dashboard.bankCurve.length || dashboard.bankCurve.length < 2 ? (
+              <div style={{ background: "rgba(99,102,241,.06)", border: "1px solid rgba(99,102,241,.15)", borderRadius: 16, padding: "20px 16px", textAlign: "center", marginBottom: 16 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>📊</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#a5b4fc", marginBottom: 4 }}>Configura tu banco para ver el dashboard</div>
+                <div style={{ fontSize: 11, color: "#475569" }}>Ingresa tu saldo inicial de $630 y registra tus apuestas para ver las gráficas.</div>
+              </div>
+            ) : null}
+
+            {/* ── CONFIGURAR BANCO INICIAL ──────────────────────────────────── */}
+            <div style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 16, padding: 16, marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#6366f1", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 10 }}>💰 Tu banco en Hondubet</div>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: "#64748b", fontWeight: 700, display: "block", marginBottom: 4 }}>Saldo inicial ($)</label>
+                  <input
+                    type="number"
+                    value={bankroll.inicial}
+                    onChange={e => setBankroll(b => ({ ...b, inicial: e.target.value }))}
+                    placeholder="630"
+                    style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(99,102,241,.3)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 16, fontWeight: 800, outline: "none", boxSizing: "border-box" }}
+                  />
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", paddingBottom: 10 }}>
+                  Actual: <span style={{ color: dashboard.currentBank >= toNum(bankroll.inicial) ? "#34d399" : "#f87171", fontWeight: 800 }}>${fmtMoney(dashboard.currentBank)}</span>
+                </div>
+              </div>
+              {!bankroll.inicial && (
+                <p style={{ fontSize: 11, color: "#fbbf24", margin: "8px 0 0", fontWeight: 700 }}>⚠️ Ingresa tu saldo de Hondubet para activar Kelly y el dashboard</p>
+              )}
             </div>
 
             {/* ── RESUMEN DEL DÍA ──────────────────────────────────────────── */}
