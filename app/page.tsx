@@ -151,25 +151,34 @@ Busca información reciente y analiza con criterio ESTRICTO:
 
 Genera picks usando EXACTAMENTE estos nombres de mercado (los mismos que usa la casa de apuestas):
 
-MERCADOS DISPONIBLES:
-- "Ganador (incl. extra innings)" → quién gana el partido
-- "Totales (incl. extra innings)" → total de carreras Over/Under (ej: Over 8.5)
-- "Hándicap (incl. extra innings)" → ventaja de carreras (ej: ${local} -1.5)
-- "Innings 1 a 5 - Ganador" → quién gana las primeras 5 entradas
-- "Innings 1 a 5 - Total" → total carreras en primeras 5 entradas Over/Under
-- "Innings 1 a 5 - Hándicap" → ventaja en primeras 5 entradas
-- "Primer Inning - Ganador" → quién anota primero en el 1er inning
-- "Primer Inning - Total" → si hay carrera o no en el 1er inning (Over/Under 0.5)
-- "Pitcher Strikeouts Más/Menos de" → total strikeouts del pitcher abridor (ej: Over 6.5)
-- "Lanzador - Outs lanzados Más/Menos" → entradas completadas por el pitcher (ej: Over 17.5 outs)
-- "Lanzador - Hits permitidos Más/Menos" → hits que recibe el pitcher
-- "Jugador - Home Runs Más/Menos" → si un bateador conecta jonrón o no
-- "Jugador - Hits Más/Menos" → hits de un bateador específico
-- "Jugador - Carreras Impulsadas Más/Menos" → RBIs de un bateador
-- "Jugador - Bases Totales Más/Menos" → bases totales de un bateador
-- "Jugador - Strikeouts Más/Menos" → si un bateador poncha o no
-- "Par/Impar (incl. extra innings)" → si el total de carreras es par o impar
-- "Home Runs Más/Menos de" → total home runs del partido
+MERCADOS DISPONIBLES (usa nombre exacto de Hondubet):
+— RESULTADO —
+- "Moneyline" → ganador del partido
+- "Run line" → hándicap de carreras ±1.5
+- "Margen de victoria" → por cuántas carreras gana
+- "Ganador (incl. extra innings)" → ganador incluyendo extras
+
+— CARRERAS / TOTALES —
+- "Total de carreras" → Over/Under total del partido ⭐ PRIORITARIO
+- "Total de carreras por equipo" → carreras de UN equipo Over/Under
+- "Par/Impar de carreras" → par o impar total carreras
+- "Carreras por inning" → carreras en inning específico
+- "Anota en la 1ª entrada" → sí/no anota en primer inning (NRFI/YRFI)
+- "Equipo que anota primero" → quién anota la primera carrera
+
+— F5 (PRIMERAS 5 ENTRADAS) —
+- "Innings 1 a 5 - Ganador" → ganador F5 ⭐ MUY PREDECIBLE
+- "Innings 1 a 5 - Total" → Over/Under carreras F5
+- "Hándicap F5" → ventaja en primeras 5 entradas
+- "Ganador de la 1ª entrada" → quién gana el primer inning
+
+— PROPS DE LANZADOR —
+- "Ponches del lanzador" → strikeouts Over/Under
+- "Outs registrados por el lanzador" → outs lanzados Over/Under
+- "Hits del bateador" → hits de un bateador específico
+- "Jonrones" → jugador conecta HR sí/no
+- "Carreras impulsadas (RBI)" → RBIs de un bateador
+- "Bases totales" → bases totales de un bateador
 
 Responde ÚNICAMENTE con este JSON puro, sin backticks:
 {"resumen":"contexto del juego y condiciones clave","pitcherLocal":"pitcher de ${local}: ERA/WHIP/últimas salidas/tendencia strikeouts","pitcherVisitante":"pitcher de ${visitante}: ERA/WHIP/últimas salidas/tendencia strikeouts","condicionesBateo":"matchups zurdo-derecho, parque, viento, umpire","picks":[{"mercado":"nombre EXACTO del mercado como aparece arriba","linea":"línea numérica (ej: 8.5, 6.5, -1.5)","tipo":"over/under/local/visitante","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"razón con datos reales: ERA, matchups, bullpen, parque, umpire","jugador":"nombre del jugador si es prop de jugador, sino vacío","cuotaSugerida":"1.85"}],"pronostico":"resultado más probable con razonamiento","alertas":["alerta concreta"],"perfilPartido":"abierto"}
@@ -232,47 +241,39 @@ Para cada pick, calcula un PESO DE ANÁLISIS del 1 al 10.
 
 Genera picks usando EXACTAMENTE estos nombres de mercado (como aparecen en la casa de apuestas):
 
-MERCADOS DISPONIBLES:
+MERCADOS DISPONIBLES (usa nombre exacto de Hondubet):
 — RESULTADO —
-- "Ganador (incl. prórroga)" → quién gana el partido
-- "Hándicap (incl. prórroga)" → ventaja/desventaja de puntos (ej: ${local} -5.5)
-- "Totales (incl. prórroga)" → Over/Under puntos totales del partido (ej: Over 224.5)
-- "1ª Mitad - total" → Over/Under puntos en el 1er tiempo
-- "1ª Mitad - Hándicap" → hándicap en el primer tiempo
-- "1ª Mitad - 1x2" → quién va ganando al descanso
-- "Primer cuarto - Totales" → Over/Under puntos en el 1er cuarto
-- "Primer cuarto - hándicap" → hándicap en el primer cuarto
-- "Primer cuarto - 1x2" → quién va ganando al final del 1er cuarto
-- "Primer cuarto - margen de victoria" → por cuántos va ganando en el 1er cuarto
-- "Mitad/final" → combinado resultado mitad y resultado final
-- "Impar/par (incl. prórroga)" → si el total de puntos es par o impar
-- "Habrá prórroga" → si el partido va a prórroga
-- "Carrera a 20 puntos (incl. prórroga)" → quién llega primero a 20 pts
-- "Carrera a 30 puntos (incl. prórroga)" → quién llega primero a 30 pts
+- "Moneyline" → ganador directo
+- "Spread / hándicap de puntos" → ventaja/desventaja puntos
+- "Margen de victoria" → por cuántos puntos gana
+- "Totales del partido" → Over/Under puntos totales ⭐ PRIORITARIO
+- "Mitad/Final" → combinado resultado mitad y final
+- "Habrá prórroga" → si va a overtime
+
+— POR CUARTO / MITAD —
+- "Ganador del cuarto" → Q1, Q2, Q3, Q4
+- "Totales por cuarto" → Over/Under por cuarto ⭐
+- "Total por mitad" → Over/Under 1ª o 2ª mitad
+- "Hándicap por cuarto / mitad" → ventaja en cuarto o mitad
+- "Ganador de cada mitad" → quién gana 1ª y 2ª mitad
+- "Equipo que anota primero" → primer canasto del partido
+- "Par / impar de puntos" → par o impar total
 
 — TOTALES POR EQUIPO —
-- "1 Totales (incl. prórroga)" → puntos del equipo local Over/Under
-- "2 Totales (incl. prórroga)" → puntos del equipo visitante Over/Under
-- "Tiros de tres puntos anotados por el equipo - 1 (incl. prórroga)" → triples del local
-- "Tiros de tres puntos anotados por el equipo - 2 (incl. prórroga)" → triples del visitante
-- "Total de Tiros de tres puntos anotados en el partido (incl. prórroga)" → triples totales
+- "Total de puntos por equipo" → Over/Under de UN equipo
+- "Triples anotados por equipo" → triples local o visitante
+- "Total de triples del partido" → triples totales Over/Under
+- "Total de asistencias" → asistencias totales
+- "Robos / tapones" → total robos o tapones
 
 — PROPS DE JUGADOR —
-- "Puntos Más de/Menos de (incl. prórroga)" → puntos de un jugador específico
-- "Rebotes Más de/Menos de (incl. prórroga)" → rebotes de un jugador
-- "Asistencias Más de/Menos de (incl. prórroga)" → asistencias de un jugador
-- "3 Pts anotados Más de/Menos de (incl. prórroga)" → triples de un jugador
-- "Pts-Reb (incl. prórroga)" → puntos+rebotes combinados de un jugador
-- "Pts-Asist. (incl. prórroga)" → puntos+asistencias combinados
-- "Pts-reb-ast (incl. OT)" → puntos+rebotes+asistencias (PRA) de un jugador
-- "Reb-Ast. (incl. prórroga)" → rebotes+asistencias de un jugador
-- "Hacer un doble-doble (incl. prórroga)" → si un jugador logra doble-doble
-- "Tiros Libres Anotados Más de/Menos de (incl. prórroga)" → tiros libres de jugador
-
-— TOTALES DEL PARTIDO —
-- "Total de asistencias (incl. prórroga)" → asistencias totales del partido
-- "Total de robos en el partido (incl. prórroga)" → robos totales
-- "Total de bloqueos en el partido (incl. prórroga)" → bloqueos totales
+- "Puntos del jugador" → Over/Under puntos jugador específico
+- "Rebotes del jugador" → Over/Under rebotes
+- "Asistencias del jugador" → Over/Under asistencias
+- "Triples anotados" → triples de un jugador Over/Under
+- "Dobles-dobles / triples-dobles" → logra doble-doble sí/no
+- "Combinadas P+R+A" → puntos+rebotes+asistencias combinados
+- "Robos / tapones del jugador" → Over/Under robos o tapones
 
 Responde ÚNICAMENTE con este JSON puro, sin backticks:
 {"resumen":"contexto del partido y condiciones clave","paceTendencia":"análisis de ritmo, puntos promedio y total esperado","lesionesImpacto":"lesiones clave y cómo afectan picks y props","picks":[{"mercado":"nombre EXACTO del mercado como aparece arriba","linea":"línea numérica o selección (ej: Over 224.5, Local, 5.5)","tipo":"over/under/local/visitante","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"razón con datos reales: pace, lesiones, matchup, back-to-back, árbitro","jugador":"nombre completo del jugador si es prop, sino vacío","cuotaSugerida":"1.85"}],"pronostico":"resultado más probable con spread recomendado","alertas":["alerta concreta"],"perfilPartido":"abierto"}
@@ -809,54 +810,56 @@ Para cada pick, calcula un PESO DE ANÁLISIS del 1 al 10.
 
 Genera picks usando EXACTAMENTE estos nombres de mercado (como aparecen en la casa de apuestas):
 
-MERCADOS DISPONIBLES:
+MERCADOS DISPONIBLES (usa nombre exacto de Hondubet):
 — RESULTADO —
 - "1x2" → resultado final (1=local, X=empate, 2=visitante)
 - "Doble oportunidad" → 1X, X2 o 12
-- "Ambos equipos marcan" → Sí o No
-- "Hándicap" → ventaja/desventaja de goles (ej: ${local} -1)
+- "Empate no apuesta" → si hay empate se devuelve la apuesta
+- "Hándicap asiático" → ventaja/desventaja (ej: ${local} -1.5)
+- "Hándicap europeo" → hándicap de 3 vías
 - "Margen de victoria" → por cuántos goles gana
 - "1ª mitad - 1x2" → resultado al descanso
-- "1ª mitad / doble oportunidad" → doble oportunidad en 1er tiempo
-- "Ambos equipos marcan 1ª mitad" → BTTS en el primer tiempo
-- "Par/Impar" → si el total de goles es par o impar
+- "1ª mitad / doble oportunidad" → doble oportunidad 1er tiempo
+- "Mitad/Final" → combinado resultado descanso y final
 
 — GOLES —
-- "Total de goles" → Over/Under total del partido (ej: Over 2.5) ⭐ MERCADO PRIORITARIO
-- "1ª mitad - total" → Over/Under goles en 1er tiempo (ej: Over 1.5)
-- "2ª mitad - total" → Over/Under goles en 2do tiempo
-- "Marcador exacto" → resultado exacto del partido ⛔ NO SUGERIR — muy difícil, baja probabilidad real
-- "Total de goles exacto" → número exacto de goles (ej: 2 goles)
-- "Ambos equipos marcan 2 goles o más" → ambos anotan 2+
-- "1 gano ambas mitades" → el local gana los dos tiempos
-- "1 marco en ambos tiempos" → el local marca en los dos tiempos
+- "Total de goles" → Over/Under total del partido (ej: Over 2.5) ⭐ PRIORITARIO
+- "1ª mitad - total" → Over/Under goles 1er tiempo
+- "2ª mitad - total" → Over/Under goles 2do tiempo
+- "Ambos equipos marcan" → GG (sí) / NG (no)
+- "Ambos equipos marcan 1ª mitad" → BTTS primer tiempo
+- "Goles por equipo" → Over/Under goles de UN equipo específico
+- "Par/Impar de goles" → si el total es par o impar
+- "Rango de goles" → 0-1 goles, 2-3 goles, 4+ goles
+- "Equipo que marca primero" → quién anota primero
+- "Total de goles exacto" → número exacto de goles
+- "Marcador exacto" ⛔ NO SUGERIR — probabilidad real <10%
 
-— CORNERS (Tiros de esquina) —
+— CORNERS —
 - "Total tiros de esquina" → Over/Under corners totales (ej: Over 9.5)
-- "1ª mitad - total tiros de esquina" → corners en 1er tiempo
-- "Total tiros de esquina Par/Impar" → par o impar total corners
-- "Carrera a 5 tiros de esquina" → quién llega primero a 5 corners
-- "Carrera a 7 tiros de esquina" → quién llega primero a 7 corners
-- "1 tiros de esquina" → corners solo del equipo local
-- "2 tiros de esquina" → corners solo del equipo visitante
+- "Hándicap de córners" → ventaja de corners entre equipos
+- "Primer córner" → quién saca el primer corner
+- "1ª mitad - total tiros de esquina" → corners 1er tiempo
+- "Total tiros de esquina Par/Impar" → par o impar corners
 
 — TARJETAS —
-- "Total de tarjetas" → Over/Under tarjetas totales (ej: Over 3.5)
-- "1ª mitad - total tarjetas" → tarjetas en primer tiempo
-- "Tarjetas exactas" → número exacto de tarjetas
-- "Jugador recibe una tarjeta" → pick sobre jugador específico
+- "Total de tarjetas" → Over/Under tarjetas totales
+- "1ª mitad - total tarjetas" → tarjetas 1er tiempo
+- "Jugador con tarjeta" → jugador específico recibe tarjeta
 
 — JUGADORES —
-- "Primer gol" → quién marca el primer gol
-- "Último gol" → quién marca el último gol
-- "Goleador en cualquier momento" → jugador que marca en cualquier momento
-- "Primer goleador y marcador exacto" → combinado goleador + resultado
+- "Goleador del torneo / jugador en anotar" → jugador anota en el partido
+- "Primer gol" → quién marca primero
+- "Último gol" → quién marca último
+- "Goleador en cualquier momento" → jugador anota en cualquier momento
+- "Disparos a puerta" → tiros a puerta de un jugador o equipo
+- "Asistencias del jugador" → jugador da asistencia
 
 — ESPECIALES —
-- "Portería a cero" → equipo que no recibe gol
-- "Penalti en el encuentro" → si habrá penalti o no
-- "1er tiempo - ambos equipos marcan" → BTTS primer tiempo
-- "Impacto o más de 2.5" → goles especiales
+- "Portería a cero" → equipo no recibe gol
+- "Penalti en el encuentro" → habrá penalti sí/no
+- "Mitad con más goles" → qué mitad tiene más goles
+- "Ganador de cada mitad" → quién gana cada mitad
 
 Responde ÚNICAMENTE con este JSON puro, sin texto antes ni después, sin backticks:
 
