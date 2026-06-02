@@ -1911,7 +1911,7 @@ Si el ticket está limpio, responde: {"status":"ok","alerts":[],"mejorTicket":"t
               </div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 900, fontSize: isMobile ? 13 : 15, letterSpacing: "-.02em", color: "#e0e7ff" }}>
-                  BetAnalyzer<span style={{ color: sport.color }}>PRO</span>
+                  KALBetAnalyzer<span style={{ color: sport.color }}>PRO</span>
                   {modoMundial && <span style={{ color: "#fbbf24", fontSize: 9, marginLeft: 4, background: "rgba(251,191,36,.1)", padding: "1px 4px", borderRadius: 4 }}>🏆</span>}
                   {!isMobile && <span style={{ color: sport.color, fontSize: 10, marginLeft: 5, background: sport.colorSoft, padding: "1px 5px", borderRadius: 4, border: `1px solid ${sport.border}` }}>{sport.label}</span>}
                 </div>
