@@ -1,6 +1,6 @@
 // @ts-nocheck
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 // ── RESPONSIVE HOOK ───────────────────────────────────────────────────────────
 function useIsMobile() {
@@ -54,7 +54,100 @@ const HK = "historial_ia_pro_v2";
 const RK = "review_ia_pro_v3";
 const JK = "jornadas_mundial_v1";
 const FK = "favoritos_ia_pro_v1";
-const AIK = "last_ai_result_v1"; // persist last analysis
+const AIK = "last_ai_result_v1";
+const EK = "equipos_perfil_v1"; // team profiles
+
+// ── TEAM PROFILE HELPERS ──────────────────────────────────────────────────────
+function emptyPartidoEquipo(deporte = "futbol") {
+  if (deporte === "mlb") return {
+    id: "", fecha: "", rival: "", condicion: "local", resultado: "", // W/L
+    carrerasAnotadas: "", carrerasRecibidas: "",
+    hitsAnotados: "", hitsRecibidos: "",
+    errores: "", innings: "",
+    picksIA: [], eventos: [], notas: "",
+  };
+  if (deporte === "nba") return {
+    id: "", fecha: "", rival: "", condicion: "local", resultado: "",
+    puntosAnotados: "", puntosRecibidos: "",
+    rebotes: "", asistencias: "", triples: "",
+    picksIA: [], eventos: [], notas: "",
+  };
+  return { // futbol
+    id: "", fecha: "", rival: "", condicion: "local", resultado: "",
+    golesAnotados: "", golesRecibidos: "",
+    corners: "", tarjetas: "", tarjetasRojas: "",
+    picksIA: [], eventos: [], notas: "",
+  };
+}
+
+function calcTeamAvg(partidos, deporte) {
+  if (!partidos.length) return null;
+  const n = partidos.length;
+  const avg = (field) => {
+    const vals = partidos.map(p => parseFloat(p[field])).filter(v => !isNaN(v));
+    return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : "N/D";
+  };
+  const wins = partidos.filter(p => p.resultado === "W" || p.resultado === "Victoria").length;
+  const winRate = ((wins / n) * 100).toFixed(0);
+  if (deporte === "mlb") return {
+    partidos: n, winRate,
+    carrerasAnotadas: avg("carrerasAnotadas"),
+    carrerasRecibidas: avg("carrerasRecibidas"),
+    hitsAnotados: avg("hitsAnotados"),
+  };
+  if (deporte === "nba") return {
+    partidos: n, winRate,
+    puntosAnotados: avg("puntosAnotados"),
+    puntosRecibidos: avg("puntosRecibidos"),
+    rebotes: avg("rebotes"),
+  };
+  return {
+    partidos: n, winRate,
+    golesAnotados: avg("golesAnotados"),
+    golesRecibidos: avg("golesRecibidos"),
+    corners: avg("corners"),
+    tarjetas: avg("tarjetas"),
+  };
+}
+
+function buildTeamProfileContext(equipos, local, visitante, deporte) {
+  const find = (nombre) => equipos.find(e =>
+    e.nombre.toLowerCase().trim() === (nombre||"").toLowerCase().trim() &&
+    (e.deporte || "futbol") === deporte
+  );
+  const perfilLocal = find(local);
+  const perfilVisitante = find(visitante);
+  if (!perfilLocal && !perfilVisitante) return "";
+
+  let ctx = "\n\n📊 PERFIL ESTADÍSTICO REAL (datos registrados por el usuario):\n";
+
+  [{ equipo: local, perfil: perfilLocal }, { equipo: visitante, perfil: perfilVisitante }].forEach(({ equipo, perfil }) => {
+    if (!perfil || !perfil.partidos?.length) return;
+    const avg = calcTeamAvg(perfil.partidos.slice(-5), deporte);
+    if (!avg) return;
+    ctx += `\n🏟️ ${equipo} (últimos ${avg.partidos} partidos registrados):\n`;
+    ctx += `  Win rate: ${avg.winRate}%\n`;
+    if (deporte === "futbol") {
+      ctx += `  Goles anotados/juego: ${avg.golesAnotados} | Goles recibidos/juego: ${avg.golesRecibidos}\n`;
+      ctx += `  Corners/juego: ${avg.corners} | Tarjetas/juego: ${avg.tarjetas}\n`;
+    } else if (deporte === "mlb") {
+      ctx += `  Carreras anotadas/juego: ${avg.carrerasAnotadas} | Recibidas: ${avg.carrerasRecibidas}\n`;
+      ctx += `  Hits anotados/juego: ${avg.hitsAnotados}\n`;
+    } else if (deporte === "nba") {
+      ctx += `  Puntos anotados/juego: ${avg.puntosAnotados} | Recibidos: ${avg.puntosRecibidos}\n`;
+      ctx += `  Rebotes/juego: ${avg.rebotes}\n`;
+    }
+    // Últimos eventos relevantes
+    const eventos = perfil.partidos.slice(-3).flatMap(p => p.eventos || []).filter(Boolean);
+    if (eventos.length) ctx += `  Eventos recientes: ${eventos.slice(-5).join(", ")}\n`;
+    // Picks que la IA dio previamente
+    const picksHistorial = perfil.partidos.slice(-3).flatMap(p => (p.picksIA || []).map(pk => `${pk.mercado} ${pk.resultado === "acierto" ? "✅" : pk.resultado === "fallo" ? "❌" : "⬜"}`));
+    if (picksHistorial.length) ctx += `  Picks anteriores: ${picksHistorial.join(", ")}\n`;
+  });
+
+  ctx += "\nUsa estos datos reales para calibrar tus picks. Son más confiables que las estadísticas genéricas.";
+  return ctx;
+}
 
 function loadState(key, fallback) {
   try { const r = localStorage.getItem(key); return r ? JSON.parse(r) : fallback; } catch { return fallback; }
@@ -974,6 +1067,40 @@ function calcProbabilidades(confianza, cuota) {
     hasValue: edge > 0,
   };
 }
+// ── TEAM AUTOCOMPLETE ─────────────────────────────────────────────────────────
+function TeamAutocomplete({ value, onChange, placeholder, style, equipos, onSelect }) {
+  const [show, setShow] = useState(false);
+  const allNames = useMemo(() => {
+    const names = new Set();
+    (equipos || []).forEach(e => names.add(e.nombre));
+    return [...names];
+  }, [equipos]);
+  const filtered = value.trim().length >= 1
+    ? allNames.filter(n => n.toLowerCase().includes(value.toLowerCase())).slice(0, 6)
+    : [];
+  return (
+    <div style={{ position: "relative" }}>
+      <input value={value} onChange={e => { onChange(e.target.value); setShow(true); }}
+        onFocus={() => setShow(true)} onBlur={() => setTimeout(() => setShow(false), 150)}
+        placeholder={placeholder} style={style} />
+      {show && filtered.length > 0 && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 999, background: "rgba(15,23,42,.98)", border: "1px solid rgba(99,102,241,.3)", borderRadius: 10, overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,.5)", marginTop: 2 }}>
+          {filtered.map(name => {
+            const dep = (equipos||[]).find(e => e.nombre === name)?.deporte;
+            return (
+              <button key={name} onMouseDown={() => { (onSelect || onChange)(name); setShow(false); }}
+                style={{ width: "100%", padding: "8px 14px", textAlign: "left", background: "none", border: "none", color: "#e0e7ff", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid rgba(255,255,255,.04)" }}>
+                <span>{dep === "mlb" ? "⚾" : dep === "nba" ? "🏀" : "⚽"}</span>
+                {name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Toast({ msg, type, onClose }) {
   return (
     <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, background: type === "success" ? "rgba(5,150,105,.95)" : type === "error" ? "rgba(185,28,28,.95)" : "rgba(30,27,75,.95)", border: `1px solid ${type === "success" ? "rgba(52,211,153,.4)" : type === "error" ? "rgba(239,68,68,.4)" : "rgba(99,102,241,.3)"}`, borderRadius: 14, padding: "12px 20px", color: "#fff", fontSize: 13, fontWeight: 700, boxShadow: "0 8px 32px rgba(0,0,0,.4)", display: "flex", alignItems: "center", gap: 10, maxWidth: 320, animation: "slideIn .2s ease" }}>
@@ -1031,6 +1158,7 @@ export default function App() {
   const [reviews, setReviews] = useState(() => loadState(RK, []));
   const [jornadas, setJornadas] = useState(() => loadState(JK, []));
   const [favoritos, setFavoritos] = useState(() => loadState(FK, []));
+  const [equipos, setEquipos] = useState(() => loadState(EK, [])); // team profiles
   const [betDraft, setBetDraft] = useState(emptyBet());
   const [jornadaDraft, setJornadaDraft] = useState(emptyJornada());
   const [favDraft, setFavDraft] = useState({ nombre: "", tipo: "club", ligas: "" });
@@ -1055,6 +1183,10 @@ export default function App() {
     eraUltimas3Local: "", eraUltimas3Visitante: "", umpire: "", vientoMph: "", vientoDir: "",
     lesionesHoy: "", minutosLimitados: "",
   });
+  const [equipoSearch, setEquipoSearch] = useState("");
+  const [equipoSeleccionado, setEquipoSeleccionado] = useState(null);
+  const [partidoDraft, setPartidoDraft] = useState(null);
+  const [eventoInput, setEventoInput] = useState("");
   const [matchDateTime, setMatchDateTime] = useState("");
   const [timingOverride, setTimingOverride] = useState(false);
   const [userNote, setUserNote] = useState("");
@@ -1077,6 +1209,7 @@ export default function App() {
   useEffect(() => { saveState(RK, reviews); }, [reviews]);
   useEffect(() => { saveState(JK, jornadas); }, [jornadas]);
   useEffect(() => { saveState(FK, favoritos); }, [favoritos]);
+  useEffect(() => { saveState(EK, equipos); }, [equipos]);
   useEffect(() => { saveState("daily_loss_limit_v1", dailyLossLimit); }, [dailyLossLimit]);
 
   const dashboard = calcDashboard(bankroll, reviews);
@@ -1323,6 +1456,7 @@ export default function App() {
       const feedbackCtx = buildFeedbackContext(reviews);
       const jornadaCtx = buildJornadaContext(jornadas, match.local, match.visitante);
       const memoryCtx = buildTeamMemory(reviews, match.local, match.visitante);
+      const teamProfileCtx = buildTeamProfileContext(equipos, match.local, match.visitante, activeSport);
       const notaCtx = userNote.trim() ? `\n\n📝 NOTA DEL ANALISTA (prioridad alta): ${userNote.trim()}` : "";
 
       // Construir contexto de datos extra
@@ -1345,10 +1479,10 @@ export default function App() {
       }
       const extraCtx = extraParts.length ? `\n\n🔍 DATOS CLAVE DEL USUARIO (alta prioridad, verificados):\n${extraParts.map(p => `• ${p}`).join("\n")}` : "";
       let prompt;
-      if (activeSport === "mlb") prompt = buildMLBPrompt(match, feedbackCtx + notaCtx + memoryCtx + extraCtx);
-      else if (activeSport === "nba") prompt = buildNBAPrompt(match, feedbackCtx + notaCtx + memoryCtx + extraCtx);
-      else if (modoMundial) prompt = buildMundialPrompt(match, feedbackCtx + notaCtx + extraCtx, jornadaCtx, memoryCtx, mundialCtx);
-      else prompt = buildFutbolPrompt(match, feedbackCtx + notaCtx + extraCtx, jornadaCtx, memoryCtx);
+      if (activeSport === "mlb") prompt = buildMLBPrompt(match, feedbackCtx + notaCtx + memoryCtx + teamProfileCtx + extraCtx);
+      else if (activeSport === "nba") prompt = buildNBAPrompt(match, feedbackCtx + notaCtx + memoryCtx + teamProfileCtx + extraCtx);
+      else if (modoMundial) prompt = buildMundialPrompt(match, feedbackCtx + notaCtx + extraCtx + teamProfileCtx, jornadaCtx, memoryCtx, mundialCtx);
+      else prompt = buildFutbolPrompt(match, feedbackCtx + notaCtx + extraCtx + teamProfileCtx, jornadaCtx, memoryCtx);
 
       const resp = await fetch("/api/ai-analysis", {
         method: "POST",
@@ -1440,6 +1574,7 @@ export default function App() {
     { id: "historial", label: "📚 Historial" },
     { id: "ia-review", label: "🆚 IA vs Real" },
     { id: "ia-stats", label: "📈 Stats IA" },
+    { id: "equipos", label: "🏟️ Equipos" },
     { id: "favoritos", label: "⭐ Favoritos" },
     ...(modoMundial ? [{ id: "jornadas", label: "🏆 Jornadas" }] : []),
   ];
@@ -1534,7 +1669,7 @@ export default function App() {
           {/* Sport selector */}
           <div style={{ display: "flex", gap: 4, paddingTop: 6, paddingBottom: 4, overflowX: "auto", scrollbarWidth: "none" }}>
             {Object.values(SPORTS).map(s => (
-              <button key={s.id} onClick={() => { setActiveSport(s.id); setMarketFilter("Todos"); setModoMundial(false); }}
+              <button key={s.id} onClick={() => { setActiveSport(s.id); setMarketFilter("Todos"); setModoMundial(false); setEquipoSeleccionado(null); setPartidoDraft(null); }}
                 style={{ padding: isMobile ? "3px 10px" : "4px 12px", borderRadius: 20, border: `1px solid ${activeSport === s.id ? s.color : "rgba(255,255,255,.08)"}`, background: activeSport === s.id ? s.colorSoft : "transparent", color: activeSport === s.id ? "#e0e7ff" : "#475569", cursor: "pointer", fontWeight: 800, fontSize: isMobile ? 11 : 12, transition: "all .2s", whiteSpace: "nowrap", flexShrink: 0 }}>
                 {s.label}
               </button>
@@ -1664,8 +1799,18 @@ export default function App() {
                 ])).map(f => (
                   <div key={f.key}>
                     <label style={labelStyle}>{f.label}</label>
-                    <input value={match[f.key]} onChange={e => setMatch(m => ({ ...m, [f.key]: e.target.value }))}
-                      placeholder={f.placeholder} style={inputStyle} />
+                    {(f.key === "local" || f.key === "visitante") ? (
+                      <TeamAutocomplete
+                        value={match[f.key]}
+                        onChange={val => setMatch(m => ({ ...m, [f.key]: val }))}
+                        placeholder={f.placeholder}
+                        style={inputStyle}
+                        equipos={equipos}
+                      />
+                    ) : (
+                      <input value={match[f.key]} onChange={e => setMatch(m => ({ ...m, [f.key]: e.target.value }))}
+                        placeholder={f.placeholder} style={inputStyle} />
+                    )}
                   </div>
                 ))}
               </div>
@@ -3343,6 +3488,441 @@ export default function App() {
                   </div>
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {/* ── TAB: EQUIPOS ─────────────────────────────────────────────────── */}
+        {activeTab === "equipos" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#6366f1", textTransform: "uppercase", marginBottom: 2 }}>Perfiles</div>
+                  <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>🏟️ Equipos</h2>
+                  <p style={{ fontSize: 12, color: "#334155", marginTop: 4 }}>Registra los resultados reales de cada partido. La IA usa estos datos en el próximo análisis del equipo.</p>
+                </div>
+                {/* Export / Import buttons */}
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button onClick={() => {
+                    const data = { equipos, exportedAt: new Date().toISOString(), version: "v1" };
+                    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `equipos_${activeSport}_${new Date().toISOString().slice(0,10)}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    showToast("✅ Perfiles exportados", "success");
+                  }} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid rgba(52,211,153,.3)", background: "rgba(52,211,153,.08)", color: "#34d399", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                    ⬇ Exportar
+                  </button>
+                  <label style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.08)", color: "#7dd3fc", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                    📂 Importar
+                    <input type="file" accept="application/json" style={{ display: "none" }} onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        try {
+                          const data = JSON.parse(ev.target.result);
+                          if (!Array.isArray(data.equipos)) throw new Error("Formato inválido");
+                          if (window.confirm(`¿Importar ${data.equipos.length} equipos? Los perfiles existentes se fusionarán (no se borrarán).`)) {
+                            setEquipos(prev => {
+                              const merged = [...prev];
+                              data.equipos.forEach(eq => {
+                                const idx = merged.findIndex(e => e.id === eq.id);
+                                if (idx >= 0) merged[idx] = eq; // update existing
+                                else merged.push(eq); // add new
+                              });
+                              return merged;
+                            });
+                            showToast(`✅ ${data.equipos.length} equipos importados`, "success");
+                          }
+                        } catch { showToast("Error al importar — verifica el archivo", "error"); }
+                      };
+                      reader.readAsText(file);
+                      e.target.value = "";
+                    }} />
+                  </label>
+                  {equipos.length > 0 && (
+                    <span style={{ fontSize: 11, color: "#475569" }}>{equipos.length} equipo{equipos.length !== 1 ? "s" : ""}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Buscar o crear equipo */}
+            <div style={{ background: "rgba(30,27,75,.35)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#a5b4fc", marginBottom: 10 }}>🔍 Buscar o crear equipo</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <TeamAutocomplete
+                  value={equipoSearch}
+                  onChange={setEquipoSearch}
+                  equipos={equipos}
+                  placeholder="Ej: España, Yankees, Lakers..."
+                  style={{ ...inputStyle, flex: 1 }}
+                  onSelect={(name) => {
+                    const found = equipos.find(eq => eq.nombre.toLowerCase() === name.toLowerCase() && (eq.deporte||"futbol") === activeSport);
+                    if (found) { setEquipoSeleccionado(found); }
+                    else {
+                      const nuevo = { id: makeId(), nombre: name.trim(), deporte: activeSport, partidos: [] };
+                      setEquipos(prev => [...prev, nuevo]);
+                      setEquipoSeleccionado(nuevo);
+                    }
+                    setEquipoSearch("");
+                  }}
+                />
+                <button onClick={() => {
+                  if (!equipoSearch.trim()) return;
+                  const found = equipos.find(eq => eq.nombre.toLowerCase() === equipoSearch.toLowerCase() && (eq.deporte||"futbol") === activeSport);
+                  if (found) { setEquipoSeleccionado(found); setEquipoSearch(""); }
+                  else {
+                    const nuevo = { id: makeId(), nombre: equipoSearch.trim(), deporte: activeSport, partidos: [] };
+                    setEquipos(prev => [...prev, nuevo]);
+                    setEquipoSeleccionado(nuevo);
+                    setEquipoSearch("");
+                  }
+                }} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: "rgba(99,102,241,.2)", color: "#a5b4fc", fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
+                  Abrir →
+                </button>
+              </div>
+              {/* Lista de equipos registrados */}
+              {equipos.filter(e => (e.deporte||"futbol") === activeSport).length > 0 && (
+                <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {equipos.filter(e => (e.deporte||"futbol") === activeSport).map(e => (
+                    <button key={e.id} onClick={() => setEquipoSeleccionado(e)}
+                      style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, border: `1px solid ${equipoSeleccionado?.id === e.id ? "rgba(99,102,241,.5)" : "rgba(255,255,255,.08)"}`, background: equipoSeleccionado?.id === e.id ? "rgba(99,102,241,.2)" : "transparent", color: equipoSeleccionado?.id === e.id ? "#a5b4fc" : "#475569", cursor: "pointer", fontWeight: 700 }}>
+                      {e.nombre} <span style={{ opacity: .6 }}>({e.partidos?.length || 0})</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Perfil del equipo seleccionado */}
+            {equipoSeleccionado && (() => {
+              const equipo = equipos.find(e => e.id === equipoSeleccionado.id) || equipoSeleccionado;
+              const avg = equipo.partidos?.length ? calcTeamAvg(equipo.partidos.slice(-5), equipo.deporte || activeSport) : null;
+              const dep = equipo.deporte || activeSport;
+
+              return (
+                <div>
+                  {/* Header del equipo */}
+                  <div style={{ background: "rgba(15,23,42,.7)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: 16, marginBottom: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 18, fontWeight: 900, color: "#e0e7ff" }}>{equipo.nombre}</div>
+                        <div style={{ fontSize: 11, color: "#475569" }}>{dep === "mlb" ? "⚾ MLB" : dep === "nba" ? "🏀 NBA" : "⚽ Fútbol"} · {equipo.partidos?.length || 0} partidos registrados</div>
+                      </div>
+                      <button onClick={() => { if (window.confirm("¿Eliminar este equipo y todos sus datos?")) { setEquipos(prev => prev.filter(e => e.id !== equipo.id)); setEquipoSeleccionado(null); } }}
+                        style={{ fontSize: 11, color: "#f87171", background: "none", border: "none", cursor: "pointer" }}>🗑 Eliminar</button>
+                    </div>
+
+                    {/* Promedios */}
+                    {avg && (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 8 }}>
+                        <div style={{ textAlign: "center", background: "rgba(99,102,241,.08)", borderRadius: 10, padding: "8px 0" }}>
+                          <div style={{ fontSize: 10, color: "#475569" }}>Win rate</div>
+                          <div style={{ fontSize: 18, fontWeight: 900, color: toNum(avg.winRate) >= 50 ? "#34d399" : "#f87171" }}>{avg.winRate}%</div>
+                        </div>
+                        {dep === "futbol" && <>
+                          <div style={{ textAlign: "center", background: "rgba(52,211,153,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Goles/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#34d399" }}>{avg.golesAnotados}</div>
+                          </div>
+                          <div style={{ textAlign: "center", background: "rgba(239,68,68,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Recibidos/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#f87171" }}>{avg.golesRecibidos}</div>
+                          </div>
+                          <div style={{ textAlign: "center", background: "rgba(99,102,241,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Corners/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#a5b4fc" }}>{avg.corners}</div>
+                          </div>
+                          <div style={{ textAlign: "center", background: "rgba(251,191,36,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Tarjetas/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#fbbf24" }}>{avg.tarjetas}</div>
+                          </div>
+                        </>}
+                        {dep === "mlb" && <>
+                          <div style={{ textAlign: "center", background: "rgba(52,211,153,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Carreras/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#34d399" }}>{avg.carrerasAnotadas}</div>
+                          </div>
+                          <div style={{ textAlign: "center", background: "rgba(239,68,68,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Recibidas/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#f87171" }}>{avg.carrerasRecibidas}</div>
+                          </div>
+                          <div style={{ textAlign: "center", background: "rgba(99,102,241,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Hits/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#a5b4fc" }}>{avg.hitsAnotados}</div>
+                          </div>
+                        </>}
+                        {dep === "nba" && <>
+                          <div style={{ textAlign: "center", background: "rgba(52,211,153,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Puntos/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#34d399" }}>{avg.puntosAnotados}</div>
+                          </div>
+                          <div style={{ textAlign: "center", background: "rgba(239,68,68,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Recibidos/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#f87171" }}>{avg.puntosRecibidos}</div>
+                          </div>
+                          <div style={{ textAlign: "center", background: "rgba(99,102,241,.06)", borderRadius: 10, padding: "8px 0" }}>
+                            <div style={{ fontSize: 10, color: "#475569" }}>Rebotes/juego</div>
+                            <div style={{ fontSize: 18, fontWeight: 900, color: "#a5b4fc" }}>{avg.rebotes}</div>
+                          </div>
+                        </>}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Agregar partido */}
+                  <div style={{ background: "rgba(30,27,75,.35)", border: `1px solid ${partidoDraft?._editIndex !== undefined ? "rgba(251,191,36,.3)" : "rgba(99,102,241,.15)"}`, borderRadius: 16, padding: 16, marginBottom: 14 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: partidoDraft?._editIndex !== undefined ? "#fbbf24" : "#a5b4fc", marginBottom: 12 }}>
+                      {partidoDraft?._editIndex !== undefined ? "✏️ Editando partido" : "➕ Registrar partido"}
+                    </div>
+                    {!partidoDraft ? (
+                      <button onClick={() => setPartidoDraft({ ...emptyPartidoEquipo(dep), id: makeId(), fecha: new Date().toISOString().slice(0, 10) })}
+                        style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px dashed rgba(99,102,241,.3)", background: "transparent", color: "#6366f1", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>
+                        + Nuevo partido
+                      </button>
+                    ) : (
+                      <div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                          <div>
+                            <label style={labelStyle}>Rival</label>
+                            <input value={partidoDraft.rival ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, rival: e.target.value }))} placeholder={dep === "mlb" ? "Ej: Yankees" : dep === "nba" ? "Ej: Lakers" : "Ej: Alemania"} style={inputStyle} />
+                          </div>
+                          <div>
+                            <label style={labelStyle}>Fecha</label>
+                            <input type="date" value={partidoDraft.fecha ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, fecha: e.target.value }))} style={inputStyle} />
+                          </div>
+                          <div>
+                            <label style={labelStyle}>{dep === "mlb" ? "Campo (Home/Away)" : "Condición"}</label>
+                            <select value={partidoDraft.condicion ?? "local"} onChange={e => setPartidoDraft(d => ({ ...d, condicion: e.target.value }))} style={{ ...inputStyle, cursor: "pointer" }}>
+                              <option value="local">{dep === "mlb" ? "🏠 Home" : dep === "nba" ? "🏠 Home" : "🏠 Local"}</option>
+                              <option value="visitante">{dep === "mlb" ? "✈️ Away" : dep === "nba" ? "✈️ Away" : "✈️ Visitante"}</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Resultado */}
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                          <div>
+                            <label style={labelStyle}>Resultado</label>
+                            <select value={partidoDraft.resultado ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, resultado: e.target.value }))} style={{ ...inputStyle, cursor: "pointer" }}>
+                              <option value="">Seleccionar</option>
+                              <option value="W">✅ Victoria (W)</option>
+                              {dep === "futbol" && <option value="D">🟡 Empate (D)</option>}
+                              <option value="L">❌ Derrota (L)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Stats por deporte */}
+                        {dep === "futbol" && (
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                            {[
+                              { key: "golesAnotados", label: "Goles ⚽", placeholder: "2" },
+                              { key: "golesRecibidos", label: "Recibidos 🛡️", placeholder: "1" },
+                              { key: "corners", label: "Corners ⛳", placeholder: "5" },
+                              { key: "tarjetas", label: "Tarjetas 🟨", placeholder: "2" },
+                            ].map(f => (
+                              <div key={f.key}>
+                                <label style={labelStyle}>{f.label}</label>
+                                <input type="number" value={partidoDraft[f.key] ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, [f.key]: e.target.value }))} placeholder={f.placeholder} style={inputStyle} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {dep === "mlb" && (
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                            {[
+                              { key: "carrerasAnotadas", label: "Carreras ⚾", placeholder: "5" },
+                              { key: "carrerasRecibidas", label: "Recibidas 🛡️", placeholder: "3" },
+                              { key: "hitsAnotados", label: "Hits 🏏", placeholder: "9" },
+                              { key: "errores", label: "Errores ❌", placeholder: "1" },
+                            ].map(f => (
+                              <div key={f.key}>
+                                <label style={labelStyle}>{f.label}</label>
+                                <input type="number" value={partidoDraft[f.key] ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, [f.key]: e.target.value }))} placeholder={f.placeholder} style={inputStyle} />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {dep === "nba" && (
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                            <div>
+                              <label style={labelStyle}>Puntos 🏀</label>
+                              <input type="number" value={partidoDraft.puntosAnotados ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, puntosAnotados: e.target.value }))} placeholder="115" style={inputStyle} />
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Recibidos 🛡️</label>
+                              <input type="number" value={partidoDraft.puntosRecibidos ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, puntosRecibidos: e.target.value }))} placeholder="108" style={inputStyle} />
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Rebotes 💪</label>
+                              <input type="number" value={partidoDraft.rebotes ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, rebotes: e.target.value }))} placeholder="42" style={inputStyle} />
+                            </div>
+                            <div>
+                              <label style={labelStyle}>Triples 3️⃣ (H/I)</label>
+                              <input value={partidoDraft.triples ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, triples: e.target.value }))} placeholder="11/19" style={inputStyle} />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Eventos del partido */}
+                        <div style={{ marginBottom: 10 }}>
+                          <label style={labelStyle}>Eventos del partido</label>
+                          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                            <input value={eventoInput} onChange={e => setEventoInput(e.target.value)}
+                              placeholder="Ej: Penal min 78, Expulsión rival, Goleador: Mbappé..."
+                              style={{ ...inputStyle, flex: 1 }}
+                              onKeyDown={e => {
+                                if (e.key === "Enter" && eventoInput.trim()) {
+                                  setPartidoDraft(d => ({ ...d, eventos: [...(d.eventos||[]), eventoInput.trim()] }));
+                                  setEventoInput("");
+                                }
+                              }} />
+                            <button onClick={() => {
+                              if (!eventoInput.trim()) return;
+                              setPartidoDraft(d => ({ ...d, eventos: [...(d.eventos||[]), eventoInput.trim()] }));
+                              setEventoInput("");
+                            }} style={{ padding: "0 14px", borderRadius: 8, border: "none", background: "rgba(99,102,241,.2)", color: "#a5b4fc", fontWeight: 800, cursor: "pointer" }}>+</button>
+                          </div>
+                          {(partidoDraft.eventos||[]).length > 0 && (
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                              {partidoDraft.eventos.map((ev, i) => (
+                                <span key={i} style={{ fontSize: 11, background: "rgba(99,102,241,.1)", color: "#a5b4fc", padding: "2px 8px", borderRadius: 20, display: "flex", alignItems: "center", gap: 4 }}>
+                                  {ev}
+                                  <button onClick={() => setPartidoDraft(d => ({ ...d, eventos: d.eventos.filter((_, j) => j !== i) }))}
+                                    style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>×</button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Picks de la IA para este partido */}
+                        {aiResult?.picks && match.local && (match.local.toLowerCase().includes(equipo.nombre.toLowerCase()) || match.visitante?.toLowerCase().includes(equipo.nombre.toLowerCase())) && picks.length > 0 && (
+                          <div style={{ marginBottom: 10 }}>
+                            <label style={labelStyle}>Picks IA de este análisis</label>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              {picks.map(p => (
+                                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(15,23,42,.5)", borderRadius: 8, padding: "6px 10px" }}>
+                                  <span style={{ fontSize: 11, color: "#94a3b8" }}>{p.mercado} {p.linea} ({p.confianza}%)</span>
+                                  <select value={(partidoDraft.picksIA||[]).find(pk => pk.id === p.id)?.resultado || ""}
+                                    onChange={e => {
+                                      const updated = [...(partidoDraft.picksIA||[]).filter(pk => pk.id !== p.id)];
+                                      if (e.target.value) updated.push({ id: p.id, mercado: p.mercado, linea: p.linea, resultado: e.target.value });
+                                      setPartidoDraft(d => ({ ...d, picksIA: updated }));
+                                    }}
+                                    style={{ fontSize: 11, padding: "2px 6px", borderRadius: 6, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", cursor: "pointer" }}>
+                                    <option value="">Resultado</option>
+                                    <option value="acierto">✅ Acierto</option>
+                                    <option value="fallo">❌ Fallo</option>
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Notas */}
+                        <div style={{ marginBottom: 12 }}>
+                          <label style={labelStyle}>Notas adicionales</label>
+                          <input value={partidoDraft.notas} onChange={e => setPartidoDraft(d => ({ ...d, notas: e.target.value }))}
+                            placeholder="Observaciones, contexto del partido, rendimiento general..."
+                            style={inputStyle} />
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={() => {
+                            if (!partidoDraft.rival.trim()) { showToast("Ingresa el rival", "error"); return; }
+                            const isEdit = partidoDraft._editIndex !== undefined;
+                            const cleanDraft = { ...partidoDraft };
+                            delete cleanDraft._editIndex;
+                            delete cleanDraft._editEquipoId;
+                            setEquipos(prev => prev.map(e => e.id === equipo.id
+                              ? { ...e, partidos: isEdit
+                                  ? e.partidos.map((p, j) => j === partidoDraft._editIndex ? cleanDraft : p)
+                                  : [cleanDraft, ...(e.partidos||[])] }
+                              : e
+                            ));
+                            setPartidoDraft(null);
+                            showToast(isEdit ? "✅ Partido actualizado" : "✅ Partido registrado", "success");
+                          }} style={{ flex: 1, padding: 12, borderRadius: 12, border: "none", background: "linear-gradient(135deg, #4338ca, #6366f1)", color: "#fff", fontWeight: 900, cursor: "pointer", fontSize: 13 }}>
+                            {partidoDraft._editIndex !== undefined ? "✏️ Actualizar partido" : "💾 Guardar partido"}
+                          </button>
+                          <button onClick={() => setPartidoDraft(null)}
+                            style={{ padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(239,68,68,.25)", background: "transparent", color: "#f87171", fontWeight: 700, cursor: "pointer" }}>
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Historial de partidos del equipo */}
+                  {equipo.partidos?.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", marginBottom: 10 }}>
+                        Historial ({equipo.partidos.length} partidos)
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {equipo.partidos.map((p, i) => (
+                          <div key={p.id || i} style={{ background: "rgba(15,23,42,.5)", border: "1px solid rgba(255,255,255,.06)", borderRadius: 12, padding: "12px 14px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ fontSize: 14 }}>{p.resultado === "W" ? "✅" : p.resultado === "L" ? "❌" : "🟡"}</span>
+                                <span style={{ fontSize: 13, fontWeight: 800, color: "#e0e7ff" }}>vs {p.rival}</span>
+                                <span style={{ fontSize: 11, color: "#475569" }}>{p.condicion === "local" ? "🏠" : "✈️"} {p.fecha}</span>
+                              </div>
+                              <div style={{ display: "flex", gap: 6 }}>
+                                <button onClick={() => setPartidoDraft({ ...p, _editIndex: i, _editEquipoId: equipo.id })}
+                                  style={{ fontSize: 10, color: "#a5b4fc", background: "none", border: "none", cursor: "pointer" }}>✏️</button>
+                                <button onClick={() => { if (window.confirm("¿Eliminar este partido?")) setEquipos(prev => prev.map(e => e.id === equipo.id ? { ...e, partidos: e.partidos.filter((_, j) => j !== i) } : e)); }}
+                                  style={{ fontSize: 10, color: "#334155", background: "none", border: "none", cursor: "pointer" }}>🗑</button>
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontSize: 11 }}>
+                              {dep === "futbol" && <>
+                                {p.golesAnotados !== "" && <span style={{ color: "#34d399" }}>⚽ {p.golesAnotados} goles</span>}
+                                {p.golesRecibidos !== "" && <span style={{ color: "#f87171" }}>🛡️ {p.golesRecibidos} recibidos</span>}
+                                {p.corners !== "" && <span style={{ color: "#a5b4fc" }}>⛳ {p.corners} corners</span>}
+                                {p.tarjetas !== "" && <span style={{ color: "#fbbf24" }}>🟨 {p.tarjetas} tarjetas</span>}
+                              </>}
+                              {dep === "mlb" && <>
+                                {p.carrerasAnotadas !== "" && <span style={{ color: "#34d399" }}>⚾ {p.carrerasAnotadas} carreras</span>}
+                                {p.carrerasRecibidas !== "" && <span style={{ color: "#f87171" }}>🛡️ {p.carrerasRecibidas} recibidas</span>}
+                                {p.hitsAnotados !== "" && <span style={{ color: "#a5b4fc" }}>🏏 {p.hitsAnotados} hits</span>}
+                              </>}
+                              {dep === "nba" && <>
+                                {p.puntosAnotados !== "" && <span style={{ color: "#34d399" }}>🏀 {p.puntosAnotados} pts</span>}
+                                {p.puntosRecibidos !== "" && <span style={{ color: "#f87171" }}>🛡️ {p.puntosRecibidos} recibidos</span>}
+                                {p.rebotes !== "" && <span style={{ color: "#a5b4fc" }}>💪 {p.rebotes} reb</span>}
+                              </>}
+                            </div>
+                            {(p.eventos||[]).length > 0 && (
+                              <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                {p.eventos.map((ev, j) => <span key={j} style={{ fontSize: 10, background: "rgba(99,102,241,.08)", color: "#818cf8", padding: "1px 7px", borderRadius: 20 }}>{ev}</span>)}
+                              </div>
+                            )}
+                            {p.notas && <div style={{ fontSize: 11, color: "#334155", marginTop: 4 }}>{p.notas}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {!equipoSeleccionado && equipos.filter(e => (e.deporte||"futbol") === activeSport).length === 0 && (
+              <div style={{ textAlign: "center", padding: "60px 20px", color: "#334155" }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>🏟️</div>
+                <div style={{ fontWeight: 700, color: "#475569", marginBottom: 8 }}>Sin equipos registrados</div>
+                <div style={{ fontSize: 13 }}>Busca un equipo arriba para crear su perfil estadístico.</div>
+              </div>
             )}
           </div>
         )}
