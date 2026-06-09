@@ -15,12 +15,28 @@ function useIsMobile() {
 }
 
 // ── UTILS ────────────────────────────────────────────────────────────────────
+const AI_MODEL = "claude-sonnet-4-5";   // único lugar para cambiar el modelo
 const makeId = () => Math.random().toString(36).slice(2, 10);
 const toNum = (v) => { const n = parseFloat(String(v || "").replace(",", ".")); return Number.isFinite(n) ? n : 0; };
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 const impliedProb = (odd) => odd > 1 ? (1 / odd) * 100 : 0;
 const fmtMoney = (v) => Number.isFinite(v) ? v.toFixed(2) : "0.00";
 const fmtPct = (v) => `${Number.isFinite(v) ? v.toFixed(1) : "0.0"}%`;
+
+// Extrae el primer objeto JSON balanceado de un texto (respuestas de la IA).
+// Devuelve el objeto parseado o lanza Error con mensaje claro.
+function extractJSON(raw) {
+  const cleaned = String(raw || "").replace(/```json|```/g, "").trim();
+  const start = cleaned.indexOf("{");
+  if (start === -1) throw new Error("La IA no devolvió JSON válido. Intenta de nuevo.");
+  let depth = 0, end = -1;
+  for (let i = start; i < cleaned.length; i++) {
+    if (cleaned[i] === "{") depth++;
+    else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end === -1) throw new Error("JSON incompleto en la respuesta de la IA.");
+  return JSON.parse(cleaned.slice(start, end + 1));
+}
 
 function kellyStake(prob, odd, bank) {
   if (!bank || !odd || odd <= 1 || !prob) return null;
@@ -34,6 +50,27 @@ function kellyStake(prob, odd, bank) {
   const tier = frac >= 0.06 ? "fuerte" : frac >= 0.03 ? "moderado" : frac >= 0.01 ? "minimo" : "none";
   const pctLabel = (frac * 100).toFixed(1);
   return { pct: frac * 100, amount, label: `${pctLabel}% del banco → $${fmtMoney(amount)}`, tier };
+}
+
+// Reglas de disciplina de Sergio: escala por confianza + tope 4% del banco.
+// 70-74%→$10, 75-79%→$15, 80-84%→$20, 85%+→$25. Nunca >4% del bankroll.
+function stakeRecomendado(confianza) {
+  const c = Number(confianza) || 0;
+  if (c >= 85) return 25;
+  if (c >= 80) return 20;
+  if (c >= 75) return 15;
+  if (c >= 70) return 10;
+  return 0; // bajo 70% no entra
+}
+function chequeoStake(stake, confianza, bank) {
+  const s = toNum(stake);
+  const rec = stakeRecomendado(confianza);
+  const tope = bank > 0 ? bank * 0.04 : 0;
+  const alertas = [];
+  if (bank > 0 && s > tope) alertas.push(`⚠️ Supera el 4% del banco (máx $${fmtMoney(tope)})`);
+  if (rec > 0 && s > rec) alertas.push(`⚠️ Tu escala sugiere $${rec} para ${confianza}% de confianza`);
+  if (rec === 0 && confianza > 0 && confianza < 70) alertas.push(`⚠️ Confianza bajo 70% — fuera de tus reglas`);
+  return { rec, tope, alertas, ok: alertas.length === 0 };
 }
 
 function valueAndRisk(prob, odd) {
@@ -177,6 +214,7 @@ const SPORTS = {
     color: "#4f46e5", colorSoft: "rgba(79,70,229,.15)", border: "rgba(79,70,229,.3)",
     gradient: "linear-gradient(135deg, #4f46e5, #7c3aed)",
     bgGradient: "radial-gradient(ellipse at 20% 20%, rgba(79,70,229,.25) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(124,58,237,.18) 0%, transparent 55%)",
+    pattern: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cg fill='none' stroke='%234f46e5' stroke-width='1.5' opacity='0.5'%3E%3Ccircle cx='100' cy='100' r='34'/%3E%3Cline x1='100' y1='0' x2='100' y2='66'/%3E%3Cline x1='100' y1='134' x2='100' y2='200'/%3E%3Crect x='0' y='62' width='30' height='76'/%3E%3Crect x='170' y='62' width='30' height='76'/%3E%3C/g%3E%3C/svg%3E")`,
     hasDraw: true,
     defaultOddLabel: ["Local (1)", "Empate (X)", "Visitante (2)"],
     fields: [
@@ -191,6 +229,7 @@ const SPORTS = {
     color: "#dc2626", colorSoft: "rgba(220,38,38,.15)", border: "rgba(220,38,38,.3)",
     gradient: "linear-gradient(135deg, #dc2626, #b91c1c)",
     bgGradient: "radial-gradient(ellipse at 20% 20%, rgba(220,38,38,.25) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(185,28,28,.18) 0%, transparent 55%)",
+    pattern: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cg fill='none' stroke='%23dc2626' stroke-width='1.5' opacity='0.5'%3E%3Cpath d='M80 30 L130 80 L80 130 L30 80 Z'/%3E%3Cpath d='M55 55 Q80 70 105 55' stroke-dasharray='3,5'/%3E%3Cpath d='M55 105 Q80 90 105 105' stroke-dasharray='3,5'/%3E%3C/g%3E%3C/svg%3E")`,
     hasDraw: false,
     defaultOddLabel: ["Local (ML)", "", "Visitante (ML)"],
     fields: [
@@ -205,6 +244,7 @@ const SPORTS = {
     color: "#ea580c", colorSoft: "rgba(234,88,12,.15)", border: "rgba(234,88,12,.3)",
     gradient: "linear-gradient(135deg, #ea580c, #c2410c)",
     bgGradient: "radial-gradient(ellipse at 20% 20%, rgba(234,88,12,.25) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(194,65,12,.18) 0%, transparent 55%)",
+    pattern: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cg fill='none' stroke='%23ea580c' stroke-width='1.5' opacity='0.5'%3E%3Cpath d='M0 70 Q40 100 0 130'/%3E%3Cpath d='M200 70 Q160 100 200 130'/%3E%3Ccircle cx='100' cy='100' r='28'/%3E%3Cline x1='100' y1='0' x2='100' y2='72'/%3E%3Cline x1='100' y1='128' x2='100' y2='200'/%3E%3C/g%3E%3C/svg%3E")`,
     hasDraw: false,
     defaultOddLabel: ["Local (ML)", "", "Visitante (ML)"],
     fields: [
@@ -1150,6 +1190,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("analisis");
   const [ticketStake, setTicketStake] = useState("10");
   const [esParlay, setEsParlay] = useState(true);
+  const [cuotaManual, setCuotaManual] = useState("");        // cuota total escrita a mano (estilo Hondubet)
+  const [cuotaManualActiva, setCuotaManualActiva] = useState(false);
   const [toast, setToast] = useState(null);
   const [expertMode, setExpertMode] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -1212,6 +1254,12 @@ export default function App() {
   useEffect(() => { saveState(EK, equipos); }, [equipos]);
   useEffect(() => { saveState("daily_loss_limit_v1", dailyLossLimit); }, [dailyLossLimit]);
 
+  // Si cambia la cantidad de picks seleccionados, la cuota manual ya no corresponde → reset a auto
+  const numSeleccionados = picks.filter(p => p.seleccionado).length;
+  useEffect(() => {
+    if (cuotaManualActiva) { setCuotaManualActiva(false); setCuotaManual(""); }
+  }, [numSeleccionados]);
+
   const dashboard = calcDashboard(bankroll, reviews);
 
   const showToast = (msg, type = "success") => {
@@ -1226,18 +1274,23 @@ export default function App() {
 
   const ticket = (() => {
     const sel = picks.filter(p => p.seleccionado);
-    if (!sel.length) return { count: 0, combinada: 1, potencial: 0, probReal: 0, value: 0 };
+    if (!sel.length) return { count: 0, combinada: 1, combinadaAuto: 1, manual: false, potencial: 0, probReal: 0, value: 0 };
     const stake = toNum(ticketStake) || 10;
     if (esParlay) {
-      const combinada = sel.reduce((acc, p) => acc * (toNum(p.cuotaCasa) || toNum(p.cuotaSugerida) || 1), 1);
+      // Auto = multiplicación de cuotas (parlay real)
+      const combinadaAuto = sel.reduce((acc, p) => acc * (toNum(p.cuotaCasa) || toNum(p.cuotaSugerida) || 1), 1);
+      // Si el usuario escribió cuota manual (la que da Hondubet con sus ajustes), usar esa
+      const cuotaUser = toNum(cuotaManual);
+      const usarManual = cuotaManualActiva && cuotaUser > 1;
+      const combinada = usarManual ? cuotaUser : combinadaAuto;
       const potencial = stake * combinada;
       const probReal = sel.reduce((acc, p) => acc * (toNum(p.confianza) / 100), 1) * 100;
       const implied = combinada > 0 ? (1 / combinada) * 100 : 0;
-      return { count: sel.length, combinada, potencial, probReal, value: probReal - implied };
+      return { count: sel.length, combinada, combinadaAuto, manual: usarManual, potencial, probReal, value: probReal - implied };
     } else {
-      const combinada = sel.reduce((acc, p) => acc + (toNum(p.cuotaCasa) || toNum(p.cuotaSugerida) || 1), 0) / sel.length;
+      // Individual: cada pick es una apuesta aparte. NO se promedia ni multiplica.
       const potencial = sel.reduce((s, p) => s + (toNum(p.cuotaCasa) || toNum(p.cuotaSugerida) || 1) * stake, 0);
-      return { count: sel.length, combinada, potencial, probReal: 0, value: 0 };
+      return { count: sel.length, combinada: 0, combinadaAuto: 0, manual: false, potencial, probReal: 0, value: 0 };
     }
   })();
 
@@ -1252,7 +1305,10 @@ export default function App() {
       deporte: activeSport,
       picks: sel.map(p => ({ ...p })),
       stake, esParlay,
-      cuotaTotal: ticket.combinada, potencial: ticket.potencial,
+      cuotaTotal: esParlay ? ticket.combinada : 0,
+      cuotaAuto: esParlay ? ticket.combinadaAuto : 0,
+      cuotaManual: ticket.manual,
+      potencial: ticket.potencial,
       estado: "pendiente", resumenIA: aiResult?.resumen || "",
       pronosticoIA: aiResult?.pronostico || "",
     };
@@ -1335,7 +1391,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-5",
+          model: AI_MODEL,
           max_tokens: 2000,
           useWebSearch: true,
           messages: [{ role: "user", content: buildPartidosPrompt(favoritos) }],
@@ -1344,15 +1400,7 @@ export default function App() {
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error?.message || `Error ${resp.status}`);
       const finalText = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-      const cleaned = finalText.replace(/```json|```/g, "").trim();
-      const start = cleaned.indexOf("{");
-      if (start === -1) throw new Error("Sin JSON");
-      let depth = 0, end = -1;
-      for (let i = start; i < cleaned.length; i++) {
-        if (cleaned[i] === "{") depth++;
-        else if (cleaned[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
-      }
-      const parsed = JSON.parse(cleaned.slice(start, end + 1));
+      const parsed = extractJSON(finalText);
       setPartidosBusqueda({ ...parsed, savedAt: new Date().toISOString() });
       saveState("partidos_busqueda_v1", { ...parsed, savedAt: new Date().toISOString() });
       showToast(`✅ ${parsed.partidos?.length || 0} partidos encontrados`, "success");
@@ -1406,13 +1454,11 @@ export default function App() {
     try {
       const picksCtx = ticketPicks.map((p, i) => `Pick ${i+1}: "${p.mercado}${p.linea ? ` ${p.linea}` : ""}" (${p.tipo?.toUpperCase()}) — ${p.confianza}% — ${p.justificacion || ""}`).join("\n");
       const prompt = `Analiza este ticket y detecta contradicciones.\nPartido: ${match.local} vs ${match.visitante}\n\n${picksCtx}\n\nResponde SOLO con JSON sin backticks:\n{"status":"ok","alerts":[{"tipo":"contradiccion","picks":"Pick 1 y Pick 2","mensaje":"razón","accion":"qué hacer","severidad":"alta"}],"mejorTicket":"cuáles conservar","consejo":"consejo final"}`;
-      const resp = await fetch("/api/ai-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 800, useWebSearch: false, messages: [{ role: "user", content: prompt }] }) });
+      const resp = await fetch("/api/ai-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 800, useWebSearch: false, messages: [{ role: "user", content: prompt }] }) });
       const data = await resp.json();
       const text = (data.content || []).find(b => b.type === "text")?.text || "";
-      const start = text.indexOf("{"); let end = -1; let d = 0;
-      for (let i = start; i < text.length; i++) { if (text[i] === "{") d++; else if (text[i] === "}") { d--; if (d === 0) { end = i; break; } } }
-      setTicketValidation(JSON.parse(text.slice(start, end + 1)));
-    } catch { setTicketValidation({ status: "ok", alerts: [], consejo: "Error al validar." }); }
+      setTicketValidation(extractJSON(text));
+    } catch (err) { console.error("validateTicket:", err); setTicketValidation({ status: "ok", alerts: [], consejo: "Error al validar." }); }
     finally { setValidatingTicket(false); }
   };
 
@@ -1423,11 +1469,11 @@ export default function App() {
     try {
       const ctx = withOdds.map(p => `${p.mercado} ${p.linea||""} — Cuota: ${p.cuotaCasa} — Confianza IA: ${p.confianza}%`).join("\n");
       const prompt = `Verifica el value de estos picks para ${match.local} vs ${match.visitante}:\n${ctx}\n\nPara cada pick calcula: prob implícita, compara con confianza IA, determina si hay value positivo o negativo. Responde en texto conciso.`;
-      const resp = await fetch("/api/ai-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 600, useWebSearch: false, messages: [{ role: "user", content: prompt }] }) });
+      const resp = await fetch("/api/ai-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 600, useWebSearch: false, messages: [{ role: "user", content: prompt }] }) });
       const data = await resp.json();
       const text = (data.content || []).find(b => b.type === "text")?.text || "";
       showToast(text.slice(0, 120) + "...", "success");
-    } catch { showToast("Error al verificar value", "error"); }
+    } catch (err) { console.error("verifyValue:", err); showToast("Error al verificar value", "error"); }
     finally { setVerifyingValue(false); }
   };
 
@@ -1439,13 +1485,11 @@ export default function App() {
     try {
       const ctx = filled.map(m => { const i = lineInputs[m.key]; return `${m.label}: Over ${i.overLine} @${i.overOdd} | Under ${i.underLine} @${i.underOdd}`; }).join("\n");
       const prompt = `Detecta líneas infladas para ${match.local} vs ${match.visitante}:\n${ctx}\n\nAnaliza probabilidades implícitas y detecta value. Responde SOLO con JSON sin backticks:\n{"mercados":[{"mercado":"nombre","lineaOver":"2.5","cuotaOver":"1.75","probImplicitaOver":"57%","lineaUnder":"2.5","cuotaUnder":"2.05","probImplicitaUnder":"49%","margenCasa":"6%","valueReal":"under","razon":"explicación","alerta":"alerta"}],"mejorApuesta":"descripción","advertencia":""}`;
-      const resp = await fetch("/api/ai-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1000, useWebSearch: false, messages: [{ role: "user", content: prompt }] }) });
+      const resp = await fetch("/api/ai-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 1000, useWebSearch: false, messages: [{ role: "user", content: prompt }] }) });
       const data = await resp.json();
       const text = (data.content || []).find(b => b.type === "text")?.text || "";
-      const start = text.indexOf("{"); let end = -1; let d = 0;
-      for (let i = start; i < text.length; i++) { if (text[i] === "{") d++; else if (text[i] === "}") { d--; if (d === 0) { end = i; break; } } }
-      setLineAnalysis(JSON.parse(text.slice(start, end + 1)));
-    } catch { setLineAnalysis({ mercados: [], mejorApuesta: "Error al analizar." }); }
+      setLineAnalysis(extractJSON(text));
+    } catch (err) { console.error("analyzeLines:", err); setLineAnalysis({ mercados: [], mejorApuesta: "Error al analizar." }); }
     finally { setAnalyzingLines(false); }
   };
 
@@ -1488,7 +1532,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-5",
+          model: AI_MODEL,
           max_tokens: 4000,
           useWebSearch: useWebSearch,
           messages: [{ role: "user", content: prompt }],
@@ -1588,6 +1632,10 @@ export default function App() {
     <div style={{ fontFamily: "'Segoe UI', system-ui, sans-serif", background: `#020817`, backgroundImage: sport.bgGradient || "", minHeight: "100vh", color: "#f1f5f9", transition: "background-image .4s ease" }}>
       {/* Background */}
       <div style={{ position: "fixed", inset: 0, background: "radial-gradient(ellipse 70% 40% at 50% 0%, rgba(99,102,241,.15), transparent), radial-gradient(ellipse 40% 30% at 80% 80%, rgba(16,185,129,.06), transparent)", pointerEvents: "none", zIndex: 0 }} />
+      {/* Sport themed pattern (muy sutil, en todo el fondo) */}
+      {sport.pattern && (
+        <div style={{ position: "fixed", inset: 0, backgroundImage: sport.pattern, backgroundRepeat: "repeat", backgroundSize: "240px", opacity: 0.06, pointerEvents: "none", zIndex: 0, transition: "opacity .4s ease" }} />
+      )}
 
       {/* TOAST */}
       {toast && <Toast key={toast.id} msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
@@ -1778,7 +1826,11 @@ export default function App() {
                 </div>
               );
             })()}
-            <section style={{ background: `rgba(15,15,30,.5)`, border: `1px solid ${modoMundial ? "rgba(251,191,36,.25)" : sport.border}`, borderRadius: 20, padding: isMobile ? 16 : 24, marginBottom: 20, backdropFilter: "blur(8px)" }}>
+            <section style={{ position: "relative", overflow: "hidden", background: `rgba(15,15,30,.5)`, border: `1px solid ${modoMundial ? "rgba(251,191,36,.25)" : sport.border}`, borderRadius: 20, padding: isMobile ? 16 : 24, marginBottom: 20, backdropFilter: "blur(8px)" }}>
+              {sport.pattern && (
+                <div style={{ position: "absolute", inset: 0, backgroundImage: sport.pattern, backgroundRepeat: "repeat", backgroundSize: "200px", opacity: 0.12, pointerEvents: "none", zIndex: 0 }} />
+              )}
+              <div style={{ position: "relative", zIndex: 1 }}>
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".12em", textTransform: "uppercase", color: modoMundial ? "#fbbf24" : sport.color, marginBottom: 4 }}>
                   {sport.emoji} {activeSport === "mlb" ? "JUEGO MLB" : activeSport === "nba" ? "PARTIDO NBA" : modoMundial ? "SELECCIONES" : "PARTIDO"}
@@ -1842,6 +1894,7 @@ export default function App() {
                   ))}
                 </div>
               )}
+            </div>
             </section>
 
             {/* Feedback context indicator */}
@@ -2810,6 +2863,17 @@ export default function App() {
                               placeholder="10" />
                             {cuota > 1 && <span style={{ fontSize: 12, color: "#34d399", fontWeight: 800 }}>Ganar: ${fmtMoney(ganancia)}</span>}
                           </div>
+                          {(() => {
+                            const chk = chequeoStake(ticketStake, p.confianza, toNum(bankroll.inicial));
+                            if (chk.ok) return null;
+                            return (
+                              <div style={{ marginTop: 8 }}>
+                                {chk.alertas.map((a, i) => (
+                                  <div key={i} style={{ fontSize: 10, color: "#fbbf24", fontWeight: 700 }}>{a}</div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -2859,12 +2923,50 @@ export default function App() {
                         placeholder="10" />
                     </div>
 
+                    {/* Alerta de disciplina de stake (escala por confianza + tope 4%) */}
+                    {(() => {
+                      const sel = picks.filter(p => p.seleccionado);
+                      const minConf = sel.length ? Math.min(...sel.map(p => Number(p.confianza) || 0)) : 0;
+                      const chk = chequeoStake(ticketStake, minConf, toNum(bankroll.inicial));
+                      if (chk.ok) return null;
+                      return (
+                        <div style={{ background: "rgba(251,191,36,.08)", border: "1px solid rgba(251,191,36,.25)", borderRadius: 12, padding: "10px 12px", marginBottom: 12 }}>
+                          {chk.alertas.map((a, i) => (
+                            <div key={i} style={{ fontSize: 11, color: "#fbbf24", fontWeight: 700, marginBottom: i < chk.alertas.length - 1 ? 4 : 0 }}>{a}</div>
+                          ))}
+                          <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>Leg más débil: {minConf}% conf.</div>
+                        </div>
+                      );
+                    })()}
+
                     {ticket.count > 0 && (
                       <div style={{ background: "rgba(99,102,241,.08)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 14, padding: 14 }}>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 8 }}>
                           <div>
-                            <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>Cuota total</div>
-                            <div style={{ fontSize: 22, fontWeight: 900, color: "#a5b4fc" }}>{ticket.combinada.toFixed(2)}</div>
+                            <div style={{ fontSize: 10, color: "#475569", marginBottom: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                              Cuota total
+                              {ticket.manual && <span style={{ fontSize: 9, color: "#fbbf24", fontWeight: 800, background: "rgba(251,191,36,.12)", borderRadius: 5, padding: "1px 5px" }}>MANUAL</span>}
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={cuotaManualActiva ? cuotaManual : ticket.combinadaAuto.toFixed(2)}
+                                onChange={e => { setCuotaManual(e.target.value); setCuotaManualActiva(true); }}
+                                style={{ width: 90, padding: "4px 8px", borderRadius: 8, border: ticket.manual ? "1px solid rgba(251,191,36,.4)" : "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: ticket.manual ? "#fbbf24" : "#a5b4fc", fontSize: 22, fontWeight: 900, outline: "none" }}
+                              />
+                              {ticket.manual && (
+                                <button
+                                  onClick={() => { setCuotaManualActiva(false); setCuotaManual(""); }}
+                                  title="Volver a la cuota automática"
+                                  style={{ fontSize: 14, background: "none", border: "none", cursor: "pointer", color: "#64748b", padding: 0 }}>
+                                  ↺
+                                </button>
+                              )}
+                            </div>
+                            {ticket.manual && (
+                              <div style={{ fontSize: 9, color: "#475569", marginTop: 2 }}>Auto: {ticket.combinadaAuto.toFixed(2)}</div>
+                            )}
                           </div>
                           <div style={{ textAlign: "right" }}>
                             <div style={{ fontSize: 10, color: "#475569", marginBottom: 2 }}>Valor total</div>
