@@ -5,13 +5,16 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 // ── RESPONSIVE HOOK ───────────────────────────────────────────────────────────
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
+  const [mounted, setMounted] = useState(false);
   useEffect(() => {
+    setMounted(true);
     const check = () => setIsMobile(window.innerWidth < 640);
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
-  return isMobile;
+  // Hasta montar en el cliente, devolvemos false (igual que el servidor) para evitar hydration mismatch.
+  return mounted ? isMobile : false;
 }
 
 // ── UTILS ────────────────────────────────────────────────────────────────────
@@ -90,6 +93,9 @@ const BK = "bankroll_ia_pro_v2";
 const HK = "historial_ia_pro_v2";
 const RK = "review_ia_pro_v3";
 const JK = "jornadas_mundial_v1";
+const GK = "grupo_ctx_mundial_v1";
+const GLK = "grupos_guardados_v1";
+const ANK = "analisis_guardados_v1";
 const FK = "favoritos_ia_pro_v1";
 const AIK = "last_ai_result_v1";
 const EK = "equipos_perfil_v1"; // team profiles
@@ -206,6 +212,29 @@ const emptyReview = () => ({
 });
 // NEW: Jornada entry for mundial tracking
 const emptyJornada = () => ({ id: makeId(), seleccion: "", jornada: "", rival: "", resultado: "", goles: "", necesidad: "", formacion: "", jugadoresClave: "", notas: "", fecha: new Date().toISOString().slice(0,10) });
+
+// Base fija de los 12 grupos del Mundial 2026 (equipos precargados).
+const MUNDIAL_GRUPOS = {
+  A: ["México", "Sudáfrica", "Corea del Sur", "Chequia"],
+  B: ["Canadá", "Suiza", "Catar", "Bosnia y Herzegovina"],
+  C: ["Brasil", "Marruecos", "Haití", "Escocia"],
+  D: ["Estados Unidos", "Paraguay", "Australia", "Turquía"],
+  E: ["Alemania", "Curazao", "Costa de Marfil", "Ecuador"],
+  F: ["Países Bajos", "Japón", "Suecia", "Túnez"],
+  G: ["Bélgica", "Egipto", "Irán", "Nueva Zelanda"],
+  H: ["España", "Cabo Verde", "Arabia Saudita", "Uruguay"],
+  I: ["Francia", "Senegal", "Irak", "Noruega"],
+  J: ["Argentina", "Argelia", "Austria", "Jordania"],
+  K: ["Portugal", "DR Congo", "Uzbekistán", "Colombia"],
+  L: ["Inglaterra", "Croacia", "Ghana", "Panamá"],
+};
+
+const emptyGrupoEquipo = () => ({ nombre: "", pj: "", pts: "", gf: "", gc: "" });
+const emptyGrupoCtx = () => ({
+  grupo: "",
+  equipos: [emptyGrupoEquipo(), emptyGrupoEquipo(), emptyGrupoEquipo(), emptyGrupoEquipo()],
+  resultadosPrevios: "",   // texto libre: "J1: Argentina 2-1 Islandia, Portugal 0-0 Nigeria"
+});
 
 // ── SISTEMA MULTIDEPORTE ──────────────────────────────────────────────────────
 const SPORTS = {
@@ -777,7 +806,7 @@ REGLAS:
 - Solo el JSON.`;
 }
 
-function buildMundialPrompt(match, feedbackCtx = "", jornadaCtx = "", memoryCtx = "", mundialCtx = {}) {
+function buildMundialPrompt(match, feedbackCtx = "", jornadaCtx = "", memoryCtx = "", mundialCtx = {}, modoRapido = false) {
   const { local, visitante, oddLocal, oddDraw, oddVisit, liga } = match;
   const fase = mundialCtx.fase || "grupos";
   const jornada = mundialCtx.jornada || "J1";
@@ -812,7 +841,7 @@ function buildMundialPrompt(match, feedbackCtx = "", jornadaCtx = "", memoryCtx 
   if (descLocal) descansoCtx.push(`${local}: ${descLocal} días de descanso desde su último partido.`);
   if (descVisit) descansoCtx.push(`${visitante}: ${descVisit} días de descanso desde su último partido.`);
 
-  return `Eres un analista deportivo profesional especializado en selecciones nacionales y torneos internacionales. Buscas VALUE BETS con análisis profundo del contexto del torneo.${feedbackCtx}${jornadaCtx}${memoryCtx}
+  return `Eres un analista deportivo profesional especializado en selecciones nacionales y torneos internacionales. Buscas VALUE BETS con análisis profundo del contexto del torneo.${feedbackCtx}${jornadaCtx}${memoryCtx}${modoRapido ? "\n\n⚡ MODO RÁPIDO: Sé conciso. Llena resumen, estadoGrupo, los 2-3 mejores picks, mejorApuesta y apuestaEvitar. Puedes dejar vacíos los campos descriptivos largos (tactico, factoresOcultos, h2hMundiales). Prioriza velocidad sin perder el análisis del contexto del grupo." : ""}
 
 PARTIDO: ${local} vs ${visitante}${liga ? ` (${liga})` : ""}
 CUOTAS: Local ${oddLocal||"N/D"} | Empate ${oddDraw||"N/D"} | Visitante ${oddVisit||"N/D"}
@@ -874,8 +903,24 @@ ANALIZA OBLIGATORIAMENTE:
 MERCADOS (usa nombres exactos de Hondubet):
 "1x2" | "Doble oportunidad" | "Empate no apuesta" | "Hándicap asiático" | "Total de goles" Over/Under ⭐ | "1ª mitad - 1x2" | "1ª mitad - total" | "Ambos equipos marcan" | "Total tiros de esquina" | "Total de tarjetas" | "Portería a cero" | "Penalti en el encuentro"
 
+9. CALIFICA CADA MERCADO DE 1 A 10:
+   Evalúa el valor de cada mercado disponible (1 = sin valor, evitar; 10 = valor máximo). No solo el que vas a recomendar.
+
+10. DETECTA TRAMPAS DEL MERCADO:
+   - Favoritos sobrevalorados (cuota muy baja para el riesgo real)
+   - Equipos infravalorados por narrativa
+   - Narrativas falsas que infla el público
+   - Exceso de confianza pública en un resultado
+
+11. MEJOR APUESTA Y APUESTA A EVITAR:
+   - Identifica LA mejor apuesta del partido (la de mayor valor real)
+   - Identifica explícitamente qué apuesta EVITAR (trampa o sin valor)
+
+⚠️ REGLA DE DATOS FALTANTES (CRÍTICO):
+Si en fase de grupos NO tienes la tabla del grupo ni los resultados previos, y son necesarios para evaluar las necesidades de clasificación, NO inventes. En el JSON, marca "datosFaltantes" con la lista específica de lo que necesitas del usuario, y BAJA la confianza de todos los picks a máximo 60%. Solo da confianza alta cuando el contexto del grupo esté completo.
+
 JSON puro sin backticks:
-{"resumen":"contexto completo del partido y fase","condicionPartido":"qué necesita cada selección en esta fase específica","formaLocal":"últimos 5 con goles - diferenciando competitivos vs amistosos","formaVisitante":"últimos 5 con goles - diferenciando competitivos vs amistosos","h2hMundiales":"historial específico en Mundiales y torneos mayores","rotacionesEsperadas":"qué jugadores pueden rotar si algún equipo ya clasificó","fatigaAcumulada":"análisis de fatiga por partidos jugados en el torneo","arbitro":{"nombre":"","tarjetasPromedio":"","tendencia":"","impactoMercados":""},"tactico":"sistemas y matchup táctico","factoresOcultos":"presión mediática/clima/altitud/contexto emocional","marcadorEsperado":{"local":1,"visitante":0,"totalGoles":1.8,"descripcion":"proyección considerando fase y necesidades"},"comparacionH2H":[{"categoria":"Nivel FIFA","local":"","visitante":"","ventaja":""},{"categoria":"Forma reciente","local":"","visitante":"","ventaja":""},{"categoria":"Motivación","local":"","visitante":"","ventaja":""},{"categoria":"Fatiga","local":"","visitante":"","ventaja":""},{"categoria":"Lesiones","local":"","visitante":"","ventaja":""},{"categoria":"H2H Mundiales","local":"","visitante":"","ventaja":""}],"picks":[{"mercado":"nombre EXACTO","linea":"","tipo":"","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"datos reales considerando fase del torneo","condicionPartido":"","cuotaSugerida":"","ev":"","riesgo":""}],"pronostico":"resultado considerando fase y contexto","alertas":[],"perfilPartido":"cerrado"}
+{"resumen":"contexto completo del partido y fase","estadoGrupo":"resumen de la tabla: quién lidera, quién está obligado, quién puede rotar (o vacío si no hay datos)","condicionPartido":"qué necesita cada selección en esta fase específica","necesidadLocal":"qué resultado necesita el local y su urgencia","necesidadVisitante":"qué resultado necesita el visitante y su urgencia","formaLocal":"últimos 5 con goles - diferenciando competitivos vs amistosos","formaVisitante":"últimos 5 con goles - diferenciando competitivos vs amistosos","h2hMundiales":"historial específico en Mundiales y torneos mayores","rotacionesEsperadas":"qué jugadores pueden rotar si algún equipo ya clasificó","fatigaAcumulada":"análisis de fatiga por partidos jugados en el torneo","arbitro":{"nombre":"","tarjetasPromedio":"","tendencia":"","impactoMercados":""},"tactico":"sistemas y matchup táctico","factoresOcultos":"presión mediática/clima/altitud/contexto emocional","marcadorEsperado":{"local":1,"visitante":0,"totalGoles":1.8,"descripcion":"proyección considerando fase y necesidades"},"comparacionH2H":[{"categoria":"Nivel FIFA","local":"","visitante":"","ventaja":""},{"categoria":"Forma reciente","local":"","visitante":"","ventaja":""},{"categoria":"Motivación","local":"","visitante":"","ventaja":""},{"categoria":"Fatiga","local":"","visitante":"","ventaja":""},{"categoria":"Lesiones","local":"","visitante":"","ventaja":""},{"categoria":"H2H Mundiales","local":"","visitante":"","ventaja":""}],"mercadosCalificados":[{"mercado":"nombre","nota":8,"comentario":"por qué esa nota"}],"trampasMercado":["descripción de cada trampa detectada"],"mejorApuesta":{"mercado":"","linea":"","razon":"por qué es la de mayor valor"},"apuestaEvitar":{"mercado":"","razon":"por qué evitarla"},"datosFaltantes":[],"picks":[{"mercado":"nombre EXACTO","linea":"","tipo":"","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"datos reales considerando fase del torneo","condicionPartido":"","cuotaSugerida":"","ev":"","riesgo":""}],"pronostico":"resultado considerando fase y contexto","alertas":[],"perfilPartido":"cerrado"}
 
 REGLAS CRÍTICAS POR FASE:
 - GRUPOS J3: Muy difícil de predecir si ambos clasifican. Baja confianza máx 68%.
@@ -1067,6 +1112,62 @@ function buildJornadaContext(jornadas, local, visitante) {
   return ctx;
 }
 
+// Construye contexto de la tabla del grupo a partir de lo que el usuario llenó.
+// Calcula diferencia de goles y ordena. Devuelve "" si no hay datos suficientes.
+function buildGrupoContext(grupoCtx) {
+  if (!grupoCtx) return "";
+  const eqs = (grupoCtx.equipos || []).filter(e => e.nombre && e.nombre.trim());
+  if (eqs.length < 2 && !grupoCtx.resultadosPrevios) return "";
+
+  let ctx = `\n\n🏆 TABLA DEL GRUPO ${grupoCtx.grupo || ""} (datos reales del usuario):\n`;
+  if (eqs.length) {
+    const tabla = eqs.map(e => {
+      const gf = toNum(e.gf), gc = toNum(e.gc);
+      return { nombre: e.nombre, pj: toNum(e.pj), pts: toNum(e.pts), gf, gc, dif: gf - gc };
+    }).sort((a, b) => b.pts - a.pts || b.dif - a.dif || b.gf - a.gf);
+
+    tabla.forEach((e, i) => {
+      ctx += `  ${i + 1}. ${e.nombre} — ${e.pts} pts | PJ ${e.pj} | GF ${e.gf} GC ${e.gc} | Dif ${e.dif >= 0 ? "+" : ""}${e.dif}\n`;
+    });
+    ctx += "\nLos 2 primeros clasifican. Usa posiciones, puntos y diferencia de goles para deducir qué necesita cada selección.\n";
+  }
+  if (grupoCtx.resultadosPrevios && grupoCtx.resultadosPrevios.trim()) {
+    ctx += `\nRESULTADOS PREVIOS DEL GRUPO:\n${grupoCtx.resultadosPrevios.trim()}\n`;
+  }
+  ctx += "\n⚠️ Analiza el GRUPO COMPLETO antes del partido. El contexto de clasificación tiene prioridad sobre las estadísticas históricas.";
+  return ctx;
+}
+
+// Construye contexto de aprendizaje: lecciones de evaluaciones de análisis previos.
+function buildAprendizajeContext(analisisGuardados) {
+  const evaluados = (analisisGuardados || []).filter(a => a.evaluado && a.evaluacion);
+  if (!evaluados.length) return "";
+
+  let ctx = "\n\n🧠 LECCIONES DE TUS ANÁLISIS PREVIOS (aprende de tus aciertos y errores):";
+  // Conteo de aciertos por nivel de nota para detectar sesgos
+  let mercadosAcierto = 0, mercadosFallo = 0;
+  const lecciones = [];
+  evaluados.slice(0, 10).forEach(a => {
+    const ev = a.evaluacion;
+    (ev.mercadosEvaluados || []).forEach(m => {
+      if (m.resultado === "acierto") mercadosAcierto++;
+      else if (m.resultado === "fallo") mercadosFallo++;
+    });
+    if (ev.leccionAprendida) lecciones.push(`- ${a.partido}: ${ev.leccionAprendida}`);
+  });
+  const total = mercadosAcierto + mercadosFallo;
+  if (total > 0) {
+    const pct = Math.round((mercadosAcierto / total) * 100);
+    ctx += `\nTu tasa de acierto en mercados calificados: ${pct}% (${mercadosAcierto}/${total}).`;
+    if (pct < 50) ctx += " Estás fallando más de lo que aciertas — sé MÁS conservador con notas altas.";
+  }
+  if (lecciones.length) {
+    ctx += "\nLecciones específicas a recordar:\n" + lecciones.slice(0, 6).join("\n");
+  }
+  ctx += "\nAplica estas lecciones: no repitas los errores de calificación que ya cometiste.";
+  return ctx;
+}
+
 // ── PESO BADGE ───────────────────────────────────────────────────────────────
 function PesoBadge({ peso }) {
   const filled = Math.round((peso / 10) * 8);
@@ -1199,6 +1300,13 @@ export default function App() {
   const [historial, setHistorial] = useState(() => loadState(HK, []));
   const [reviews, setReviews] = useState(() => loadState(RK, []));
   const [jornadas, setJornadas] = useState(() => loadState(JK, []));
+  const [grupoCtx, setGrupoCtx] = useState(() => loadState(GK, emptyGrupoCtx()));
+  const [mundialRapido, setMundialRapido] = useState(false);
+  const [gruposGuardados, setGruposGuardados] = useState(() => loadState(GLK, {}));   // { "A": {grupo, equipos, resultadosPrevios}, ... }
+  const [analisisGuardados, setAnalisisGuardados] = useState(() => loadState(ANK, []));  // análisis completos para revisar tras el partido
+  const [evaluandoAnalisis, setEvaluandoAnalisis] = useState("");  // id del análisis que la IA está evaluando
+  const [showGruposIO, setShowGruposIO] = useState(false);                            // panel de exportar/importar
+  const [grupoIOText, setGrupoIOText] = useState("");
   const [favoritos, setFavoritos] = useState(() => loadState(FK, []));
   const [equipos, setEquipos] = useState(() => loadState(EK, [])); // team profiles
   const [betDraft, setBetDraft] = useState(emptyBet());
@@ -1250,6 +1358,21 @@ export default function App() {
   useEffect(() => { saveState(HK, historial); }, [historial]);
   useEffect(() => { saveState(RK, reviews); }, [reviews]);
   useEffect(() => { saveState(JK, jornadas); }, [jornadas]);
+  useEffect(() => { saveState(GK, grupoCtx); }, [grupoCtx]);
+  useEffect(() => { saveState(GLK, gruposGuardados); }, [gruposGuardados]);
+  useEffect(() => { saveState(ANK, analisisGuardados); }, [analisisGuardados]);
+
+  // Auto-guardado: cuando editas la tabla y hay un grupo con nombre, guarda solo (con debounce).
+  useEffect(() => {
+    const letra = (grupoCtx.grupo || "").trim().toUpperCase();
+    if (!letra) return;
+    const tieneAlgo = grupoCtx.equipos.some(e => e.nombre && e.nombre.trim());
+    if (!tieneAlgo) return;
+    const t = setTimeout(() => {
+      setGruposGuardados(prev => ({ ...prev, [letra]: { grupo: letra, equipos: grupoCtx.equipos.map(e => ({ ...e })), resultadosPrevios: grupoCtx.resultadosPrevios } }));
+    }, 800);
+    return () => clearTimeout(t);
+  }, [grupoCtx]);
   useEffect(() => { saveState(FK, favoritos); }, [favoritos]);
   useEffect(() => { saveState(EK, equipos); }, [equipos]);
   useEffect(() => { saveState("daily_loss_limit_v1", dailyLossLimit); }, [dailyLossLimit]);
@@ -1294,6 +1417,73 @@ export default function App() {
     }
   })();
 
+  const guardarGrupoActual = () => {
+    const nombre = (grupoCtx.grupo || "").trim().toUpperCase();
+    if (!nombre) { showToast("Escribe el nombre del grupo (ej: A) antes de guardar", "error"); return; }
+    const tieneEquipos = grupoCtx.equipos.some(e => e.nombre && e.nombre.trim());
+    if (!tieneEquipos) { showToast("Llena al menos un equipo antes de guardar", "error"); return; }
+    setGruposGuardados(prev => ({ ...prev, [nombre]: { grupo: nombre, equipos: grupoCtx.equipos.map(e => ({ ...e })), resultadosPrevios: grupoCtx.resultadosPrevios } }));
+    showToast(`✅ Grupo ${nombre} guardado`, "success");
+  };
+
+  const cargarGrupo = (nombre) => {
+    const g = gruposGuardados[nombre];
+    if (!g) return;
+    setGrupoCtx({ grupo: g.grupo, equipos: g.equipos.map(e => ({ ...e })), resultadosPrevios: g.resultadosPrevios || "" });
+    showToast(`📥 Grupo ${nombre} cargado`, "success");
+  };
+
+  // Carga un grupo desde el menú: usa datos guardados si existen, si no la base fija de equipos.
+  const seleccionarGrupoMundial = (letra) => {
+    if (!letra) return;
+    const guardado = gruposGuardados[letra];
+    if (guardado && Array.isArray(guardado.equipos) && guardado.equipos.some(e => e.nombre)) {
+      setGrupoCtx({ grupo: letra, equipos: guardado.equipos.map(e => ({ ...e })), resultadosPrevios: guardado.resultadosPrevios || "" });
+      showToast(`📥 Grupo ${letra} cargado (con tus datos guardados)`, "success");
+    } else {
+      const base = (MUNDIAL_GRUPOS[letra] || []).map(nombre => ({ ...emptyGrupoEquipo(), nombre }));
+      while (base.length < 4) base.push(emptyGrupoEquipo());
+      setGrupoCtx({ grupo: letra, equipos: base, resultadosPrevios: "" });
+      showToast(`🏆 Grupo ${letra} cargado (equipos base)`, "success");
+    }
+  };
+
+  const eliminarGrupoGuardado = (nombre) => {
+    setGruposGuardados(prev => { const copy = { ...prev }; delete copy[nombre]; return copy; });
+    showToast(`Grupo ${nombre} eliminado`, "success");
+  };
+
+  const exportarGrupos = () => {
+    const txt = JSON.stringify(gruposGuardados);
+    setGrupoIOText(txt);
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(txt).then(
+        () => showToast("📋 Grupos copiados al portapapeles", "success"),
+        () => showToast("Copia el texto manualmente del cuadro", "error")
+      );
+    }
+  };
+
+  const importarGrupos = () => {
+    try {
+      const parsed = JSON.parse(grupoIOText.trim());
+      if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Formato inválido");
+      const limpio = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (v && Array.isArray(v.equipos)) limpio[k.toUpperCase()] = { grupo: v.grupo || k, equipos: v.equipos, resultadosPrevios: v.resultadosPrevios || "" };
+      }
+      const n = Object.keys(limpio).length;
+      if (!n) throw new Error("No se encontraron grupos válidos");
+      setGruposGuardados(prev => ({ ...prev, ...limpio }));
+      showToast(`📥 ${n} grupo(s) importado(s)`, "success");
+      setGrupoIOText("");
+      setShowGruposIO(false);
+    } catch (err) {
+      console.error("importarGrupos:", err);
+      showToast("Texto inválido. Pega lo que exportaste antes.", "error");
+    }
+  };
+
   const saveTicket = () => {
     const sel = picks.filter(p => p.seleccionado);
     if (!sel.length) { showToast("Selecciona al menos un pick", "error"); return; }
@@ -1314,6 +1504,30 @@ export default function App() {
     };
     setHistorial(prev => [t, ...prev]);
     showToast("✅ Ticket guardado en historial", "success");
+  };
+
+  // Guarda el análisis completo actual (con mercados calificados) para revisarlo tras el partido.
+  const guardarAnalisisParaRevisar = () => {
+    if (!aiResult) { showToast("Primero analiza un partido", "error"); return; }
+    const registro = {
+      id: makeId(),
+      fecha: new Date().toISOString(),
+      partido: `${match.local} vs ${match.visitante}`,
+      local: match.local, visitante: match.visitante,
+      deporte: activeSport, modoMundial,
+      grupo: modoMundial ? (grupoCtx.grupo || "") : "",
+      mercadosCalificados: (aiResult.mercadosCalificados || []).map(m => ({ ...m, resultado: "pendiente" })),
+      mejorApuesta: aiResult.mejorApuesta || null,
+      apuestaEvitar: aiResult.apuestaEvitar || null,
+      trampasMercado: aiResult.trampasMercado || [],
+      pronostico: aiResult.pronostico || "",
+      perfilPartido: aiResult.perfilPartido || "",
+      marcadorEsperado: aiResult.marcadorEsperado || null,
+      resultadoReal: { golesLocal: "", golesVisita: "", tarjetas: "", corners: "", notas: "" },
+      evaluado: false,
+    };
+    setAnalisisGuardados(prev => [registro, ...prev]);
+    showToast("📌 Análisis guardado para revisar tras el partido", "success");
   };
 
   const openReviewModal = (ticket) => {
@@ -1493,12 +1707,53 @@ export default function App() {
     finally { setAnalyzingLines(false); }
   };
 
+  // Pide a la IA que evalúe un análisis guardado contra el resultado real del partido.
+  const evaluarAnalisisIA = async (registro) => {
+    const { golesLocal, golesVisita } = registro.resultadoReal || {};
+    if (golesLocal === "" || golesVisita === "") { showToast("Pon el marcador real primero", "error"); return; }
+    setEvaluandoAnalisis(registro.id);
+    try {
+      const mercadosTxt = (registro.mercadosCalificados || []).map(m => `- ${m.mercado}: ${m.nota}/10 (${m.comentario || ""})`).join("\n");
+      const tj = registro.resultadoReal?.tarjetas, co = registro.resultadoReal?.corners;
+      const extraReal = `${tj !== "" && tj != null ? `\nTOTAL DE TARJETAS: ${tj}` : ""}${co !== "" && co != null ? `\nTOTAL DE CÓRNERS: ${co}` : ""}`;
+      const prompt = `Eres un evaluador crítico de análisis de apuestas. Un análisis previo calificó varios mercados ANTES de este partido. Ahora sabemos el resultado real. Evalúa qué tan acertado fue cada calificación.
+
+PARTIDO: ${registro.partido}
+RESULTADO REAL: ${golesLocal}-${golesVisita}${extraReal}
+${registro.resultadoReal?.notas ? `NOTAS: ${registro.resultadoReal.notas}` : ""}
+
+PRONÓSTICO PREVIO: ${registro.pronostico || "N/A"}
+MEJOR APUESTA SUGERIDA: ${registro.mejorApuesta?.mercado || "N/A"} ${registro.mejorApuesta?.linea || ""}
+APUESTA A EVITAR: ${registro.apuestaEvitar?.mercado || "N/A"}
+
+MERCADOS CALIFICADOS (1-10) ANTES DEL PARTIDO:
+${mercadosTxt}
+
+Para cada mercado, determina si SE HABRÍA GANADO o PERDIDO según el resultado real ${golesLocal}-${golesVisita}, y si la nota alta/baja estuvo justificada. Sé honesto y crítico. Si un mercado (tarjetas, córners) necesita un dato que NO se proporcionó, márcalo como "neutro" y dilo en el comentario.
+
+Responde SOLO con JSON sin backticks:
+{"resumenEvaluacion":"qué acertó y qué falló el análisis en general","aciertoGlobal":"alto|medio|bajo","mercadosEvaluados":[{"mercado":"nombre","notaOriginal":8,"resultado":"acierto|fallo|neutro","comentario":"se ganaba o perdía y si la nota tuvo sentido"}],"mejorApuestaAcerto":true,"apuestaEvitarAcerto":true,"leccionAprendida":"qué debe ajustar el analista para futuros partidos similares"}`;
+      const resp = await fetch("/api/ai-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 1500, useWebSearch: false, messages: [{ role: "user", content: prompt }] }) });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error?.message || `Error ${resp.status}`);
+      const text = (data.content || []).find(b => b.type === "text")?.text || "";
+      const evaluacion = extractJSON(text);
+      setAnalisisGuardados(prev => prev.map(a => a.id === registro.id ? { ...a, evaluacion, evaluado: true } : a));
+      showToast("✅ Evaluación completada", "success");
+    } catch (err) {
+      console.error("evaluarAnalisisIA:", err);
+      showToast("Error al evaluar. Intenta de nuevo.", "error");
+    } finally {
+      setEvaluandoAnalisis("");
+    }
+  };
+
   const runAIAnalysis = async () => {
     if (!match.local.trim() || !match.visitante.trim()) { showToast("Ingresa ambos equipos", "error"); return; }
     setAiStatus("loading"); setAiError(""); setAiResult(null); setPicks([]); setTicketValidation(null);
     try {
       const feedbackCtx = buildFeedbackContext(reviews);
-      const jornadaCtx = buildJornadaContext(jornadas, match.local, match.visitante);
+      const jornadaCtx = buildJornadaContext(jornadas, match.local, match.visitante) + (modoMundial ? buildGrupoContext(grupoCtx) + buildAprendizajeContext(analisisGuardados) : "");
       const memoryCtx = buildTeamMemory(reviews, match.local, match.visitante);
       const teamProfileCtx = buildTeamProfileContext(equipos, match.local, match.visitante, activeSport);
       const notaCtx = userNote.trim() ? `\n\n📝 NOTA DEL ANALISTA (prioridad alta): ${userNote.trim()}` : "";
@@ -1525,7 +1780,7 @@ export default function App() {
       let prompt;
       if (activeSport === "mlb") prompt = buildMLBPrompt(match, feedbackCtx + notaCtx + memoryCtx + teamProfileCtx + extraCtx);
       else if (activeSport === "nba") prompt = buildNBAPrompt(match, feedbackCtx + notaCtx + memoryCtx + teamProfileCtx + extraCtx);
-      else if (modoMundial) prompt = buildMundialPrompt(match, feedbackCtx + notaCtx + extraCtx + teamProfileCtx, jornadaCtx, memoryCtx, mundialCtx);
+      else if (modoMundial) prompt = buildMundialPrompt(match, feedbackCtx + notaCtx + extraCtx + teamProfileCtx, jornadaCtx, memoryCtx, mundialCtx, mundialRapido);
       else prompt = buildFutbolPrompt(match, feedbackCtx + notaCtx + extraCtx + teamProfileCtx, jornadaCtx, memoryCtx);
 
       const resp = await fetch("/api/ai-analysis", {
@@ -1533,7 +1788,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: AI_MODEL,
-          max_tokens: 4000,
+          max_tokens: modoMundial && !mundialRapido ? 8000 : 4000,
           useWebSearch: useWebSearch,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -1558,13 +1813,27 @@ export default function App() {
       }
       let jsonStr = end > -1 ? cleaned.slice(start, end + 1) : cleaned.slice(start);
       if (end === -1) {
+        // Respuesta truncada: limpiamos el fragmento incompleto del final.
+        // 1) Quitar un objeto o cadena a medio escribir al final.
         jsonStr = jsonStr.replace(/,?\s*\{[^{}]*$/, "").replace(/,?\s*"[^"]*$/, "");
-        const ob = (jsonStr.match(/\{/g)||[]).length - (jsonStr.match(/\}/g)||[]).length;
+        // 2) Si quedó una cadena abierta (nº impar de comillas sin escapar), cerrarla.
+        const quotes = (jsonStr.match(/(?<!\\)"/g) || []).length;
+        if (quotes % 2 !== 0) jsonStr += '"';
+        // 3) Quitar coma colgante antes de cerrar.
+        jsonStr = jsonStr.replace(/,\s*$/, "");
+        // 4) Balancear corchetes y llaves.
         const ab = (jsonStr.match(/\[/g)||[]).length - (jsonStr.match(/\]/g)||[]).length;
+        const ob = (jsonStr.match(/\{/g)||[]).length - (jsonStr.match(/\}/g)||[]).length;
         for (let i=0;i<ab;i++) jsonStr+="]";
         for (let i=0;i<ob;i++) jsonStr+="}";
       }
-      const parsed = JSON.parse(jsonStr);
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (parseErr) {
+        console.error("JSON truncado irrecuperable:", parseErr, jsonStr.slice(-200));
+        throw new Error("La IA devolvió una respuesta incompleta. Prueba el modo Rápido o vuelve a intentar.");
+      }
       setAiResult(parsed);
       const newPicks = (parsed.picks || []).map(p => {
         const conf = clamp(Number(p.confianza) || 50, 0, 100);
@@ -1621,6 +1890,7 @@ export default function App() {
     { id: "equipos", label: "🏟️ Equipos" },
     { id: "favoritos", label: "⭐ Favoritos" },
     ...(modoMundial ? [{ id: "jornadas", label: "🏆 Jornadas" }] : []),
+    ...(modoMundial ? [{ id: "aprendizaje", label: "🧠 Aprendizaje IA" }] : []),
   ];
 
   // ── INPUT STYLE ────────────────────────────────────────────────────────
@@ -1826,7 +2096,7 @@ export default function App() {
                 </div>
               );
             })()}
-            <section style={{ position: "relative", overflow: "hidden", background: `rgba(15,15,30,.5)`, border: `1px solid ${modoMundial ? "rgba(251,191,36,.25)" : sport.border}`, borderRadius: 20, padding: isMobile ? 16 : 24, marginBottom: 20, backdropFilter: "blur(8px)" }}>
+            <section style={{ position: "relative", overflow: "hidden", boxSizing: "border-box", maxWidth: "100%", background: `rgba(15,15,30,.5)`, border: `1px solid ${modoMundial ? "rgba(251,191,36,.25)" : sport.border}`, borderRadius: 20, padding: isMobile ? 16 : 24, marginBottom: 20, backdropFilter: "blur(8px)" }}>
               {sport.pattern && (
                 <div style={{ position: "absolute", inset: 0, backgroundImage: sport.pattern, backgroundRepeat: "repeat", backgroundSize: "200px", opacity: 0.12, pointerEvents: "none", zIndex: 0 }} />
               )}
@@ -1972,7 +2242,7 @@ export default function App() {
 
             {/* ── CONTEXTO MUNDIAL ─────────────────────────────────────────── */}
             {modoMundial && (
-              <div style={{ background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.2)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
+              <div style={{ background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.2)", borderRadius: 16, padding: 16, marginBottom: 16, boxSizing: "border-box", maxWidth: "100%" }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: "#fbbf24", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 12 }}>
                   🏆 Contexto del torneo
                 </div>
@@ -2052,6 +2322,92 @@ export default function App() {
                     </div>
                   )}
                 </div>
+
+                {/* ── TABLA DEL GRUPO (datos reales del usuario) ──────────────── */}
+                {mundialCtx.fase === "grupos" && (
+                  <div style={{ marginTop: 14, borderTop: "1px solid rgba(251,191,36,.15)", paddingTop: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "#fbbf24" }}>🏆 Tabla del grupo</span>
+                      <select value={grupoCtx.grupo ? grupoCtx.grupo.toUpperCase() : ""} onChange={e => seleccionarGrupoMundial(e.target.value)}
+                        style={{ width: 130, padding: "5px 8px", borderRadius: 8, border: "1px solid rgba(251,191,36,.3)", background: "rgba(15,23,42,.8)", color: "#fde68a", fontSize: 11, fontWeight: 700, outline: "none" }}>
+                        <option value="">Elegir grupo…</option>
+                        {Object.keys(MUNDIAL_GRUPOS).map(letra => (
+                          <option key={letra} value={letra}>Grupo {letra}{gruposGuardados[letra] ? " ✓" : ""}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ fontSize: 9, color: "#64748b", marginBottom: 8 }}>Elige un grupo y se cargan los 4 equipos. Anota PJ, puntos y goles — se guardan solos. El ✓ marca grupos con datos guardados.</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.7fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr)", gap: 4, fontSize: 9, color: "#475569", fontWeight: 700, marginBottom: 4, paddingLeft: 4 }}>
+                      <span>Equipo</span><span style={{ textAlign: "center" }}>PJ</span><span style={{ textAlign: "center" }}>Pts</span><span style={{ textAlign: "center" }}>GF</span><span style={{ textAlign: "center" }}>GC</span>
+                    </div>
+                    {grupoCtx.equipos.map((eq, idx) => (
+                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.7fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr)", gap: 4, marginBottom: 4 }}>
+                        <input value={eq.nombre} onChange={e => setGrupoCtx(c => { const eqs = [...c.equipos]; eqs[idx] = { ...eqs[idx], nombre: e.target.value }; return { ...c, equipos: eqs }; })}
+                          placeholder={`Equipo ${idx + 1}`} style={{ width: "100%", minWidth: 0, boxSizing: "border-box", padding: "5px 6px", borderRadius: 7, border: "1px solid rgba(255,255,255,.08)", background: "rgba(15,23,42,.7)", color: "#e0e7ff", fontSize: 11, outline: "none" }} />
+                        {["pj", "pts", "gf", "gc"].map(f => (
+                          <input key={f} type="number" inputMode="numeric" value={eq[f]} onChange={e => setGrupoCtx(c => { const eqs = [...c.equipos]; eqs[idx] = { ...eqs[idx], [f]: e.target.value }; return { ...c, equipos: eqs }; })}
+                            style={{ width: "100%", minWidth: 0, boxSizing: "border-box", padding: "5px 2px", borderRadius: 7, border: "1px solid rgba(255,255,255,.08)", background: "rgba(15,23,42,.7)", color: "#cbd5e1", fontSize: 11, textAlign: "center", outline: "none" }} />
+                        ))}
+                      </div>
+                    ))}
+                    <textarea value={grupoCtx.resultadosPrevios} onChange={e => setGrupoCtx(c => ({ ...c, resultadosPrevios: e.target.value }))}
+                      placeholder="Resultados previos del grupo (ej: J1: Argentina 2-1 Islandia, Portugal 0-0 Nigeria)"
+                      rows={2} style={{ width: "100%", marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,.08)", background: "rgba(15,23,42,.7)", color: "#cbd5e1", fontSize: 11, outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+
+                    {/* Guardar / cargar grupos */}
+                    <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                      <button onClick={guardarGrupoActual}
+                        style={{ flex: "1 1 auto", padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(52,211,153,.35)", background: "rgba(52,211,153,.1)", color: "#34d399", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                        💾 Guardado automático {grupoCtx.grupo ? `· ${grupoCtx.grupo.toUpperCase()}` : ""}
+                      </button>
+                      <button onClick={() => setShowGruposIO(v => !v)}
+                        style={{ padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.08)", color: "#38bdf8", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                        ↹ Exportar / Importar
+                      </button>
+                    </div>
+
+                    {/* Chips de grupos guardados */}
+                    {Object.keys(gruposGuardados).length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ fontSize: 9, color: "#64748b", marginBottom: 4 }}>Grupos guardados (toca para cargar):</div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {Object.keys(gruposGuardados).sort().map(nombre => (
+                            <div key={nombre} style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(251,191,36,.1)", border: "1px solid rgba(251,191,36,.25)", borderRadius: 8, padding: "3px 4px 3px 9px" }}>
+                              <button onClick={() => cargarGrupo(nombre)}
+                                style={{ background: "none", border: "none", color: "#fde68a", fontSize: 11, fontWeight: 800, cursor: "pointer", padding: 0 }}>
+                                {nombre}
+                              </button>
+                              <button onClick={() => eliminarGrupoGuardado(nombre)} title="Eliminar"
+                                style={{ background: "none", border: "none", color: "#64748b", fontSize: 12, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}>×</button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Panel exportar / importar por texto */}
+                    {showGruposIO && (
+                      <div style={{ marginTop: 10, background: "rgba(15,23,42,.6)", border: "1px solid rgba(56,189,248,.2)", borderRadius: 10, padding: 10 }}>
+                        <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 6, lineHeight: 1.4 }}>
+                          <b style={{ color: "#38bdf8" }}>Exportar:</b> copia tus grupos a este cuadro y al portapapeles. <b style={{ color: "#38bdf8" }}>Importar:</b> pega aquí lo que copiaste en otro dispositivo y dale Importar.
+                        </div>
+                        <textarea value={grupoIOText} onChange={e => setGrupoIOText(e.target.value)}
+                          placeholder="Aquí aparece el texto al exportar, o pega aquí para importar..."
+                          rows={3} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,.08)", background: "rgba(2,8,23,.7)", color: "#cbd5e1", fontSize: 10, fontFamily: "monospace", outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+                        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                          <button onClick={exportarGrupos}
+                            style={{ flex: 1, padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.1)", color: "#38bdf8", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                            📤 Exportar
+                          </button>
+                          <button onClick={importarGrupos}
+                            style={{ flex: 1, padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(52,211,153,.35)", background: "rgba(52,211,153,.1)", color: "#34d399", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                            📥 Importar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2216,6 +2572,17 @@ export default function App() {
               </div>
 
             {/* ── BOTÓN ANALIZAR ────────────────────────────────────────────── */}
+            {modoMundial && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                {[{ v: false, label: "🔬 Completo", desc: "análisis profundo" }, { v: true, label: "⚡ Rápido", desc: "solo lo esencial" }].map(opt => (
+                  <button key={String(opt.v)} onClick={() => setMundialRapido(opt.v)}
+                    style={{ flex: 1, padding: "8px 12px", borderRadius: 12, border: mundialRapido === opt.v ? "1px solid rgba(251,191,36,.5)" : "1px solid rgba(255,255,255,.08)", background: mundialRapido === opt.v ? "rgba(251,191,36,.12)" : "rgba(15,23,42,.5)", color: mundialRapido === opt.v ? "#fde68a" : "#64748b", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                    {opt.label}
+                    <div style={{ fontSize: 9, fontWeight: 400, marginTop: 1 }}>{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+            )}
             {(() => {
               const timing = getTimingStatus(matchDateTime, activeSport);
               const isBlocked = timing && !timing.canAnalyze && !timingOverride;
@@ -2281,6 +2648,84 @@ export default function App() {
                   <div style={{ background: "rgba(139,92,246,.06)", border: "1px solid rgba(139,92,246,.2)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
                     <div style={{ fontWeight: 800, fontSize: 12, color: "#a78bfa", marginBottom: 6 }}>⚡ CONDICIÓN DEL PARTIDO</div>
                     <p style={{ fontSize: 13, color: "#ddd6fe", margin: 0, lineHeight: 1.6 }}>{aiResult.condicionPartido}</p>
+                  </div>
+                )}
+
+                {/* ── MUNDIAL: datos faltantes (punto 10) ─────────────────────── */}
+                {modoMundial && aiResult.datosFaltantes?.filter(Boolean).length > 0 && (
+                  <div style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+                    <div style={{ fontWeight: 800, fontSize: 12, color: "#f87171", marginBottom: 6 }}>🛑 FALTAN DATOS PARA UN ANÁLISIS CONFIABLE</div>
+                    {aiResult.datosFaltantes.filter(Boolean).map((d, i) => (
+                      <div key={i} style={{ fontSize: 12, color: "#fecaca", marginBottom: 2 }}>• {d}</div>
+                    ))}
+                    <div style={{ fontSize: 10, color: "#f87171", opacity: .7, marginTop: 6 }}>Llena la tabla del grupo arriba y vuelve a analizar para mayor confianza.</div>
+                  </div>
+                )}
+
+                {/* ── MUNDIAL: estado del grupo ───────────────────────────────── */}
+                {modoMundial && aiResult.estadoGrupo && (
+                  <div style={{ background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.2)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+                    <div style={{ fontWeight: 800, fontSize: 12, color: "#fbbf24", marginBottom: 6 }}>🏆 ESTADO DEL GRUPO</div>
+                    <p style={{ fontSize: 13, color: "#fde68a", margin: 0, lineHeight: 1.6 }}>{aiResult.estadoGrupo}</p>
+                    {(aiResult.necesidadLocal || aiResult.necesidadVisitante) && (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+                        {aiResult.necesidadLocal && <div style={{ background: "rgba(15,23,42,.5)", borderRadius: 8, padding: "8px 10px" }}><div style={{ fontSize: 10, color: "#64748b", marginBottom: 2 }}>{match.local}</div><div style={{ fontSize: 11, color: "#cbd5e1" }}>{aiResult.necesidadLocal}</div></div>}
+                        {aiResult.necesidadVisitante && <div style={{ background: "rgba(15,23,42,.5)", borderRadius: 8, padding: "8px 10px" }}><div style={{ fontSize: 10, color: "#64748b", marginBottom: 2 }}>{match.visitante}</div><div style={{ fontSize: 11, color: "#cbd5e1" }}>{aiResult.necesidadVisitante}</div></div>}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── MUNDIAL: mejor apuesta + apuesta a evitar ───────────────── */}
+                {modoMundial && (aiResult.mejorApuesta?.mercado || aiResult.apuestaEvitar?.mercado) && (
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                    {aiResult.mejorApuesta?.mercado && (
+                      <div style={{ background: "rgba(52,211,153,.08)", border: "1px solid rgba(52,211,153,.3)", borderRadius: 14, padding: "12px 16px" }}>
+                        <div style={{ fontWeight: 800, fontSize: 12, color: "#34d399", marginBottom: 6 }}>✅ MEJOR APUESTA</div>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: "#a7f3d0", marginBottom: 4 }}>{aiResult.mejorApuesta.mercado}{aiResult.mejorApuesta.linea ? ` ${aiResult.mejorApuesta.linea}` : ""}</div>
+                        <p style={{ fontSize: 11, color: "#cbd5e1", margin: 0, lineHeight: 1.5 }}>{aiResult.mejorApuesta.razon}</p>
+                      </div>
+                    )}
+                    {aiResult.apuestaEvitar?.mercado && (
+                      <div style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 14, padding: "12px 16px" }}>
+                        <div style={{ fontWeight: 800, fontSize: 12, color: "#f87171", marginBottom: 6 }}>🚫 APUESTA A EVITAR</div>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: "#fecaca", marginBottom: 4 }}>{aiResult.apuestaEvitar.mercado}</div>
+                        <p style={{ fontSize: 11, color: "#cbd5e1", margin: 0, lineHeight: 1.5 }}>{aiResult.apuestaEvitar.razon}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── MUNDIAL: mercados calificados 1-10 ──────────────────────── */}
+                {modoMundial && aiResult.mercadosCalificados?.filter(m => m.mercado).length > 0 && (
+                  <div style={{ background: "rgba(56,189,248,.05)", border: "1px solid rgba(56,189,248,.18)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+                    <div style={{ fontWeight: 800, fontSize: 12, color: "#38bdf8", marginBottom: 10 }}>📊 MERCADOS CALIFICADOS (1-10)</div>
+                    {[...aiResult.mercadosCalificados].filter(m => m.mercado).sort((a, b) => (toNum(b.nota) - toNum(a.nota))).map((m, i) => {
+                      const nota = toNum(m.nota);
+                      const col = nota >= 8 ? "#34d399" : nota >= 6 ? "#fbbf24" : nota >= 4 ? "#fb923c" : "#f87171";
+                      return (
+                        <div key={i} style={{ marginBottom: 8 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: "#e0e7ff" }}>{m.mercado}</span>
+                            <span style={{ fontSize: 13, fontWeight: 900, color: col }}>{nota}/10</span>
+                          </div>
+                          <div style={{ height: 5, background: "rgba(15,23,42,.6)", borderRadius: 3, overflow: "hidden", marginBottom: 3 }}>
+                            <div style={{ width: `${nota * 10}%`, height: "100%", background: col, borderRadius: 3 }} />
+                          </div>
+                          {m.comentario && <div style={{ fontSize: 10, color: "#64748b" }}>{m.comentario}</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* ── MUNDIAL: trampas del mercado ────────────────────────────── */}
+                {modoMundial && aiResult.trampasMercado?.filter(Boolean).length > 0 && (
+                  <div style={{ background: "rgba(251,146,60,.07)", border: "1px solid rgba(251,146,60,.25)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+                    <div style={{ fontWeight: 800, fontSize: 12, color: "#fb923c", marginBottom: 6 }}>⚠️ TRAMPAS DEL MERCADO</div>
+                    {aiResult.trampasMercado.filter(Boolean).map((t, i) => (
+                      <div key={i} style={{ fontSize: 12, color: "#fed7aa", marginBottom: 3, lineHeight: 1.5 }}>• {t}</div>
+                    ))}
                   </div>
                 )}
 
@@ -2390,11 +2835,13 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ── ALERTAS ────────────────────────────────────────────── */}
-                {aiResult.alertas && aiResult.alertas.length > 0 && (
-                  <div style={{ background: "rgba(239,68,68,.06)", border: "1px solid rgba(239,68,68,.2)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
-                    {aiResult.alertas.map((a, i) => <div key={i} style={{ fontSize: 12, color: "#fca5a5", marginBottom: i < aiResult.alertas.length - 1 ? 4 : 0 }}>⚠️ {a}</div>)}
-                  </div>
+                {/* ── ALERTAS (mostradas arriba en "Alertas del motor") ──────── */}
+
+                {modoMundial && (aiResult.mercadosCalificados?.length > 0 || aiResult.mejorApuesta?.mercado) && (
+                  <button onClick={guardarAnalisisParaRevisar}
+                    style={{ width: "100%", padding: "12px", borderRadius: 14, border: "1px solid rgba(251,191,36,.3)", background: "rgba(251,191,36,.1)", color: "#fbbf24", fontSize: 13, fontWeight: 800, cursor: "pointer", marginBottom: 10 }}>
+                    📌 Guardar análisis para revisar tras el partido
+                  </button>
                 )}
 
                 <button onClick={() => setActiveTab("picks")}
@@ -4251,6 +4698,131 @@ export default function App() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── PESTAÑA APRENDIZAJE IA ─────────────────────────────────────── */}
+        {activeTab === "aprendizaje" && modoMundial && (
+          <div style={{ maxWidth: 720, margin: "0 auto" }}>
+            <div style={{ marginBottom: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 900, color: "#fbbf24", margin: 0 }}>🧠 Aprendizaje de la IA</h2>
+              <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>Análisis guardados para revisar tras el partido. La IA aprende de sus aciertos y errores para mejorar futuras calificaciones.</p>
+            </div>
+
+            {analisisGuardados.length === 0 && (
+              <div style={{ textAlign: "center", padding: 40, color: "#475569", fontSize: 13 }}>
+                Aún no hay análisis guardados.<br />Analiza un partido y toca "📌 Guardar análisis para revisar".
+              </div>
+            )}
+
+            {analisisGuardados.map(a => {
+              const ev = a.evaluacion;
+              const aciertoCol = ev?.aciertoGlobal === "alto" ? "#34d399" : ev?.aciertoGlobal === "bajo" ? "#f87171" : "#fbbf24";
+              return (
+                <div key={a.id} style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 14, padding: 14, marginBottom: 12, boxSizing: "border-box" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: "#e0e7ff" }}>{a.partido}</div>
+                      <div style={{ fontSize: 10, color: "#64748b" }}>{a.grupo ? `Grupo ${a.grupo} · ` : ""}{new Date(a.fecha).toLocaleDateString()}</div>
+                    </div>
+                    <button onClick={() => { if (confirm("¿Eliminar este análisis guardado?")) setAnalisisGuardados(prev => prev.filter(x => x.id !== a.id)); }}
+                      style={{ background: "none", border: "none", color: "#64748b", fontSize: 16, cursor: "pointer", padding: 0 }}>×</button>
+                  </div>
+
+                  {/* Mercados calificados guardados */}
+                  {a.mercadosCalificados?.length > 0 && (
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>Mercados calificados ({a.mercadosCalificados.length}):</div>
+                      {[...a.mercadosCalificados].sort((x, y) => toNum(y.nota) - toNum(x.nota)).map((m, i) => (
+                        <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11, color: "#cbd5e1", marginBottom: 3 }}>
+                          <span style={{ flex: 1 }}>{m.mercado}</span>
+                          <span style={{ fontWeight: 800, color: toNum(m.nota) >= 7 ? "#34d399" : toNum(m.nota) >= 5 ? "#fbbf24" : "#f87171" }}>{m.nota}/10</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Marcador real */}
+                  {!a.evaluado && (
+                    <div style={{ background: "rgba(2,8,23,.5)", borderRadius: 10, padding: 10, marginBottom: 8 }}>
+                      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 6 }}>Resultado real del partido:</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+                        <span style={{ fontSize: 11, color: "#cbd5e1" }}>{a.local}</span>
+                        <input type="number" inputMode="numeric" value={a.resultadoReal?.golesLocal ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, golesLocal: e.target.value } } : x))}
+                          style={{ width: 44, padding: "6px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 14, fontWeight: 800, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
+                        <span style={{ color: "#475569" }}>—</span>
+                        <input type="number" inputMode="numeric" value={a.resultadoReal?.golesVisita ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, golesVisita: e.target.value } } : x))}
+                          style={{ width: 44, padding: "6px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 14, fontWeight: 800, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
+                        <span style={{ fontSize: 11, color: "#cbd5e1" }}>{a.visitante}</span>
+                      </div>
+                      {/* Datos extra para mercados de tarjetas/córners */}
+                      <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ fontSize: 10, color: "#94a3b8" }}>🟨 Tarjetas</span>
+                          <input type="number" inputMode="numeric" value={a.resultadoReal?.tarjetas ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, tarjetas: e.target.value } } : x))}
+                            placeholder="—" style={{ width: 44, padding: "5px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 12, fontWeight: 700, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ fontSize: 10, color: "#94a3b8" }}>⛳ Córners</span>
+                          <input type="number" inputMode="numeric" value={a.resultadoReal?.corners ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, corners: e.target.value } } : x))}
+                            placeholder="—" style={{ width: 44, padding: "5px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 12, fontWeight: 700, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 9, color: "#475569", textAlign: "center", marginTop: 4 }}>Tarjetas y córners son opcionales — solo si tienes esos mercados calificados.</div>
+                      <button onClick={() => evaluarAnalisisIA(a)} disabled={evaluandoAnalisis === a.id}
+                        style={{ width: "100%", marginTop: 10, padding: "10px", borderRadius: 9, border: "1px solid rgba(99,102,241,.3)", background: "rgba(99,102,241,.12)", color: "#a5b4fc", fontSize: 12, fontWeight: 800, cursor: evaluandoAnalisis === a.id ? "wait" : "pointer" }}>
+                        {evaluandoAnalisis === a.id ? "⚙️ Evaluando..." : "🔍 Evaluar análisis con IA"}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Evaluación de la IA */}
+                  {a.evaluado && ev && (
+                    <div style={{ background: "rgba(99,102,241,.06)", border: `1px solid ${aciertoCol}40`, borderRadius: 10, padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: "#a5b4fc" }}>📊 EVALUACIÓN IA · {a.resultadoReal?.golesLocal}-{a.resultadoReal?.golesVisita}</span>
+                        <span style={{ fontSize: 11, fontWeight: 900, color: aciertoCol, textTransform: "uppercase" }}>Acierto {ev.aciertoGlobal}</span>
+                      </div>
+                      <p style={{ fontSize: 12, color: "#cbd5e1", margin: "0 0 8px", lineHeight: 1.5 }}>{ev.resumenEvaluacion}</p>
+                      {ev.mercadosEvaluados?.length > 0 && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 9, color: "#475569", marginBottom: 4 }}>Toca el ícono para corregir si la IA se equivocó:</div>
+                          {ev.mercadosEvaluados.map((m, i) => {
+                            const cycle = { acierto: "fallo", fallo: "neutro", neutro: "acierto" };
+                            const corregir = () => setAnalisisGuardados(prev => prev.map(x => {
+                              if (x.id !== a.id) return x;
+                              const me = x.evaluacion.mercadosEvaluados.map((mm, j) => j === i ? { ...mm, resultado: cycle[mm.resultado] || "acierto", corregidoManual: true } : mm);
+                              return { ...x, evaluacion: { ...x.evaluacion, mercadosEvaluados: me } };
+                            }));
+                            return (
+                              <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginBottom: 3 }}>
+                                <button onClick={corregir} title="Toca para corregir"
+                                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1 }}>
+                                  {m.resultado === "acierto" ? "✅" : m.resultado === "fallo" ? "❌" : "➖"}
+                                </button>
+                                <span style={{ color: "#cbd5e1", flex: 1 }}>{m.mercado} <span style={{ color: "#64748b" }}>({m.notaOriginal}/10)</span>{m.corregidoManual && <span style={{ color: "#fbbf24", fontSize: 9 }}> ✎</span>}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {ev.leccionAprendida && (
+                        <div style={{ background: "rgba(251,191,36,.08)", borderRadius: 8, padding: "8px 10px", marginTop: 6 }}>
+                          <span style={{ fontSize: 10, fontWeight: 800, color: "#fbbf24" }}>💡 LECCIÓN: </span>
+                          <span style={{ fontSize: 11, color: "#fde68a" }}>{ev.leccionAprendida}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {analisisGuardados.filter(a => a.evaluado).length > 0 && (
+              <div style={{ background: "rgba(52,211,153,.06)", border: "1px solid rgba(52,211,153,.2)", borderRadius: 12, padding: 12, marginTop: 8, fontSize: 11, color: "#6ee7b7", textAlign: "center" }}>
+                🧠 La IA ya está usando estas {analisisGuardados.filter(a => a.evaluado).length} lecciones en tus nuevos análisis del Mundial.
               </div>
             )}
           </div>
