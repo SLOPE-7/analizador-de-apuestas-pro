@@ -1140,31 +1140,33 @@ function buildGrupoContext(grupoCtx) {
 
 // Construye contexto de aprendizaje: lecciones de evaluaciones de análisis previos.
 function buildAprendizajeContext(analisisGuardados) {
-  const evaluados = (analisisGuardados || []).filter(a => a.evaluado && a.evaluacion);
-  if (!evaluados.length) return "";
+  // Usa las marcas manuales (✅/❌) que el usuario puso en cada mercado.
+  const conMarcas = (analisisGuardados || []).filter(a => (a.mercadosCalificados || []).some(m => m.marca === "acierto" || m.marca === "fallo"));
+  if (!conMarcas.length) return "";
 
-  let ctx = "\n\n🧠 LECCIONES DE TUS ANÁLISIS PREVIOS (aprende de tus aciertos y errores):";
-  // Conteo de aciertos por nivel de nota para detectar sesgos
-  let mercadosAcierto = 0, mercadosFallo = 0;
-  const lecciones = [];
-  evaluados.slice(0, 10).forEach(a => {
-    const ev = a.evaluacion;
-    (ev.mercadosEvaluados || []).forEach(m => {
-      if (m.resultado === "acierto") mercadosAcierto++;
-      else if (m.resultado === "fallo") mercadosFallo++;
+  let ctx = "\n\n🧠 REGISTRO DE TUS ANÁLISIS PREVIOS (aprende de aciertos y errores marcados por el usuario):";
+  // Detecta sesgos: ¿qué mercados con nota alta fallaron?
+  let acierto = 0, fallo = 0;
+  const fallosNotaAlta = [];
+  conMarcas.slice(0, 12).forEach(a => {
+    (a.mercadosCalificados || []).forEach(m => {
+      if (m.marca === "acierto") acierto++;
+      else if (m.marca === "fallo") {
+        fallo++;
+        if (toNum(m.nota) >= 7) fallosNotaAlta.push(`${m.mercado} (le diste ${m.nota}/10 y falló) en ${a.partido}`);
+      }
     });
-    if (ev.leccionAprendida) lecciones.push(`- ${a.partido}: ${ev.leccionAprendida}`);
   });
-  const total = mercadosAcierto + mercadosFallo;
+  const total = acierto + fallo;
   if (total > 0) {
-    const pct = Math.round((mercadosAcierto / total) * 100);
-    ctx += `\nTu tasa de acierto en mercados calificados: ${pct}% (${mercadosAcierto}/${total}).`;
-    if (pct < 50) ctx += " Estás fallando más de lo que aciertas — sé MÁS conservador con notas altas.";
+    const pct = Math.round((acierto / total) * 100);
+    ctx += `\nTasa de acierto histórica en mercados calificados: ${pct}% (${acierto}/${total}).`;
+    if (pct < 50) ctx += " Estás fallando más de lo que aciertas — sé MÁS conservador, baja las notas que pongas.";
   }
-  if (lecciones.length) {
-    ctx += "\nLecciones específicas a recordar:\n" + lecciones.slice(0, 6).join("\n");
+  if (fallosNotaAlta.length) {
+    ctx += "\n⚠️ Mercados que calificaste ALTO pero fallaron (no repitas el error):\n" + fallosNotaAlta.slice(0, 6).map(f => `- ${f}`).join("\n");
   }
-  ctx += "\nAplica estas lecciones: no repitas los errores de calificación que ya cometiste.";
+  ctx += "\nUsa este registro para calibrar mejor tus calificaciones en este análisis.";
   return ctx;
 }
 
@@ -1281,7 +1283,7 @@ export default function App() {
 
   // ── STATES ───────────────────────────────────────────────────────────────
   const [activeSport, setActiveSport] = useState(() => loadState(AIK, null)?.activeSport || "futbol");
-  const [modoMundial, setModoMundial] = useState(() => loadState(AIK, null)?.modoMundial || false);
+  const [modoMundial, setModoMundial] = useState(false);
   const [match, setMatch] = useState(() => loadState(AIK, null)?.match || emptyMatch());
   const [aiStatus, setAiStatus] = useState(() => loadState(AIK, null)?.aiResult ? "done" : "idle");
   const [aiResult, setAiResult] = useState(() => loadState(AIK, null)?.aiResult || null);
@@ -1304,9 +1306,7 @@ export default function App() {
   const [mundialRapido, setMundialRapido] = useState(false);
   const [gruposGuardados, setGruposGuardados] = useState(() => loadState(GLK, {}));   // { "A": {grupo, equipos, resultadosPrevios}, ... }
   const [analisisGuardados, setAnalisisGuardados] = useState(() => loadState(ANK, []));  // análisis completos para revisar tras el partido
-  const [evaluandoAnalisis, setEvaluandoAnalisis] = useState("");  // id del análisis que la IA está evaluando
   const [showGruposIO, setShowGruposIO] = useState(false);                            // panel de exportar/importar
-  const [grupoIOText, setGrupoIOText] = useState("");
   const [favoritos, setFavoritos] = useState(() => loadState(FK, []));
   const [equipos, setEquipos] = useState(() => loadState(EK, [])); // team profiles
   const [betDraft, setBetDraft] = useState(emptyBet());
@@ -1354,6 +1354,8 @@ export default function App() {
 
   // ── EFFECTS ───────────────────────────────────────────────────────────────
   useEffect(() => { setMounted(true); }, []);
+  // Restaurar modoMundial guardado DESPUÉS de montar (evita hydration mismatch con el servidor).
+  useEffect(() => { const saved = loadState(AIK, null)?.modoMundial; if (saved) setModoMundial(true); }, []);
   useEffect(() => { saveState(BK, bankroll); }, [bankroll]);
   useEffect(() => { saveState(HK, historial); }, [historial]);
   useEffect(() => { saveState(RK, reviews); }, [reviews]);
@@ -1454,34 +1456,50 @@ export default function App() {
   };
 
   const exportarGrupos = () => {
-    const txt = JSON.stringify(gruposGuardados);
-    setGrupoIOText(txt);
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(txt).then(
-        () => showToast("📋 Grupos copiados al portapapeles", "success"),
-        () => showToast("Copia el texto manualmente del cuadro", "error")
-      );
+    const claves = Object.keys(gruposGuardados);
+    if (!claves.length) { showToast("No hay grupos guardados para exportar", "error"); return; }
+    try {
+      const txt = JSON.stringify(gruposGuardados, null, 2);
+      const blob = new Blob([txt], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const fecha = new Date().toISOString().slice(0, 10);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `grupos-mundial-${fecha}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`📤 Archivo descargado (${claves.length} grupos)`, "success");
+    } catch (err) {
+      console.error("exportarGrupos:", err);
+      showToast("Error al exportar el archivo", "error");
     }
   };
 
-  const importarGrupos = () => {
-    try {
-      const parsed = JSON.parse(grupoIOText.trim());
-      if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Formato inválido");
-      const limpio = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (v && Array.isArray(v.equipos)) limpio[k.toUpperCase()] = { grupo: v.grupo || k, equipos: v.equipos, resultadosPrevios: v.resultadosPrevios || "" };
+  const importarGruposArchivo = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(String(e.target?.result || ""));
+        if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Formato inválido");
+        const limpio = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v && Array.isArray(v.equipos)) limpio[k.toUpperCase()] = { grupo: v.grupo || k, equipos: v.equipos, resultadosPrevios: v.resultadosPrevios || "" };
+        }
+        const n = Object.keys(limpio).length;
+        if (!n) throw new Error("No se encontraron grupos válidos");
+        setGruposGuardados(prev => ({ ...prev, ...limpio }));
+        showToast(`📥 ${n} grupo(s) importado(s) desde el archivo`, "success");
+        setShowGruposIO(false);
+      } catch (err) {
+        console.error("importarGruposArchivo:", err);
+        showToast("Archivo inválido. Usa uno exportado por la app.", "error");
       }
-      const n = Object.keys(limpio).length;
-      if (!n) throw new Error("No se encontraron grupos válidos");
-      setGruposGuardados(prev => ({ ...prev, ...limpio }));
-      showToast(`📥 ${n} grupo(s) importado(s)`, "success");
-      setGrupoIOText("");
-      setShowGruposIO(false);
-    } catch (err) {
-      console.error("importarGrupos:", err);
-      showToast("Texto inválido. Pega lo que exportaste antes.", "error");
-    }
+    };
+    reader.onerror = () => showToast("No se pudo leer el archivo", "error");
+    reader.readAsText(file);
   };
 
   const saveTicket = () => {
@@ -1705,47 +1723,6 @@ export default function App() {
       setLineAnalysis(extractJSON(text));
     } catch (err) { console.error("analyzeLines:", err); setLineAnalysis({ mercados: [], mejorApuesta: "Error al analizar." }); }
     finally { setAnalyzingLines(false); }
-  };
-
-  // Pide a la IA que evalúe un análisis guardado contra el resultado real del partido.
-  const evaluarAnalisisIA = async (registro) => {
-    const { golesLocal, golesVisita } = registro.resultadoReal || {};
-    if (golesLocal === "" || golesVisita === "") { showToast("Pon el marcador real primero", "error"); return; }
-    setEvaluandoAnalisis(registro.id);
-    try {
-      const mercadosTxt = (registro.mercadosCalificados || []).map(m => `- ${m.mercado}: ${m.nota}/10 (${m.comentario || ""})`).join("\n");
-      const tj = registro.resultadoReal?.tarjetas, co = registro.resultadoReal?.corners;
-      const extraReal = `${tj !== "" && tj != null ? `\nTOTAL DE TARJETAS: ${tj}` : ""}${co !== "" && co != null ? `\nTOTAL DE CÓRNERS: ${co}` : ""}`;
-      const prompt = `Eres un evaluador crítico de análisis de apuestas. Un análisis previo calificó varios mercados ANTES de este partido. Ahora sabemos el resultado real. Evalúa qué tan acertado fue cada calificación.
-
-PARTIDO: ${registro.partido}
-RESULTADO REAL: ${golesLocal}-${golesVisita}${extraReal}
-${registro.resultadoReal?.notas ? `NOTAS: ${registro.resultadoReal.notas}` : ""}
-
-PRONÓSTICO PREVIO: ${registro.pronostico || "N/A"}
-MEJOR APUESTA SUGERIDA: ${registro.mejorApuesta?.mercado || "N/A"} ${registro.mejorApuesta?.linea || ""}
-APUESTA A EVITAR: ${registro.apuestaEvitar?.mercado || "N/A"}
-
-MERCADOS CALIFICADOS (1-10) ANTES DEL PARTIDO:
-${mercadosTxt}
-
-Para cada mercado, determina si SE HABRÍA GANADO o PERDIDO según el resultado real ${golesLocal}-${golesVisita}, y si la nota alta/baja estuvo justificada. Sé honesto y crítico. Si un mercado (tarjetas, córners) necesita un dato que NO se proporcionó, márcalo como "neutro" y dilo en el comentario.
-
-Responde SOLO con JSON sin backticks:
-{"resumenEvaluacion":"qué acertó y qué falló el análisis en general","aciertoGlobal":"alto|medio|bajo","mercadosEvaluados":[{"mercado":"nombre","notaOriginal":8,"resultado":"acierto|fallo|neutro","comentario":"se ganaba o perdía y si la nota tuvo sentido"}],"mejorApuestaAcerto":true,"apuestaEvitarAcerto":true,"leccionAprendida":"qué debe ajustar el analista para futuros partidos similares"}`;
-      const resp = await fetch("/api/ai-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, max_tokens: 1500, useWebSearch: false, messages: [{ role: "user", content: prompt }] }) });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error?.message || `Error ${resp.status}`);
-      const text = (data.content || []).find(b => b.type === "text")?.text || "";
-      const evaluacion = extractJSON(text);
-      setAnalisisGuardados(prev => prev.map(a => a.id === registro.id ? { ...a, evaluacion, evaluado: true } : a));
-      showToast("✅ Evaluación completada", "success");
-    } catch (err) {
-      console.error("evaluarAnalisisIA:", err);
-      showToast("Error al evaluar. Intenta de nuevo.", "error");
-    } finally {
-      setEvaluandoAnalisis("");
-    }
   };
 
   const runAIAnalysis = async () => {
@@ -1997,7 +1974,7 @@ Responde SOLO con JSON sin backticks:
             {/* Logo */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
               <div style={{ width: isMobile ? 28 : 34, height: isMobile ? 28 : 34, flexShrink: 0, borderRadius: 10, background: sport.gradient, display: "flex", alignItems: "center", justifyContent: "center", fontSize: isMobile ? 15 : 18 }}>
-                {modoMundial ? "🏆" : sport.emoji}
+                {mounted && modoMundial ? "🏆" : sport.emoji}
               </div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 900, fontSize: isMobile ? 13 : 15, letterSpacing: "-.02em", color: "#e0e7ff" }}>
@@ -2385,24 +2362,22 @@ Responde SOLO con JSON sin backticks:
                       </div>
                     )}
 
-                    {/* Panel exportar / importar por texto */}
+                    {/* Panel exportar / importar por ARCHIVO */}
                     {showGruposIO && (
                       <div style={{ marginTop: 10, background: "rgba(15,23,42,.6)", border: "1px solid rgba(56,189,248,.2)", borderRadius: 10, padding: 10 }}>
-                        <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 6, lineHeight: 1.4 }}>
-                          <b style={{ color: "#38bdf8" }}>Exportar:</b> copia tus grupos a este cuadro y al portapapeles. <b style={{ color: "#38bdf8" }}>Importar:</b> pega aquí lo que copiaste en otro dispositivo y dale Importar.
+                        <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 8, lineHeight: 1.4 }}>
+                          <b style={{ color: "#38bdf8" }}>Exportar:</b> descarga un archivo con todos tus grupos. Guárdalo en Drive o mándatelo. <b style={{ color: "#38bdf8" }}>Importar:</b> en otro dispositivo, elige ese archivo y carga tus grupos.
                         </div>
-                        <textarea value={grupoIOText} onChange={e => setGrupoIOText(e.target.value)}
-                          placeholder="Aquí aparece el texto al exportar, o pega aquí para importar..."
-                          rows={3} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,.08)", background: "rgba(2,8,23,.7)", color: "#cbd5e1", fontSize: 10, fontFamily: "monospace", outline: "none", resize: "vertical", boxSizing: "border-box" }} />
-                        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                        <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={exportarGrupos}
-                            style={{ flex: 1, padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.1)", color: "#38bdf8", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
-                            📤 Exportar
+                            style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.1)", color: "#38bdf8", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                            📤 Descargar archivo
                           </button>
-                          <button onClick={importarGrupos}
-                            style={{ flex: 1, padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(52,211,153,.35)", background: "rgba(52,211,153,.1)", color: "#34d399", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
-                            📥 Importar
-                          </button>
+                          <label style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid rgba(52,211,153,.35)", background: "rgba(52,211,153,.1)", color: "#34d399", fontSize: 12, fontWeight: 800, cursor: "pointer", textAlign: "center", boxSizing: "border-box" }}>
+                            📥 Elegir archivo
+                            <input type="file" accept=".json,application/json" style={{ display: "none" }}
+                              onChange={e => { const f = e.target.files?.[0]; importarGruposArchivo(f); e.target.value = ""; }} />
+                          </label>
                         </div>
                       </div>
                     )}
@@ -4718,8 +4693,6 @@ Responde SOLO con JSON sin backticks:
             )}
 
             {analisisGuardados.map(a => {
-              const ev = a.evaluacion;
-              const aciertoCol = ev?.aciertoGlobal === "alto" ? "#34d399" : ev?.aciertoGlobal === "bajo" ? "#f87171" : "#fbbf24";
               return (
                 <div key={a.id} style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 14, padding: 14, marginBottom: 12, boxSizing: "border-box" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
@@ -4731,98 +4704,63 @@ Responde SOLO con JSON sin backticks:
                       style={{ background: "none", border: "none", color: "#64748b", fontSize: 16, cursor: "pointer", padding: 0 }}>×</button>
                   </div>
 
-                  {/* Mercados calificados guardados */}
-                  {a.mercadosCalificados?.length > 0 && (
-                    <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>Mercados calificados ({a.mercadosCalificados.length}):</div>
-                      {[...a.mercadosCalificados].sort((x, y) => toNum(y.nota) - toNum(x.nota)).map((m, i) => (
-                        <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11, color: "#cbd5e1", marginBottom: 3 }}>
-                          <span style={{ flex: 1 }}>{m.mercado}</span>
-                          <span style={{ fontWeight: 800, color: toNum(m.nota) >= 7 ? "#34d399" : toNum(m.nota) >= 5 ? "#fbbf24" : "#f87171" }}>{m.nota}/10</span>
-                        </div>
-                      ))}
+                  {/* Marcador real (opcional, solo como referencia visual) */}
+                  <div style={{ background: "rgba(2,8,23,.5)", borderRadius: 10, padding: 10, marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 6 }}>Resultado real (referencia):</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+                      <span style={{ fontSize: 11, color: "#cbd5e1" }}>{a.local}</span>
+                      <input type="number" inputMode="numeric" value={a.resultadoReal?.golesLocal ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, golesLocal: e.target.value } } : x))}
+                        style={{ width: 44, padding: "6px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 14, fontWeight: 800, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
+                      <span style={{ color: "#475569" }}>—</span>
+                      <input type="number" inputMode="numeric" value={a.resultadoReal?.golesVisita ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, golesVisita: e.target.value } } : x))}
+                        style={{ width: 44, padding: "6px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 14, fontWeight: 800, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
+                      <span style={{ fontSize: 11, color: "#cbd5e1" }}>{a.visitante}</span>
                     </div>
-                  )}
+                  </div>
 
-                  {/* Marcador real */}
-                  {!a.evaluado && (
-                    <div style={{ background: "rgba(2,8,23,.5)", borderRadius: 10, padding: 10, marginBottom: 8 }}>
-                      <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 6 }}>Resultado real del partido:</div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
-                        <span style={{ fontSize: 11, color: "#cbd5e1" }}>{a.local}</span>
-                        <input type="number" inputMode="numeric" value={a.resultadoReal?.golesLocal ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, golesLocal: e.target.value } } : x))}
-                          style={{ width: 44, padding: "6px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 14, fontWeight: 800, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
-                        <span style={{ color: "#475569" }}>—</span>
-                        <input type="number" inputMode="numeric" value={a.resultadoReal?.golesVisita ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, golesVisita: e.target.value } } : x))}
-                          style={{ width: 44, padding: "6px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 14, fontWeight: 800, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
-                        <span style={{ fontSize: 11, color: "#cbd5e1" }}>{a.visitante}</span>
+                  {/* Mercados calificados — marca cada uno a mano */}
+                  {a.mercadosCalificados?.length > 0 && (() => {
+                    const aciertos = a.mercadosCalificados.filter(m => m.marca === "acierto").length;
+                    const fallos = a.mercadosCalificados.filter(m => m.marca === "fallo").length;
+                    const totalMarc = aciertos + fallos;
+                    const pct = totalMarc > 0 ? Math.round((aciertos / totalMarc) * 100) : null;
+                    const ciclo = { sin: "acierto", acierto: "fallo", fallo: "neutro", neutro: "sin" };
+                    const marcar = (idx) => setAnalisisGuardados(prev => prev.map(x => {
+                      if (x.id !== a.id) return x;
+                      const mc = x.mercadosCalificados.map((mm, j) => j === idx ? { ...mm, marca: ciclo[mm.marca || "sin"] } : mm);
+                      return { ...x, mercadosCalificados: mc };
+                    }));
+                    return (
+                      <div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <span style={{ fontSize: 10, color: "#64748b" }}>Toca el ícono para marcar acierto/fallo:</span>
+                          {pct !== null && <span style={{ fontSize: 11, fontWeight: 800, color: pct >= 60 ? "#34d399" : pct >= 40 ? "#fbbf24" : "#f87171" }}>{pct}% ({aciertos}/{totalMarc})</span>}
+                        </div>
+                        {[...a.mercadosCalificados].map((m, i) => {
+                          // índice real en el array original (no el ordenado)
+                          const realIdx = a.mercadosCalificados.indexOf(m);
+                          const icon = m.marca === "acierto" ? "✅" : m.marca === "fallo" ? "❌" : m.marca === "neutro" ? "➖" : "⚪";
+                          return (
+                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, marginBottom: 4, padding: "3px 0" }}>
+                              <button onClick={() => marcar(realIdx)} title="Toca para marcar"
+                                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 15, padding: 0, lineHeight: 1 }}>
+                                {icon}
+                              </button>
+                              <span style={{ color: "#cbd5e1", flex: 1 }}>{m.mercado}</span>
+                              <span style={{ fontWeight: 800, color: toNum(m.nota) >= 7 ? "#34d399" : toNum(m.nota) >= 5 ? "#fbbf24" : "#f87171" }}>{m.nota}/10</span>
+                            </div>
+                          );
+                        })}
                       </div>
-                      {/* Datos extra para mercados de tarjetas/córners */}
-                      <div style={{ display: "flex", gap: 8, marginTop: 10, justifyContent: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <span style={{ fontSize: 10, color: "#94a3b8" }}>🟨 Tarjetas</span>
-                          <input type="number" inputMode="numeric" value={a.resultadoReal?.tarjetas ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, tarjetas: e.target.value } } : x))}
-                            placeholder="—" style={{ width: 44, padding: "5px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 12, fontWeight: 700, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
-                        </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <span style={{ fontSize: 10, color: "#94a3b8" }}>⛳ Córners</span>
-                          <input type="number" inputMode="numeric" value={a.resultadoReal?.corners ?? ""} onChange={e => setAnalisisGuardados(prev => prev.map(x => x.id === a.id ? { ...x, resultadoReal: { ...x.resultadoReal, corners: e.target.value } } : x))}
-                            placeholder="—" style={{ width: 44, padding: "5px", borderRadius: 7, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 12, fontWeight: 700, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 9, color: "#475569", textAlign: "center", marginTop: 4 }}>Tarjetas y córners son opcionales — solo si tienes esos mercados calificados.</div>
-                      <button onClick={() => evaluarAnalisisIA(a)} disabled={evaluandoAnalisis === a.id}
-                        style={{ width: "100%", marginTop: 10, padding: "10px", borderRadius: 9, border: "1px solid rgba(99,102,241,.3)", background: "rgba(99,102,241,.12)", color: "#a5b4fc", fontSize: 12, fontWeight: 800, cursor: evaluandoAnalisis === a.id ? "wait" : "pointer" }}>
-                        {evaluandoAnalisis === a.id ? "⚙️ Evaluando..." : "🔍 Evaluar análisis con IA"}
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Evaluación de la IA */}
-                  {a.evaluado && ev && (
-                    <div style={{ background: "rgba(99,102,241,.06)", border: `1px solid ${aciertoCol}40`, borderRadius: 10, padding: 12 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <span style={{ fontSize: 11, fontWeight: 800, color: "#a5b4fc" }}>📊 EVALUACIÓN IA · {a.resultadoReal?.golesLocal}-{a.resultadoReal?.golesVisita}</span>
-                        <span style={{ fontSize: 11, fontWeight: 900, color: aciertoCol, textTransform: "uppercase" }}>Acierto {ev.aciertoGlobal}</span>
-                      </div>
-                      <p style={{ fontSize: 12, color: "#cbd5e1", margin: "0 0 8px", lineHeight: 1.5 }}>{ev.resumenEvaluacion}</p>
-                      {ev.mercadosEvaluados?.length > 0 && (
-                        <div style={{ marginBottom: 8 }}>
-                          <div style={{ fontSize: 9, color: "#475569", marginBottom: 4 }}>Toca el ícono para corregir si la IA se equivocó:</div>
-                          {ev.mercadosEvaluados.map((m, i) => {
-                            const cycle = { acierto: "fallo", fallo: "neutro", neutro: "acierto" };
-                            const corregir = () => setAnalisisGuardados(prev => prev.map(x => {
-                              if (x.id !== a.id) return x;
-                              const me = x.evaluacion.mercadosEvaluados.map((mm, j) => j === i ? { ...mm, resultado: cycle[mm.resultado] || "acierto", corregidoManual: true } : mm);
-                              return { ...x, evaluacion: { ...x.evaluacion, mercadosEvaluados: me } };
-                            }));
-                            return (
-                              <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginBottom: 3 }}>
-                                <button onClick={corregir} title="Toca para corregir"
-                                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1 }}>
-                                  {m.resultado === "acierto" ? "✅" : m.resultado === "fallo" ? "❌" : "➖"}
-                                </button>
-                                <span style={{ color: "#cbd5e1", flex: 1 }}>{m.mercado} <span style={{ color: "#64748b" }}>({m.notaOriginal}/10)</span>{m.corregidoManual && <span style={{ color: "#fbbf24", fontSize: 9 }}> ✎</span>}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                      {ev.leccionAprendida && (
-                        <div style={{ background: "rgba(251,191,36,.08)", borderRadius: 8, padding: "8px 10px", marginTop: 6 }}>
-                          <span style={{ fontSize: 10, fontWeight: 800, color: "#fbbf24" }}>💡 LECCIÓN: </span>
-                          <span style={{ fontSize: 11, color: "#fde68a" }}>{ev.leccionAprendida}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               );
             })}
 
-            {analisisGuardados.filter(a => a.evaluado).length > 0 && (
+            {analisisGuardados.some(a => a.mercadosCalificados?.some(m => m.marca)) && (
               <div style={{ background: "rgba(52,211,153,.06)", border: "1px solid rgba(52,211,153,.2)", borderRadius: 12, padding: 12, marginTop: 8, fontSize: 11, color: "#6ee7b7", textAlign: "center" }}>
-                🧠 La IA ya está usando estas {analisisGuardados.filter(a => a.evaluado).length} lecciones en tus nuevos análisis del Mundial.
+                📊 Llevas registro de aciertos en {analisisGuardados.filter(a => a.mercadosCalificados?.some(m => m.marca)).length} análisis. Útil para ver qué mercados te funcionan mejor.
               </div>
             )}
           </div>
