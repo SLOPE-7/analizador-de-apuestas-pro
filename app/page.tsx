@@ -1282,13 +1282,13 @@ export default function App() {
   const isMobile = useIsMobile();
 
   // ── STATES ───────────────────────────────────────────────────────────────
-  const [activeSport, setActiveSport] = useState(() => loadState(AIK, null)?.activeSport || "futbol");
+  const [activeSport, setActiveSport] = useState("futbol");
   const [modoMundial, setModoMundial] = useState(false);
-  const [match, setMatch] = useState(() => loadState(AIK, null)?.match || emptyMatch());
-  const [aiStatus, setAiStatus] = useState(() => loadState(AIK, null)?.aiResult ? "done" : "idle");
-  const [aiResult, setAiResult] = useState(() => loadState(AIK, null)?.aiResult || null);
+  const [match, setMatch] = useState(emptyMatch());
+  const [aiStatus, setAiStatus] = useState("idle");
+  const [aiResult, setAiResult] = useState(null);
   const [aiError, setAiError] = useState("");
-  const [picks, setPicks] = useState(() => loadState(AIK, null)?.picks || []);
+  const [picks, setPicks] = useState([]);
   const [marketFilter, setMarketFilter] = useState("Todos");
   const [activeTab, setActiveTab] = useState("analisis");
   const [ticketStake, setTicketStake] = useState("10");
@@ -1354,8 +1354,16 @@ export default function App() {
 
   // ── EFFECTS ───────────────────────────────────────────────────────────────
   useEffect(() => { setMounted(true); }, []);
-  // Restaurar modoMundial guardado DESPUÉS de montar (evita hydration mismatch con el servidor).
-  useEffect(() => { const saved = loadState(AIK, null)?.modoMundial; if (saved) setModoMundial(true); }, []);
+  // Restaurar último análisis guardado DESPUÉS de montar (evita hydration mismatch con el servidor).
+  useEffect(() => {
+    const saved = loadState(AIK, null);
+    if (!saved) return;
+    if (saved.activeSport) setActiveSport(saved.activeSport);
+    if (saved.modoMundial) setModoMundial(true);
+    if (saved.match) setMatch(saved.match);
+    if (saved.aiResult) { setAiResult(saved.aiResult); setAiStatus("done"); }
+    if (saved.picks) setPicks(saved.picks);
+  }, []);
   useEffect(() => { saveState(BK, bankroll); }, [bankroll]);
   useEffect(() => { saveState(HK, historial); }, [historial]);
   useEffect(() => { saveState(RK, reviews); }, [reviews]);
@@ -1456,24 +1464,29 @@ export default function App() {
   };
 
   const exportarGrupos = () => {
-    const claves = Object.keys(gruposGuardados);
-    if (!claves.length) { showToast("No hay grupos guardados para exportar", "error"); return; }
     try {
-      const txt = JSON.stringify(gruposGuardados, null, 2);
+      // Respaldo COMPLETO: todas las claves de la app
+      const claves = [SK, BK, HK, RK, JK, GK, GLK, ANK, FK, AIK, EK];
+      const respaldo = { _tipo: "betanalyzer_backup", _fecha: new Date().toISOString(), datos: {} };
+      claves.forEach(k => {
+        const v = loadState(k, null);
+        if (v !== null) respaldo.datos[k] = v;
+      });
+      const txt = JSON.stringify(respaldo, null, 2);
       const blob = new Blob([txt], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const fecha = new Date().toISOString().slice(0, 10);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `grupos-mundial-${fecha}.json`;
+      a.download = `betanalyzer-respaldo-${fecha}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      showToast(`📤 Archivo descargado (${claves.length} grupos)`, "success");
+      showToast("📤 Respaldo completo descargado", "success");
     } catch (err) {
       console.error("exportarGrupos:", err);
-      showToast("Error al exportar el archivo", "error");
+      showToast("Error al exportar el respaldo", "error");
     }
   };
 
@@ -1483,16 +1496,22 @@ export default function App() {
     reader.onload = (e) => {
       try {
         const parsed = JSON.parse(String(e.target?.result || ""));
-        if (typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Formato inválido");
-        const limpio = {};
-        for (const [k, v] of Object.entries(parsed)) {
-          if (v && Array.isArray(v.equipos)) limpio[k.toUpperCase()] = { grupo: v.grupo || k, equipos: v.equipos, resultadosPrevios: v.resultadosPrevios || "" };
+        // Soporta respaldo completo nuevo Y archivos viejos de solo-grupos
+        let datos;
+        if (parsed && parsed._tipo === "betanalyzer_backup" && parsed.datos) {
+          datos = parsed.datos;
+        } else if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          // Archivo viejo (solo grupos): lo metemos bajo la clave de grupos
+          datos = { [GLK]: parsed };
+        } else {
+          throw new Error("Formato inválido");
         }
-        const n = Object.keys(limpio).length;
-        if (!n) throw new Error("No se encontraron grupos válidos");
-        setGruposGuardados(prev => ({ ...prev, ...limpio }));
-        showToast(`📥 ${n} grupo(s) importado(s) desde el archivo`, "success");
+        if (!confirm("Esto REEMPLAZARÁ todos los datos de este dispositivo con los del archivo. ¿Continuar?")) return;
+        // Escribir cada clave en storage y refrescar
+        Object.entries(datos).forEach(([k, v]) => { try { saveState(k, v); } catch (e) { console.error("import key", k, e); } });
+        showToast("📥 Respaldo importado. Recargando…", "success");
         setShowGruposIO(false);
+        setTimeout(() => window.location.reload(), 900);
       } catch (err) {
         console.error("importarGruposArchivo:", err);
         showToast("Archivo inválido. Usa uno exportado por la app.", "error");
@@ -1590,16 +1609,24 @@ export default function App() {
     reader.onload = (e) => {
       try {
         const data = JSON.parse(e.target.result);
+        if (data.activeSport) setActiveSport(data.activeSport);
+        if (data.modoMundial) setModoMundial(true);
         if (data.match) setMatch(data.match);
         if (data.picks) setPicks(data.picks);
+        if (data.aiResult) { setAiResult(data.aiResult); setAiStatus("done"); }
+        if (typeof data.userNote === "string") setUserNote(data.userNote);
+        if (data.datosExtra) setDatosExtra(d => ({ ...d, ...data.datosExtra }));
+        if (typeof data.matchDateTime === "string") setMatchDateTime(data.matchDateTime);
+        if (typeof data.useWebSearch === "boolean") setUseWebSearch(data.useWebSearch);
+        if (data.grupoCtx) setGrupoCtx(data.grupoCtx);
+        // Compatibilidad con respaldos viejos que traían todo
         if (data.bankroll) setBankroll(data.bankroll);
         if (data.historial) setHistorial(data.historial);
         if (data.reviews) setReviews(data.reviews);
-        if (data.aiResult) { setAiResult(data.aiResult); setAiStatus("done"); }
-        if (data.activeSport) setActiveSport(data.activeSport);
         if (Array.isArray(data.favoritos)) setFavoritos(data.favoritos);
-        showToast("✅ Datos importados", "success");
-      } catch { showToast("Error al importar", "error"); }
+        setActiveTab("analisis");
+        showToast("📂 Análisis cargado", "success");
+      } catch (err) { console.error("importData:", err); showToast("Archivo inválido", "error"); }
     };
     reader.readAsText(file);
   };
@@ -1789,26 +1816,43 @@ export default function App() {
         else if (cleaned[ci] === "}") { depth--; if (depth === 0) { end = ci; break; } }
       }
       let jsonStr = end > -1 ? cleaned.slice(start, end + 1) : cleaned.slice(start);
-      if (end === -1) {
-        // Respuesta truncada: limpiamos el fragmento incompleto del final.
-        // 1) Quitar un objeto o cadena a medio escribir al final.
-        jsonStr = jsonStr.replace(/,?\s*\{[^{}]*$/, "").replace(/,?\s*"[^"]*$/, "");
-        // 2) Si quedó una cadena abierta (nº impar de comillas sin escapar), cerrarla.
-        const quotes = (jsonStr.match(/(?<!\\)"/g) || []).length;
-        if (quotes % 2 !== 0) jsonStr += '"';
-        // 3) Quitar coma colgante antes de cerrar.
-        jsonStr = jsonStr.replace(/,\s*$/, "");
-        // 4) Balancear corchetes y llaves.
-        const ab = (jsonStr.match(/\[/g)||[]).length - (jsonStr.match(/\]/g)||[]).length;
-        const ob = (jsonStr.match(/\{/g)||[]).length - (jsonStr.match(/\}/g)||[]).length;
-        for (let i=0;i<ab;i++) jsonStr+="]";
-        for (let i=0;i<ob;i++) jsonStr+="}";
+      let parsed = null;
+      // Intento directo
+      try { parsed = JSON.parse(jsonStr); } catch { parsed = null; }
+      // Si falló (truncado), recuperación progresiva: cerrar y, si no, ir recortando el final.
+      if (!parsed) {
+        const intentarCerrar = (s) => {
+          let str = s;
+          // cerrar cadena abierta
+          const quotes = (str.match(/(?<!\\)"/g) || []).length;
+          if (quotes % 2 !== 0) str += '"';
+          // quitar coma/fragmento colgante
+          str = str.replace(/,\s*$/, "").replace(/:\s*$/, ":null").replace(/,\s*([}\]])/g, "$1");
+          // balancear
+          const ab = (str.match(/\[/g)||[]).length - (str.match(/\]/g)||[]).length;
+          const ob = (str.match(/\{/g)||[]).length - (str.match(/\}/g)||[]).length;
+          for (let i=0;i<Math.max(0,ab);i++) str+="]";
+          for (let i=0;i<Math.max(0,ob);i++) str+="}";
+          return str;
+        };
+        // Primero intenta cerrar tal cual
+        try { parsed = JSON.parse(intentarCerrar(jsonStr)); } catch { parsed = null; }
+        // Si aún falla, recorta el último elemento incompleto y reintenta, hasta 40 veces
+        if (!parsed) {
+          let work = jsonStr;
+          for (let intento = 0; intento < 40 && !parsed; intento++) {
+            // recorta hasta la última coma de nivel superior o el último cierre válido
+            const lastComma = work.lastIndexOf(",");
+            const lastBrace = Math.max(work.lastIndexOf("}"), work.lastIndexOf("]"));
+            const cut = Math.max(lastComma, lastBrace);
+            if (cut <= 0) break;
+            work = work.slice(0, cut);
+            try { parsed = JSON.parse(intentarCerrar(work)); } catch { parsed = null; }
+          }
+        }
       }
-      let parsed;
-      try {
-        parsed = JSON.parse(jsonStr);
-      } catch (parseErr) {
-        console.error("JSON truncado irrecuperable:", parseErr, jsonStr.slice(-200));
+      if (!parsed) {
+        console.error("JSON irrecuperable:", jsonStr.slice(-200));
         throw new Error("La IA devolvió una respuesta incompleta. Prueba el modo Rápido o vuelve a intentar.");
       }
       setAiResult(parsed);
@@ -1841,13 +1885,21 @@ export default function App() {
   };
 
   const exportData = () => {
-    const data = { match, picks, bankroll, historial, reviews, jornadas, favoritos, aiResult, activeSport, exportedAt: new Date().toISOString() };
+    const data = {
+      _tipo: "analisis_partido",
+      _fecha: new Date().toISOString(),
+      match, picks, aiResult, activeSport, modoMundial,
+      userNote, datosExtra, matchDateTime, useWebSearch,
+      grupoCtx: modoMundial ? grupoCtx : null,
+    };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url;
-    const matchName = match.local && match.visitante ? `${match.local}_vs_${match.visitante}`.replace(/[^a-zA-Z0-9_áéíóúÁÉÍÓÚüÜñÑ-]/g, "_").slice(0, 50) : "apuestas";
-    const modo = useWebSearch ? "IA_Web" : "IA";
-    a.download = `${matchName}_${modo}.json`; a.click(); URL.revokeObjectURL(url);
+    const matchName = match.local && match.visitante ? `${match.local}_vs_${match.visitante}`.replace(/[^a-zA-Z0-9_áéíóúÁÉÍÓÚüÜñÑ-]/g, "_").slice(0, 50) : "analisis";
+    a.download = `${matchName}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(aiResult ? "⬇️ Análisis del partido descargado" : "⬇️ Datos del partido guardados", "success");
   };
 
   const currentFilters = MARKET_FILTERS_BY_SPORT[activeSport] || MARKET_FILTERS_BY_SPORT.futbol;
@@ -2126,7 +2178,7 @@ export default function App() {
                   </div>
                 ))}
               </div>
-              {match.oddLocal && match.oddVisit && (
+              {mounted && match.oddLocal && match.oddVisit && (
                 <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {[
                     { label: match.local || "Local", p: impliedProb(toNum(match.oddLocal)), color: "#34d399" },
@@ -2314,13 +2366,14 @@ export default function App() {
                       </select>
                     </div>
                     <div style={{ fontSize: 9, color: "#64748b", marginBottom: 8 }}>Elige un grupo y se cargan los 4 equipos. Anota PJ, puntos y goles — se guardan solos. El ✓ marca grupos con datos guardados.</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.7fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr)", gap: 4, fontSize: 9, color: "#475569", fontWeight: 700, marginBottom: 4, paddingLeft: 4 }}>
-                      <span>Equipo</span><span style={{ textAlign: "center" }}>PJ</span><span style={{ textAlign: "center" }}>Pts</span><span style={{ textAlign: "center" }}>GF</span><span style={{ textAlign: "center" }}>GC</span>
+                    <div style={{ display: "grid", gridTemplateColumns: "16px minmax(0,1.7fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr)", gap: 4, fontSize: 9, color: "#475569", fontWeight: 700, marginBottom: 4, paddingLeft: 4 }}>
+                      <span style={{ textAlign: "center" }}>#</span><span>Equipo</span><span style={{ textAlign: "center" }}>PJ</span><span style={{ textAlign: "center" }}>Pts</span><span style={{ textAlign: "center" }}>GF</span><span style={{ textAlign: "center" }}>GC</span>
                     </div>
                     {grupoCtx.equipos.map((eq, idx) => (
-                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "minmax(0,1.7fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr)", gap: 4, marginBottom: 4 }}>
+                      <div key={idx} style={{ display: "grid", gridTemplateColumns: "16px minmax(0,1.7fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr) minmax(0,.55fr)", gap: 4, marginBottom: 4, alignItems: "center" }}>
+                        <span style={{ fontSize: 10, fontWeight: 800, textAlign: "center", color: idx < 2 ? "#34d399" : "#475569" }}>{idx + 1}</span>
                         <input value={eq.nombre} onChange={e => setGrupoCtx(c => { const eqs = [...c.equipos]; eqs[idx] = { ...eqs[idx], nombre: e.target.value }; return { ...c, equipos: eqs }; })}
-                          placeholder={`Equipo ${idx + 1}`} style={{ width: "100%", minWidth: 0, boxSizing: "border-box", padding: "5px 6px", borderRadius: 7, border: "1px solid rgba(255,255,255,.08)", background: "rgba(15,23,42,.7)", color: "#e0e7ff", fontSize: 11, outline: "none" }} />
+                          placeholder={`Equipo ${idx + 1}`} style={{ width: "100%", minWidth: 0, boxSizing: "border-box", padding: "5px 6px", borderRadius: 7, border: `1px solid ${idx < 2 ? "rgba(52,211,153,.25)" : "rgba(255,255,255,.08)"}`, background: "rgba(15,23,42,.7)", color: "#e0e7ff", fontSize: 11, outline: "none" }} />
                         {["pj", "pts", "gf", "gc"].map(f => (
                           <input key={f} type="number" inputMode="numeric" value={eq[f]} onChange={e => setGrupoCtx(c => { const eqs = [...c.equipos]; eqs[idx] = { ...eqs[idx], [f]: e.target.value }; return { ...c, equipos: eqs }; })}
                             style={{ width: "100%", minWidth: 0, boxSizing: "border-box", padding: "5px 2px", borderRadius: 7, border: "1px solid rgba(255,255,255,.08)", background: "rgba(15,23,42,.7)", color: "#cbd5e1", fontSize: 11, textAlign: "center", outline: "none" }} />
@@ -2331,6 +2384,21 @@ export default function App() {
                       placeholder="Resultados previos del grupo (ej: J1: Argentina 2-1 Islandia, Portugal 0-0 Nigeria)"
                       rows={2} style={{ width: "100%", marginTop: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,.08)", background: "rgba(15,23,42,.7)", color: "#cbd5e1", fontSize: 11, outline: "none", resize: "vertical", boxSizing: "border-box" }} />
 
+                    {/* Ordenar tabla por puntos y diferencia de goles */}
+                    <button onClick={() => setGrupoCtx(c => {
+                      const ordenados = [...c.equipos].sort((a, b) => {
+                        const ptsA = toNum(a.pts), ptsB = toNum(b.pts);
+                        if (ptsB !== ptsA) return ptsB - ptsA;
+                        const difA = toNum(a.gf) - toNum(a.gc), difB = toNum(b.gf) - toNum(b.gc);
+                        if (difB !== difA) return difB - difA;
+                        return toNum(b.gf) - toNum(a.gf);
+                      });
+                      return { ...c, equipos: ordenados };
+                    })}
+                      style={{ width: "100%", marginTop: 8, padding: "8px 12px", borderRadius: 9, border: "1px solid rgba(251,191,36,.3)", background: "rgba(251,191,36,.08)", color: "#fbbf24", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                      ↕️ Ordenar tabla (puntos · diferencia de goles)
+                    </button>
+
                     {/* Guardar / cargar grupos */}
                     <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
                       <button onClick={guardarGrupoActual}
@@ -2339,7 +2407,7 @@ export default function App() {
                       </button>
                       <button onClick={() => setShowGruposIO(v => !v)}
                         style={{ padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.08)", color: "#38bdf8", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
-                        ↹ Exportar / Importar
+                        ↹ Respaldo / Restaurar
                       </button>
                     </div>
 
@@ -2366,15 +2434,15 @@ export default function App() {
                     {showGruposIO && (
                       <div style={{ marginTop: 10, background: "rgba(15,23,42,.6)", border: "1px solid rgba(56,189,248,.2)", borderRadius: 10, padding: 10 }}>
                         <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 8, lineHeight: 1.4 }}>
-                          <b style={{ color: "#38bdf8" }}>Exportar:</b> descarga un archivo con todos tus grupos. Guárdalo en Drive o mándatelo. <b style={{ color: "#38bdf8" }}>Importar:</b> en otro dispositivo, elige ese archivo y carga tus grupos.
+                          <b style={{ color: "#38bdf8" }}>Respaldo completo:</b> exporta TODO (grupos, análisis, historial, banca) a un archivo. Guárdalo en Drive o mándatelo. Al importar en otro dispositivo, <b style={{ color: "#fbbf24" }}>reemplaza</b> todos los datos con los del archivo.
                         </div>
                         <div style={{ display: "flex", gap: 6 }}>
                           <button onClick={exportarGrupos}
                             style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.1)", color: "#38bdf8", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-                            📤 Descargar archivo
+                            📤 Descargar respaldo
                           </button>
                           <label style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid rgba(52,211,153,.35)", background: "rgba(52,211,153,.1)", color: "#34d399", fontSize: 12, fontWeight: 800, cursor: "pointer", textAlign: "center", boxSizing: "border-box" }}>
-                            📥 Elegir archivo
+                            📥 Restaurar archivo
                             <input type="file" accept=".json,application/json" style={{ display: "none" }}
                               onChange={e => { const f = e.target.files?.[0]; importarGruposArchivo(f); e.target.value = ""; }} />
                           </label>
@@ -2393,7 +2461,8 @@ export default function App() {
               </div>
               <textarea
                 value={userNote}
-                onChange={e => setUserNote(e.target.value)}
+                onChange={e => { setUserNote(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.max(e.target.scrollHeight, 56) + "px"; }}
+                ref={el => { if (el) { el.style.height = "auto"; el.style.height = Math.max(el.scrollHeight, 56) + "px"; } }}
                 placeholder={
                   modoMundial
                     ? "Ej: Francia sin Mbappé, España necesita ganar para clasificar, historial de tarjetas altas..."
@@ -2404,7 +2473,7 @@ export default function App() {
                     : "Ej: Arsenal sin Saka (lesionado), PSG ya clasificado puede rotar, es una final = partido cerrado..."
                 }
                 rows={2}
-                style={{ width: "100%", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(99,102,241,.2)", background: "rgba(15,23,42,.6)", color: "#e0e7ff", fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", boxSizing: "border-box" }}
+                style={{ width: "100%", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(99,102,241,.2)", background: "rgba(15,23,42,.6)", color: "#e0e7ff", fontSize: 13, fontFamily: "inherit", resize: "none", overflow: "hidden", minHeight: 56, outline: "none", boxSizing: "border-box" }}
               />
               <div style={{ marginTop: 6, fontSize: 11, color: "#334155" }}>
                 {activeSport === "mlb"
@@ -4780,3 +4849,4 @@ export default function App() {
     </div>
   );
 }
+
