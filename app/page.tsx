@@ -285,16 +285,6 @@ const SPORTS = {
   },
 };
 
-function detectSport(match) {
-  const text = `${match.local} ${match.visitante} ${match.liga}`.toLowerCase();
-  // MLB keywords
-  const mlbTeams = ["yankees","red sox","dodgers","cubs","giants","astros","braves","mets","padres","cardinals","phillies","rangers","angels","athletics","mariners","twins","tigers","white sox","royals","guardians","orioles","rays","blue jays","pirates","reds","brewers","rockies","diamondbacks","marlins","nationals"];
-  const nbaTeams = ["lakers","celtics","bulls","warriors","heat","nets","knicks","bucks","suns","clippers","nuggets","76ers","raptors","mavericks","jazz","pelicans","grizzlies","rockets","thunder","trail blazers","kings","timberwolves","hornets","pistons","pacers","hawks","magic","wizards","cavaliers","spurs"];
-  if (mlbTeams.some(t => text.includes(t)) || text.includes("mlb") || text.includes("béisbol") || text.includes("baseball")) return "mlb";
-  if (nbaTeams.some(t => text.includes(t)) || text.includes("nba") || text.includes("basketball") || text.includes("baloncesto")) return "nba";
-  return "futbol";
-}
-
 function buildMLBPrompt(match, feedbackCtx = "") {
   const { local, visitante, oddLocal, oddVisit, liga } = match;
   return `Eres un analista deportivo profesional especializado en MLB. Actúas como un analista de alto nivel que busca VALUE BETS y ventajas que el mercado subestima.${feedbackCtx}
@@ -900,19 +890,32 @@ ANALIZA OBLIGATORIAMENTE:
    - Condiciones climáticas del estadio
    - Altitud si aplica
 
+9. ESTILO DE JUEGO → MERCADOS (CRÍTICO PARA EL VALUE):
+   Conecta el estilo REAL de cada selección con los mercados concretos. No basta decir "juega bien"; traduce el estilo a apuestas:
+   - ESTILO OFENSIVO/VERTICAL (mucha posesión rival forzada, presión alta, transiciones rápidas) → favorece Over goles, Over córners, Ambos marcan. Ej: selecciones que atacan con laterales profundos generan muchos córners.
+   - ESTILO DEFENSIVO/REACTIVO (bloque bajo, contraataque, repliegue) → favorece Under goles, Portería a cero del rival fuerte, menos córners. Suele subir tarjetas (faltas tácticas).
+   - JUEGO FÍSICO/TRABADO (mucha disputa, faltas, duelos) → Over tarjetas, posible Under goles, penalti más probable.
+   - DESEQUILIBRIO DE NIVEL (favorito claro vs débil que se encierra) → el débil genera córners a favor del grande, pero el grande puede no concretar (cuidado con Over 2.5 inflado).
+   - Cruza SIEMPRE el estilo del local contra el del visitante: dos equipos ofensivos = partido abierto (Over); ofensivo vs defensivo = depende de quién imponga ritmo; dos defensivos = Under casi seguro.
+
+10. INFLUENCIA DE LA HINCHADA Y LOCALÍA (especial Mundial 2026):
+   - SEDE LOCAL REAL: México, Estados Unidos y Canadá juegan EN CASA este Mundial. La hinchada masiva a favor sube su rendimiento, presiona al árbitro (más faltas pitadas a favor, posible penalti) y puede intimidar al rival. Pondera esto en 1x2 y en tarjetas del rival.
+   - PRESIÓN INVERSA: una hinchada local muy exigente también puede generar ansiedad en el equipo local si el partido se complica (ej: anfitrión que necesita ganar). Considera ambos lados.
+   - NEUTRALIDAD: en partidos sin local real, identifica qué afición viajó más (sudamericanos y mexicanos llenan estadios) y cómo afecta el ambiente.
+
 MERCADOS (usa nombres exactos de Hondubet):
 "1x2" | "Doble oportunidad" | "Empate no apuesta" | "Hándicap asiático" | "Total de goles" Over/Under ⭐ | "1ª mitad - 1x2" | "1ª mitad - total" | "Ambos equipos marcan" | "Total tiros de esquina" | "Total de tarjetas" | "Portería a cero" | "Penalti en el encuentro"
 
-9. CALIFICA CADA MERCADO DE 1 A 10:
+11. CALIFICA CADA MERCADO DE 1 A 10:
    Evalúa el valor de cada mercado disponible (1 = sin valor, evitar; 10 = valor máximo). No solo el que vas a recomendar.
 
-10. DETECTA TRAMPAS DEL MERCADO:
+12. DETECTA TRAMPAS DEL MERCADO:
    - Favoritos sobrevalorados (cuota muy baja para el riesgo real)
    - Equipos infravalorados por narrativa
    - Narrativas falsas que infla el público
    - Exceso de confianza pública en un resultado
 
-11. MEJOR APUESTA Y APUESTA A EVITAR:
+13. MEJOR APUESTA Y APUESTA A EVITAR:
    - Identifica LA mejor apuesta del partido (la de mayor valor real)
    - Identifica explícitamente qué apuesta EVITAR (trampa o sin valor)
 
@@ -920,7 +923,7 @@ MERCADOS (usa nombres exactos de Hondubet):
 Si en fase de grupos NO tienes la tabla del grupo ni los resultados previos, y son necesarios para evaluar las necesidades de clasificación, NO inventes. En el JSON, marca "datosFaltantes" con la lista específica de lo que necesitas del usuario, y BAJA la confianza de todos los picks a máximo 60%. Solo da confianza alta cuando el contexto del grupo esté completo.
 
 JSON puro sin backticks:
-{"resumen":"contexto completo del partido y fase","estadoGrupo":"resumen de la tabla: quién lidera, quién está obligado, quién puede rotar (o vacío si no hay datos)","condicionPartido":"qué necesita cada selección en esta fase específica","necesidadLocal":"qué resultado necesita el local y su urgencia","necesidadVisitante":"qué resultado necesita el visitante y su urgencia","formaLocal":"últimos 5 con goles - diferenciando competitivos vs amistosos","formaVisitante":"últimos 5 con goles - diferenciando competitivos vs amistosos","h2hMundiales":"historial específico en Mundiales y torneos mayores","rotacionesEsperadas":"qué jugadores pueden rotar si algún equipo ya clasificó","fatigaAcumulada":"análisis de fatiga por partidos jugados en el torneo","arbitro":{"nombre":"","tarjetasPromedio":"","tendencia":"","impactoMercados":""},"tactico":"sistemas y matchup táctico","factoresOcultos":"presión mediática/clima/altitud/contexto emocional","marcadorEsperado":{"local":1,"visitante":0,"totalGoles":1.8,"descripcion":"proyección considerando fase y necesidades"},"comparacionH2H":[{"categoria":"Nivel FIFA","local":"","visitante":"","ventaja":""},{"categoria":"Forma reciente","local":"","visitante":"","ventaja":""},{"categoria":"Motivación","local":"","visitante":"","ventaja":""},{"categoria":"Fatiga","local":"","visitante":"","ventaja":""},{"categoria":"Lesiones","local":"","visitante":"","ventaja":""},{"categoria":"H2H Mundiales","local":"","visitante":"","ventaja":""}],"mercadosCalificados":[{"mercado":"nombre","nota":8,"comentario":"por qué esa nota"}],"trampasMercado":["descripción de cada trampa detectada"],"mejorApuesta":{"mercado":"","linea":"","razon":"por qué es la de mayor valor"},"apuestaEvitar":{"mercado":"","razon":"por qué evitarla"},"datosFaltantes":[],"picks":[{"mercado":"nombre EXACTO","linea":"","tipo":"","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"datos reales considerando fase del torneo","condicionPartido":"","cuotaSugerida":"","ev":"","riesgo":""}],"pronostico":"resultado considerando fase y contexto","alertas":[],"perfilPartido":"cerrado"}
+{"resumen":"contexto completo del partido y fase","estadoGrupo":"resumen de la tabla: quién lidera, quién está obligado, quién puede rotar (o vacío si no hay datos)","condicionPartido":"qué necesita cada selección en esta fase específica","necesidadLocal":"qué resultado necesita el local y su urgencia","necesidadVisitante":"qué resultado necesita el visitante y su urgencia","formaLocal":"últimos 5 con goles - diferenciando competitivos vs amistosos","formaVisitante":"últimos 5 con goles - diferenciando competitivos vs amistosos","h2hMundiales":"historial específico en Mundiales y torneos mayores","rotacionesEsperadas":"qué jugadores pueden rotar si algún equipo ya clasificó","fatigaAcumulada":"análisis de fatiga por partidos jugados en el torneo","arbitro":{"nombre":"","tarjetasPromedio":"","tendencia":"","impactoMercados":""},"tactico":"sistemas y matchup táctico","estiloMercados":{"goles":"cómo los estilos afectan goles (over/under y por qué)","corners":"proyección de córners según estilo","tarjetas":"proyección de tarjetas según físico/faltas","resultado":"cómo el choque de estilos define el 1x2"},"factorHinchada":"impacto de la hinchada/localía en este partido (especial si juega anfitrión)","factoresOcultos":"presión mediática/clima/altitud/contexto emocional","marcadorEsperado":{"local":1,"visitante":0,"totalGoles":1.8,"descripcion":"proyección considerando fase y necesidades"},"comparacionH2H":[{"categoria":"Nivel FIFA","local":"","visitante":"","ventaja":""},{"categoria":"Forma reciente","local":"","visitante":"","ventaja":""},{"categoria":"Motivación","local":"","visitante":"","ventaja":""},{"categoria":"Fatiga","local":"","visitante":"","ventaja":""},{"categoria":"Lesiones","local":"","visitante":"","ventaja":""},{"categoria":"H2H Mundiales","local":"","visitante":"","ventaja":""}],"mercadosCalificados":[{"mercado":"nombre","nota":8,"comentario":"por qué esa nota"}],"trampasMercado":["descripción de cada trampa detectada"],"mejorApuesta":{"mercado":"","linea":"","razon":"por qué es la de mayor valor"},"apuestaEvitar":{"mercado":"","razon":"por qué evitarla"},"datosFaltantes":[],"picks":[{"mercado":"nombre EXACTO","linea":"","tipo":"","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"datos reales considerando fase del torneo","condicionPartido":"","cuotaSugerida":"","ev":"","riesgo":""}],"pronostico":"resultado considerando fase y contexto","alertas":[],"perfilPartido":"cerrado"}
 
 REGLAS CRÍTICAS POR FASE:
 - GRUPOS J3: Muy difícil de predecir si ambos clasifican. Baja confianza máx 68%.
@@ -1023,29 +1026,6 @@ function calcDashboard(bankroll, reviews) {
 }
 
 // Mini bar chart component (SVG inline)
-function MiniBarChart({ data, height = 80, color = "#6366f1" }) {
-  if (!data.length) return null;
-  const max = Math.max(...data.map(d => Math.abs(d.val)), 1);
-  const w = 100 / data.length;
-  return (
-    <svg viewBox={`0 0 100 ${height}`} style={{ width: "100%", height }} preserveAspectRatio="none">
-      {data.map((d, i) => {
-        const barH = (Math.abs(d.val) / max) * (height * 0.85);
-        const isPos = d.val >= 0;
-        const barColor = isPos ? "#34d399" : "#f87171";
-        const y = isPos ? height - barH : height / 2;
-        return (
-          <g key={i}>
-            <rect x={i * w + 0.5} y={y} width={w - 1} height={barH}
-              fill={barColor} opacity={0.8} rx={1} />
-          </g>
-        );
-      })}
-      <line x1={0} y1={height / 2} x2={100} y2={height / 2} stroke="rgba(255,255,255,.1)" strokeWidth={0.5} />
-    </svg>
-  );
-}
-
 // Line chart for bankroll curve
 function BankCurve({ data }) {
   if (data.length < 2) return <div style={{ color: "#475569", fontSize: 12, padding: 20, textAlign: "center" }}>Registra apuestas para ver la curva</div>;
@@ -1358,7 +1338,7 @@ export default function App() {
   useEffect(() => {
     const saved = loadState(AIK, null);
     if (!saved) return;
-    if (saved.activeSport) setActiveSport(saved.activeSport);
+    if (saved.activeSport && saved.activeSport === "futbol") setActiveSport(saved.activeSport);
     if (saved.modoMundial) setModoMundial(true);
     if (saved.match) setMatch(saved.match);
     if (saved.aiResult) { setAiResult(saved.aiResult); setAiStatus("done"); }
@@ -1561,7 +1541,6 @@ export default function App() {
       perfilPartido: aiResult.perfilPartido || "",
       marcadorEsperado: aiResult.marcadorEsperado || null,
       resultadoReal: { golesLocal: "", golesVisita: "", tarjetas: "", corners: "", notas: "" },
-      evaluado: false,
     };
     setAnalisisGuardados(prev => [registro, ...prev]);
     showToast("📌 Análisis guardado para revisar tras el partido", "success");
@@ -2015,7 +1994,7 @@ export default function App() {
         <div style={{ maxWidth: 960, margin: "0 auto", padding: isMobile ? "0 10px" : "0 16px" }}>
           {/* Sport selector */}
           <div style={{ display: "flex", gap: 4, paddingTop: 6, paddingBottom: 4, overflowX: "auto", scrollbarWidth: "none" }}>
-            {Object.values(SPORTS).map(s => (
+            {Object.values(SPORTS).filter(s => s.id === "futbol").map(s => (
               <button key={s.id} onClick={() => { setActiveSport(s.id); setMarketFilter("Todos"); setModoMundial(false); setEquipoSeleccionado(null); setPartidoDraft(null); }}
                 style={{ padding: isMobile ? "3px 10px" : "4px 12px", borderRadius: 20, border: `1px solid ${activeSport === s.id ? s.color : "rgba(255,255,255,.08)"}`, background: activeSport === s.id ? s.colorSoft : "transparent", color: activeSport === s.id ? "#e0e7ff" : "#475569", cursor: "pointer", fontWeight: 800, fontSize: isMobile ? 11 : 12, transition: "all .2s", whiteSpace: "nowrap", flexShrink: 0 }}>
                 {s.label}
@@ -2707,6 +2686,26 @@ export default function App() {
                 )}
 
                 {/* ── MUNDIAL: estado del grupo ───────────────────────────────── */}
+                {modoMundial && (aiResult.estiloMercados || aiResult.factorHinchada) && (
+                  <div style={{ background: "rgba(99,102,241,.06)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
+                    <div style={{ fontWeight: 800, fontSize: 12, color: "#a5b4fc", marginBottom: 8 }}>🎯 ESTILO DE JUEGO → MERCADOS</div>
+                    {aiResult.estiloMercados && (
+                      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+                        {aiResult.estiloMercados.goles && <div style={{ background: "rgba(15,23,42,.5)", borderRadius: 8, padding: "8px 10px" }}><div style={{ fontSize: 10, fontWeight: 800, color: "#34d399", marginBottom: 2 }}>⚽ GOLES</div><div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.5 }}>{aiResult.estiloMercados.goles}</div></div>}
+                        {aiResult.estiloMercados.corners && <div style={{ background: "rgba(15,23,42,.5)", borderRadius: 8, padding: "8px 10px" }}><div style={{ fontSize: 10, fontWeight: 800, color: "#38bdf8", marginBottom: 2 }}>⛳ CÓRNERS</div><div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.5 }}>{aiResult.estiloMercados.corners}</div></div>}
+                        {aiResult.estiloMercados.tarjetas && <div style={{ background: "rgba(15,23,42,.5)", borderRadius: 8, padding: "8px 10px" }}><div style={{ fontSize: 10, fontWeight: 800, color: "#fbbf24", marginBottom: 2 }}>🟨 TARJETAS</div><div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.5 }}>{aiResult.estiloMercados.tarjetas}</div></div>}
+                        {aiResult.estiloMercados.resultado && <div style={{ background: "rgba(15,23,42,.5)", borderRadius: 8, padding: "8px 10px" }}><div style={{ fontSize: 10, fontWeight: 800, color: "#f472b6", marginBottom: 2 }}>🎲 RESULTADO</div><div style={{ fontSize: 11, color: "#cbd5e1", lineHeight: 1.5 }}>{aiResult.estiloMercados.resultado}</div></div>}
+                      </div>
+                    )}
+                    {aiResult.factorHinchada && (
+                      <div style={{ background: "rgba(251,146,60,.08)", borderRadius: 8, padding: "8px 10px", marginTop: 8 }}>
+                        <span style={{ fontSize: 10, fontWeight: 800, color: "#fb923c" }}>📣 HINCHADA / LOCALÍA: </span>
+                        <span style={{ fontSize: 11, color: "#fed7aa" }}>{aiResult.factorHinchada}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {modoMundial && aiResult.estadoGrupo && (
                   <div style={{ background: "rgba(251,191,36,.06)", border: "1px solid rgba(251,191,36,.2)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
                     <div style={{ fontWeight: 800, fontSize: 12, color: "#fbbf24", marginBottom: 6 }}>🏆 ESTADO DEL GRUPO</div>
@@ -3541,7 +3540,28 @@ export default function App() {
               ))}
             </div>
 
-            {/* Curva del bankroll */}
+            {/* Control de límite diario de pérdida */}
+            <div style={{ background: dailyExceeded ? "rgba(239,68,68,.08)" : "rgba(15,23,42,.6)", border: `1px solid ${dailyExceeded ? "rgba(239,68,68,.3)" : "rgba(255,255,255,.07)"}`, borderRadius: 16, padding: 16, marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: dailyExceeded ? "#f87171" : "#6366f1", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>🛑 Límite diario de pérdida</div>
+                  <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                    Si pierdes más de este % del banco en un día, la app te avisa para parar.
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="number" inputMode="numeric" value={dailyLossLimit}
+                    onChange={e => setDailyLossLimit(clamp(toNum(e.target.value), 1, 100))}
+                    style={{ width: 64, padding: "8px 10px", borderRadius: 9, border: "1px solid rgba(255,255,255,.1)", background: "rgba(15,23,42,.8)", color: "#e0e7ff", fontSize: 16, fontWeight: 800, textAlign: "center", outline: "none", boxSizing: "border-box" }} />
+                  <span style={{ fontSize: 16, fontWeight: 800, color: "#64748b" }}>%</span>
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                <span style={{ fontSize: 11, color: "#64748b" }}>Límite en dinero: <b style={{ color: "#cbd5e1" }}>${fmtMoney(dailyLimitAmt)}</b></span>
+                <span style={{ fontSize: 11, color: todayLoss > 0 ? "#f87171" : "#64748b" }}>Perdido hoy: <b style={{ color: todayLoss > 0 ? "#f87171" : "#cbd5e1" }}>${fmtMoney(todayLoss)}</b></span>
+              </div>
+            </div>
+
             {dashboard.bankCurve.length >= 2 && (
               <div style={{ background: "rgba(15,23,42,.6)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 16, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: "#6366f1", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 10 }}>📈 Evolución del banco</div>
@@ -4773,6 +4793,36 @@ export default function App() {
                       style={{ background: "none", border: "none", color: "#64748b", fontSize: 16, cursor: "pointer", padding: 0 }}>×</button>
                   </div>
 
+                  {/* Mejor apuesta / A evitar (guardados del análisis, sin gastar créditos) */}
+                  {(a.mejorApuesta?.mercado || a.apuestaEvitar?.mercado) && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                      {a.mejorApuesta?.mercado && (
+                        <div style={{ background: "rgba(52,211,153,.08)", border: "1px solid rgba(52,211,153,.3)", borderRadius: 10, padding: "8px 10px", boxSizing: "border-box" }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: "#34d399", marginBottom: 3 }}>✅ MEJOR APUESTA</div>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: "#a7f3d0" }}>{a.mejorApuesta.mercado}{a.mejorApuesta.linea ? ` ${a.mejorApuesta.linea}` : ""}</div>
+                          {a.mejorApuesta.razon && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{a.mejorApuesta.razon}</div>}
+                        </div>
+                      )}
+                      {a.apuestaEvitar?.mercado && (
+                        <div style={{ background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 10, padding: "8px 10px", boxSizing: "border-box" }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: "#f87171", marginBottom: 3 }}>🚫 A EVITAR</div>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: "#fecaca" }}>{a.apuestaEvitar.mercado}</div>
+                          {a.apuestaEvitar.razon && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{a.apuestaEvitar.razon}</div>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Trampas del mercado */}
+                  {a.trampasMercado?.length > 0 && (
+                    <div style={{ background: "rgba(251,146,60,.07)", border: "1px solid rgba(251,146,60,.25)", borderRadius: 10, padding: "8px 10px", marginBottom: 10 }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#fb923c", marginBottom: 4 }}>⚠️ TRAMPAS DEL MERCADO</div>
+                      {a.trampasMercado.filter(Boolean).map((t, i) => (
+                        <div key={i} style={{ fontSize: 11, color: "#fed7aa", marginBottom: 2 }}>• {t}</div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Marcador real (opcional, solo como referencia visual) */}
                   <div style={{ background: "rgba(2,8,23,.5)", borderRadius: 10, padding: 10, marginBottom: 10 }}>
                     <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 6 }}>Resultado real (referencia):</div>
@@ -4849,4 +4899,3 @@ export default function App() {
     </div>
   );
 }
-
