@@ -13,12 +13,21 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Analizador de Apuestas",
-  description: "Analizador de apuestas de fútbol y NBA",
+  title: "KALBetAnalyzer PRO",
+  description: "Analizador de apuestas de fútbol con IA",
+  manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon-32.png", type: "image/png", sizes: "32x32" },
+      { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
+    ],
+    apple: "/icon-180.png",
+  },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0f172a",
+  themeColor: "#6366f1",
 };
 
 export default function RootLayout({
