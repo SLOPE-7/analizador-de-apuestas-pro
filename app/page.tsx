@@ -119,6 +119,7 @@ function emptyPartidoEquipo(deporte = "futbol") {
     id: "", fecha: "", rival: "", condicion: "local", resultado: "",
     golesAnotados: "", golesRecibidos: "",
     corners: "", tarjetas: "", tarjetasRojas: "",
+    xg: "", tirosPuerta: "", posesion: "",
     picksIA: [], eventos: [], notas: "",
   };
 }
@@ -150,6 +151,9 @@ function calcTeamAvg(partidos, deporte) {
     golesRecibidos: avg("golesRecibidos"),
     corners: avg("corners"),
     tarjetas: avg("tarjetas"),
+    xg: avg("xg"),
+    tirosPuerta: avg("tirosPuerta"),
+    posesion: avg("posesion"),
   };
 }
 
@@ -173,6 +177,11 @@ function buildTeamProfileContext(equipos, local, visitante, deporte) {
     if (deporte === "futbol") {
       ctx += `  Goles anotados/juego: ${avg.golesAnotados} | Goles recibidos/juego: ${avg.golesRecibidos}\n`;
       ctx += `  Corners/juego: ${avg.corners} | Tarjetas/juego: ${avg.tarjetas}\n`;
+      const avanzadas = [];
+      if (avg.xg !== "N/D") avanzadas.push(`xG/juego: ${avg.xg}`);
+      if (avg.tirosPuerta !== "N/D") avanzadas.push(`Tiros a puerta/juego: ${avg.tirosPuerta}`);
+      if (avg.posesion !== "N/D") avanzadas.push(`Posesión media: ${avg.posesion}%`);
+      if (avanzadas.length) ctx += `  ${avanzadas.join(" | ")}\n`;
     } else if (deporte === "mlb") {
       ctx += `  Carreras anotadas/juego: ${avg.carrerasAnotadas} | Recibidas: ${avg.carrerasRecibidas}\n`;
       ctx += `  Hits anotados/juego: ${avg.hitsAnotados}\n`;
@@ -239,7 +248,7 @@ const emptyGrupoCtx = () => ({
 // ── SISTEMA MULTIDEPORTE ──────────────────────────────────────────────────────
 const SPORTS = {
   futbol: {
-    id: "futbol", label: "⚽ Fútbol", emoji: "⚽",
+    id: "futbol", label: "⚽ Fútbol 🏆", emoji: "⚽",
     color: "#4f46e5", colorSoft: "rgba(79,70,229,.15)", border: "rgba(79,70,229,.3)",
     gradient: "linear-gradient(135deg, #4f46e5, #7c3aed)",
     bgGradient: "radial-gradient(ellipse at 20% 20%, rgba(79,70,229,.25) 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, rgba(124,58,237,.18) 0%, transparent 55%)",
@@ -4333,18 +4342,24 @@ export default function App() {
 
                         {/* Stats por deporte */}
                         {dep === "futbol" && (
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
                             {[
                               { key: "golesAnotados", label: "Goles ⚽", placeholder: "2" },
                               { key: "golesRecibidos", label: "Recibidos 🛡️", placeholder: "1" },
                               { key: "corners", label: "Corners ⛳", placeholder: "5" },
                               { key: "tarjetas", label: "Tarjetas 🟨", placeholder: "2" },
+                              { key: "xg", label: "xG 📊", placeholder: "1.4" },
+                              { key: "tirosPuerta", label: "Tiros puerta 🎯", placeholder: "5" },
+                              { key: "posesion", label: "Posesión % 🔵", placeholder: "55" },
                             ].map(f => (
                               <div key={f.key}>
                                 <label style={labelStyle}>{f.label}</label>
                                 <input type="number" value={partidoDraft[f.key] ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, [f.key]: e.target.value }))} placeholder={f.placeholder} style={inputStyle} />
                               </div>
                             ))}
+                            <div style={{ gridColumn: "1 / -1", fontSize: 10, color: "#475569", marginTop: -2 }}>
+                              xG, tiros a puerta y posesión son opcionales — déjalos vacíos si no tienes el dato (no se inventa).
+                            </div>
                           </div>
                         )}
                         {dep === "mlb" && (
