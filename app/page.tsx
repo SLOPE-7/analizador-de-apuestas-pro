@@ -1499,7 +1499,6 @@ export default function App() {
         // Escribir cada clave en storage y refrescar
         Object.entries(datos).forEach(([k, v]) => { try { saveState(k, v); } catch (e) { console.error("import key", k, e); } });
         showToast("📥 Respaldo importado. Recargando…", "success");
-        setShowGruposIO(false);
         setTimeout(() => window.location.reload(), 900);
       } catch (err) {
         console.error("importarGruposArchivo:", err);
