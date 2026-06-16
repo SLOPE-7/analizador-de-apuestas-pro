@@ -1295,7 +1295,6 @@ export default function App() {
   const [mundialRapido, setMundialRapido] = useState(false);
   const [gruposGuardados, setGruposGuardados] = useState(() => loadState(GLK, {}));   // { "A": {grupo, equipos, resultadosPrevios}, ... }
   const [analisisGuardados, setAnalisisGuardados] = useState(() => loadState(ANK, []));  // análisis completos para revisar tras el partido
-  const [showGruposIO, setShowGruposIO] = useState(false);                            // panel de exportar/importar
   const [favoritos, setFavoritos] = useState(() => loadState(FK, []));
   const [equipos, setEquipos] = useState(() => loadState(EK, [])); // team profiles
   const [betDraft, setBetDraft] = useState(emptyBet());
@@ -1340,6 +1339,7 @@ export default function App() {
 
   const resultsRef = useRef(null);
   const importRef = useRef(null);
+  const backupRef = useRef(null);
 
   // ── EFFECTS ───────────────────────────────────────────────────────────────
   useEffect(() => { setMounted(true); }, []);
@@ -1748,7 +1748,7 @@ export default function App() {
       const jornadaCtx = buildJornadaContext(jornadas, match.local, match.visitante) + (modoMundial ? buildGrupoContext(grupoCtx) + buildAprendizajeContext(analisisGuardados) : "");
       const memoryCtx = buildTeamMemory(reviews, match.local, match.visitante);
       const teamProfileCtx = buildTeamProfileContext(equipos, match.local, match.visitante, activeSport);
-      const notaCtx = userNote.trim() ? `\n\n📝 NOTA DEL ANALISTA (prioridad alta): ${userNote.trim()}` : "";
+      const notaCtx = userNote.trim() ? `\n\n📝 NOTA DEL ANALISTA (prioridad alta): ${userNote.trim()}\n[INSTRUCCIÓN sobre la nota: si el analista pegó texto largo de otra fuente (Sofascore, web de stats, etc.), EXTRAE solo los datos objetivos y útiles: forma reciente, resultados, lesiones/bajas, posesión, tiros, oportunidades creadas, H2H, contexto del partido (amistoso, rotaciones). IGNORA el relleno, los anuncios y especialmente las CONCLUSIONES o porcentajes de probabilidad de esa otra fuente (ej: "el modelo favorece a X 76%") — esas son la opinión de otra herramienta, no la tuya. Haz TU PROPIO análisis independiente con los datos crudos. No copies el pick de la otra fuente; llega a tu propia conclusión y así el analista podrá comparar dos opiniones distintas.]` : "";
 
       // Construir contexto de datos extra
       const extraParts = [];
@@ -1756,7 +1756,8 @@ export default function App() {
         if (datosExtra.titularLocal) extraParts.push(`Alineación/titulares ${match.local}: ${datosExtra.titularLocal}`);
         if (datosExtra.titularVisitante) extraParts.push(`Alineación/titulares ${match.visitante}: ${datosExtra.titularVisitante}`);
         if (datosExtra.bajasClave) extraParts.push(`Bajas clave confirmadas: ${datosExtra.bajasClave}`);
-        if (datosExtra.arbitro) extraParts.push(`Árbitro confirmado: ${datosExtra.arbitro}${datosExtra.notaArbitro ? ` — ${datosExtra.notaArbitro}` : ""}`);
+        if (datosExtra.notaArbitro) extraParts.push(`ÁRBITRO (contexto, tarjetas, córners): ${datosExtra.notaArbitro}`);
+        else if (datosExtra.arbitro) extraParts.push(`Árbitro confirmado: ${datosExtra.arbitro}`);
       }
       if (activeSport === "mlb") {
         if (datosExtra.eraUltimas3Local) extraParts.push(`ERA pitcher ${match.local} últimas 3 salidas: ${datosExtra.eraUltimas3Local}`);
@@ -1902,10 +1903,8 @@ export default function App() {
     { id: "ticket", label: "🧾 Ticket" },
     { id: "bankroll", label: "💼 Bankroll" },
     { id: "historial", label: "📚 Historial" },
-    { id: "ia-review", label: "🆚 IA vs Real" },
-    { id: "ia-stats", label: "📈 Stats IA" },
+    { id: "ia-review", label: "📊 Rendimiento IA" },
     { id: "equipos", label: "🏟️ Equipos" },
-    { id: "favoritos", label: "⭐ Favoritos" },
     ...(modoMundial ? [{ id: "jornadas", label: "🏆 Jornadas" }] : []),
     ...(modoMundial ? [{ id: "aprendizaje", label: "🧠 Aprendizaje IA" }] : []),
   ];
@@ -2043,13 +2042,12 @@ export default function App() {
               )}
               <button onClick={clearAll} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(239,68,68,.25)", background: "rgba(239,68,68,.08)", color: "#f87171", cursor: "pointer", fontWeight: 700 }}>{isMobile ? "🗑" : "🗑 Nuevo"}</button>
               <button onClick={() => importRef.current?.click()} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(56,189,248,.25)", background: "rgba(56,189,248,.08)", color: "#7dd3fc", cursor: "pointer", fontWeight: 700 }}>📂</button>
-              <button onClick={exportData} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(255,255,255,.08)", background: "transparent", color: "#475569", cursor: "pointer", fontWeight: 700 }}>⬇</button>
-              {/* Botón Hondubet */}
-              <a href="https://hondubet.com/" target="_blank" rel="noopener noreferrer"
-                style={{ fontSize: isMobile ? 11 : 11, padding: isMobile ? "5px 8px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(234,179,8,.35)", background: "rgba(234,179,8,.12)", color: "#fbbf24", cursor: "pointer", fontWeight: 800, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
-                🎰 {!isMobile && "Hondubet"}
-              </a>
+              <button onClick={exportData} style={{ fontSize: isMobile ? 14 : 11, padding: isMobile ? "5px 7px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(255,255,255,.08)", background: "transparent", color: "#475569", cursor: "pointer", fontWeight: 700 }} title="Descargar este análisis">⬇</button>
+              {/* Respaldo total (todo) */}
+              <button onClick={exportarGrupos} style={{ fontSize: isMobile ? 11 : 11, padding: isMobile ? "5px 8px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(52,211,153,.3)", background: "rgba(52,211,153,.1)", color: "#34d399", cursor: "pointer", fontWeight: 800 }} title="Respaldo total: guarda TODO">💾 {!isMobile && "Respaldo"}</button>
+              <button onClick={() => backupRef.current?.click()} style={{ fontSize: isMobile ? 11 : 11, padding: isMobile ? "5px 8px" : "4px 10px", borderRadius: 20, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.1)", color: "#7dd3fc", cursor: "pointer", fontWeight: 800 }} title="Restaurar respaldo total">♻️ {!isMobile && "Restaurar"}</button>
               <input ref={importRef} type="file" accept="application/json" style={{ display: "none" }} onChange={(e) => importData(e.target.files?.[0] || null)} />
+              <input ref={backupRef} type="file" accept=".json,application/json" style={{ display: "none" }} onChange={(e) => { importarGruposArchivo(e.target.files?.[0]); e.target.value = ""; }} />
             </div>
           </div>
         </div>
@@ -2393,10 +2391,6 @@ export default function App() {
                         style={{ flex: "1 1 auto", padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(52,211,153,.35)", background: "rgba(52,211,153,.1)", color: "#34d399", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
                         💾 Guardado automático {grupoCtx.grupo ? `· ${grupoCtx.grupo.toUpperCase()}` : ""}
                       </button>
-                      <button onClick={() => setShowGruposIO(v => !v)}
-                        style={{ padding: "7px 12px", borderRadius: 9, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.08)", color: "#38bdf8", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
-                        ↹ Respaldo / Restaurar
-                      </button>
                     </div>
 
                     {/* Chips de grupos guardados */}
@@ -2418,25 +2412,6 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Panel exportar / importar por ARCHIVO */}
-                    {showGruposIO && (
-                      <div style={{ marginTop: 10, background: "rgba(15,23,42,.6)", border: "1px solid rgba(56,189,248,.2)", borderRadius: 10, padding: 10 }}>
-                        <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 8, lineHeight: 1.4 }}>
-                          <b style={{ color: "#38bdf8" }}>Respaldo completo:</b> exporta TODO (grupos, análisis, historial, banca) a un archivo. Guárdalo en Drive o mándatelo. Al importar en otro dispositivo, <b style={{ color: "#fbbf24" }}>reemplaza</b> todos los datos con los del archivo.
-                        </div>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button onClick={exportarGrupos}
-                            style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid rgba(56,189,248,.3)", background: "rgba(56,189,248,.1)", color: "#38bdf8", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
-                            📤 Descargar respaldo
-                          </button>
-                          <label style={{ flex: 1, padding: "9px 10px", borderRadius: 8, border: "1px solid rgba(52,211,153,.35)", background: "rgba(52,211,153,.1)", color: "#34d399", fontSize: 12, fontWeight: 800, cursor: "pointer", textAlign: "center", boxSizing: "border-box" }}>
-                            📥 Restaurar archivo
-                            <input type="file" accept=".json,application/json" style={{ display: "none" }}
-                              onChange={e => { const f = e.target.files?.[0]; importarGruposArchivo(f); e.target.value = ""; }} />
-                          </label>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -2477,6 +2452,24 @@ export default function App() {
               )}
             </div>
 
+            {/* ── ÁRBITRO (bloque destacado, campo libre) ──────────────────── */}
+            <div style={{ marginBottom: 16, background: "rgba(251,146,60,.06)", border: "1px solid rgba(251,146,60,.25)", borderRadius: 12, padding: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#fb923c", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                🟨 Árbitro · Contexto · Tarjetas · Córners
+              </div>
+              <p style={{ fontSize: 10, color: "#94a3b8", margin: "0 0 8px", lineHeight: 1.5 }}>
+                Escribe lo que sabes del árbitro: nombre, cuántas tarjetas suele sacar, si pita penales, tendencia de córners, etc. La IA lo tomará en cuenta para los mercados de tarjetas y córners.
+              </p>
+              <textarea
+                value={datosExtra.notaArbitro}
+                onChange={e => { setDatosExtra(d => ({ ...d, notaArbitro: e.target.value })); e.target.style.height = "auto"; e.target.style.height = Math.max(e.target.scrollHeight, 54) + "px"; }}
+                ref={el => { if (el) { el.style.height = "auto"; el.style.height = Math.max(el.scrollHeight, 54) + "px"; } }}
+                placeholder="Ej: Szymon Marciniak. Promedia 5.4 tarjetas/partido, permisivo con el roce pero pita penales claros. Córners suelen pasar de 9."
+                rows={2}
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid rgba(251,146,60,.3)", background: "rgba(15,23,42,.6)", color: "#e0e7ff", fontSize: 13, fontFamily: "inherit", resize: "none", overflow: "hidden", minHeight: 54, outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+
             {/* ── DATOS CLAVE (opcional, alta precisión) ───────────────────── */}
             {(() => {
               const hasDatos = Object.values(datosExtra).some(v => v);
@@ -2510,18 +2503,6 @@ export default function App() {
                           <label style={labelStyle}>Bajas clave confirmadas (hoy)</label>
                           <input value={datosExtra.bajasClave} onChange={e => setDatosExtra(d => ({ ...d, bajasClave: e.target.value }))}
                             placeholder="Ej: Pedri OUT (lesión), Vinicius sancionado" style={inputStyle} />
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                          <div>
-                            <label style={labelStyle}>Árbitro confirmado</label>
-                            <input value={datosExtra.arbitro} onChange={e => setDatosExtra(d => ({ ...d, arbitro: e.target.value }))}
-                              placeholder="Ej: Szymon Marciniak" style={inputStyle} />
-                          </div>
-                          <div>
-                            <label style={labelStyle}>Nota sobre árbitro</label>
-                            <input value={datosExtra.notaArbitro} onChange={e => setDatosExtra(d => ({ ...d, notaArbitro: e.target.value }))}
-                              placeholder="Ej: Pita muchas tarjetas, 2+ penales" style={inputStyle} />
-                          </div>
                         </div>
                       </div>
                     )}
@@ -3946,8 +3927,8 @@ export default function App() {
           <div>
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#6366f1", textTransform: "uppercase", marginBottom: 2 }}>Calibración</div>
-              <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>🆚 IA vs Realidad</h2>
-              <p style={{ fontSize: 13, color: "#334155", marginTop: 4 }}>Cada review que guardes mejora la calibración del motor para futuros análisis.</p>
+              <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>📊 Rendimiento IA</h2>
+              <p style={{ fontSize: 13, color: "#334155", marginTop: 4 }}>Cómo le va al motor: predicciones vs realidad y tus estadísticas. Cada review mejora la calibración.</p>
             </div>
             {reviews.length === 0 ? (
               <div style={{ textAlign: "center", padding: "60px 20px", color: "#334155" }}>
@@ -4002,10 +3983,10 @@ export default function App() {
           </div>
         )}
 
-        {/* ── TAB: STATS IA ────────────────────────────────────────────────── */}
-        {activeTab === "ia-stats" && (
+        {/* ── STATS IA (unificado dentro de Rendimiento IA) ──────────────── */}
+        {activeTab === "ia-review" && (
           <div>
-            <div style={{ marginBottom: 20 }}>
+            <div style={{ marginBottom: 20, marginTop: 24, paddingTop: 20, borderTop: "1px solid rgba(255,255,255,.08)" }}>
               <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".1em", color: "#6366f1", textTransform: "uppercase", marginBottom: 2 }}>Performance</div>
               <h2 style={{ fontSize: 20, fontWeight: 900, color: "#e0e7ff", margin: 0 }}>📈 Stats del Motor IA</h2>
               <p style={{ fontSize: 13, color: "#334155", marginTop: 4 }}>Track record real — basado en tus reviews. El motor usa estos datos en cada análisis.</p>
@@ -4309,10 +4290,73 @@ export default function App() {
                       </button>
                     ) : (
                       <div>
+                        {/* Para fútbol/Mundial: diseño limpio sin condición, resultado automático */}
+                        {dep === "futbol" ? (
+                          <>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                              <div>
+                                <label style={labelStyle}>Rival</label>
+                                <input value={partidoDraft.rival ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, rival: e.target.value }))} placeholder="Ej: Alemania" style={inputStyle} />
+                              </div>
+                              <div>
+                                <label style={labelStyle}>Fecha</label>
+                                <input type="date" value={partidoDraft.fecha ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, fecha: e.target.value }))} style={inputStyle} />
+                              </div>
+                            </div>
+
+                            {/* Goles + resultado automático */}
+                            {(() => {
+                              const gf = partidoDraft.golesAnotados, gc = partidoDraft.golesRecibidos;
+                              const resAuto = (gf !== "" && gf != null && gc !== "" && gc != null)
+                                ? (toNum(gf) > toNum(gc) ? "W" : toNum(gf) < toNum(gc) ? "L" : "D") : "";
+                              // sincroniza el resultado calculado al draft
+                              if (resAuto && partidoDraft.resultado !== resAuto) {
+                                setTimeout(() => setPartidoDraft(d => d ? ({ ...d, resultado: resAuto }) : d), 0);
+                              }
+                              const resLabel = resAuto === "W" ? "✅ Victoria" : resAuto === "L" ? "❌ Derrota" : resAuto === "D" ? "🟡 Empate" : "—";
+                              const resColor = resAuto === "W" ? "#34d399" : resAuto === "L" ? "#f87171" : resAuto === "D" ? "#fbbf24" : "#475569";
+                              return (
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, marginBottom: 10, alignItems: "end" }}>
+                                  <div>
+                                    <label style={labelStyle}>Goles a favor ⚽</label>
+                                    <input type="number" inputMode="numeric" value={gf ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, golesAnotados: e.target.value }))} placeholder="2" style={inputStyle} />
+                                  </div>
+                                  <div>
+                                    <label style={labelStyle}>Goles en contra 🛡️</label>
+                                    <input type="number" inputMode="numeric" value={gc ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, golesRecibidos: e.target.value }))} placeholder="1" style={inputStyle} />
+                                  </div>
+                                  <div style={{ padding: "9px 14px", borderRadius: 9, background: `${resColor}1a`, border: `1px solid ${resColor}55`, color: resColor, fontWeight: 800, fontSize: 13, textAlign: "center", whiteSpace: "nowrap" }}>
+                                    {resLabel}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Stats restantes en orden pedido: Posesión, xG, Córners, Tarjetas, Tiros */}
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                              {[
+                                { key: "posesion", label: "Posesión % 🔵", placeholder: "55" },
+                                { key: "xg", label: "xG 📊", placeholder: "1.4" },
+                                { key: "corners", label: "Córners ⛳", placeholder: "5" },
+                                { key: "tarjetas", label: "Tarjetas 🟨", placeholder: "2" },
+                                { key: "tirosPuerta", label: "Tiros a puerta 🎯", placeholder: "5" },
+                              ].map(f => (
+                                <div key={f.key}>
+                                  <label style={labelStyle}>{f.label}</label>
+                                  <input type="number" inputMode="numeric" value={partidoDraft[f.key] ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, [f.key]: e.target.value }))} placeholder={f.placeholder} style={inputStyle} />
+                                </div>
+                              ))}
+                              <div style={{ gridColumn: "1 / -1", fontSize: 10, color: "#475569", marginTop: -2 }}>
+                                Posesión, xG y tiros son opcionales — déjalos vacíos si no tienes el dato (no se inventa).
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                        <>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
                           <div>
                             <label style={labelStyle}>Rival</label>
-                            <input value={partidoDraft.rival ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, rival: e.target.value }))} placeholder={dep === "mlb" ? "Ej: Yankees" : dep === "nba" ? "Ej: Lakers" : "Ej: Alemania"} style={inputStyle} />
+                            <input value={partidoDraft.rival ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, rival: e.target.value }))} placeholder={dep === "mlb" ? "Ej: Yankees" : "Ej: Lakers"} style={inputStyle} />
                           </div>
                           <div>
                             <label style={labelStyle}>Fecha</label>
@@ -4321,8 +4365,8 @@ export default function App() {
                           <div>
                             <label style={labelStyle}>{dep === "mlb" ? "Campo (Home/Away)" : "Condición"}</label>
                             <select value={partidoDraft.condicion ?? "local"} onChange={e => setPartidoDraft(d => ({ ...d, condicion: e.target.value }))} style={{ ...inputStyle, cursor: "pointer" }}>
-                              <option value="local">{dep === "mlb" ? "🏠 Home" : dep === "nba" ? "🏠 Home" : "🏠 Local"}</option>
-                              <option value="visitante">{dep === "mlb" ? "✈️ Away" : dep === "nba" ? "✈️ Away" : "✈️ Visitante"}</option>
+                              <option value="local">{dep === "mlb" ? "🏠 Home" : "🏠 Home"}</option>
+                              <option value="visitante">{dep === "mlb" ? "✈️ Away" : "✈️ Away"}</option>
                             </select>
                           </div>
                         </div>
@@ -4334,34 +4378,14 @@ export default function App() {
                             <select value={partidoDraft.resultado ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, resultado: e.target.value }))} style={{ ...inputStyle, cursor: "pointer" }}>
                               <option value="">Seleccionar</option>
                               <option value="W">✅ Victoria (W)</option>
-                              {dep === "futbol" && <option value="D">🟡 Empate (D)</option>}
                               <option value="L">❌ Derrota (L)</option>
                             </select>
                           </div>
                         </div>
+                        </>
+                        )}
 
                         {/* Stats por deporte */}
-                        {dep === "futbol" && (
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
-                            {[
-                              { key: "golesAnotados", label: "Goles ⚽", placeholder: "2" },
-                              { key: "golesRecibidos", label: "Recibidos 🛡️", placeholder: "1" },
-                              { key: "corners", label: "Corners ⛳", placeholder: "5" },
-                              { key: "tarjetas", label: "Tarjetas 🟨", placeholder: "2" },
-                              { key: "xg", label: "xG 📊", placeholder: "1.4" },
-                              { key: "tirosPuerta", label: "Tiros puerta 🎯", placeholder: "5" },
-                              { key: "posesion", label: "Posesión % 🔵", placeholder: "55" },
-                            ].map(f => (
-                              <div key={f.key}>
-                                <label style={labelStyle}>{f.label}</label>
-                                <input type="number" value={partidoDraft[f.key] ?? ""} onChange={e => setPartidoDraft(d => ({ ...d, [f.key]: e.target.value }))} placeholder={f.placeholder} style={inputStyle} />
-                              </div>
-                            ))}
-                            <div style={{ gridColumn: "1 / -1", fontSize: 10, color: "#475569", marginTop: -2 }}>
-                              xG, tiros a puerta y posesión son opcionales — déjalos vacíos si no tienes el dato (no se inventa).
-                            </div>
-                          </div>
-                        )}
                         {dep === "mlb" && (
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
                             {[
