@@ -840,7 +840,7 @@ function buildMundialPrompt(match, feedbackCtx = "", jornadaCtx = "", memoryCtx 
   if (descLocal) descansoCtx.push(`${local}: ${descLocal} días de descanso desde su último partido.`);
   if (descVisit) descansoCtx.push(`${visitante}: ${descVisit} días de descanso desde su último partido.`);
 
-  return `Eres un analista deportivo profesional especializado en selecciones nacionales y torneos internacionales. Buscas VALUE BETS con análisis profundo del contexto del torneo.${feedbackCtx}${jornadaCtx}${memoryCtx}${modoRapido ? "\n\n⚡ MODO RÁPIDO: Sé conciso. Llena resumen, estadoGrupo, los 2-3 mejores picks, mejorApuesta y apuestaEvitar. Puedes dejar vacíos los campos descriptivos largos (tactico, factoresOcultos, h2hMundiales). Prioriza velocidad sin perder el análisis del contexto del grupo." : ""}
+  return `Eres un analista deportivo profesional especializado en selecciones nacionales y torneos internacionales. Buscas VALUE BETS con análisis profundo del contexto del torneo.${feedbackCtx}${jornadaCtx}${memoryCtx}${modoRapido ? "\n\n⚡ MODO RÁPIDO: Aún más breve. Llena resumen, estadoGrupo (1 línea), los 2-3 mejores picks, mejorApuesta y apuestaEvitar. Lo demás muy corto o vacío." : ""}
 
 PARTIDO: ${local} vs ${visitante}${liga ? ` (${liga})` : ""}
 CUOTAS: Local ${oddLocal||"N/D"} | Empate ${oddDraw||"N/D"} | Visitante ${oddVisit||"N/D"}
@@ -931,8 +931,19 @@ MERCADOS (usa nombres exactos de Hondubet):
 ⚠️ REGLA DE DATOS FALTANTES (CRÍTICO):
 Si en fase de grupos NO tienes la tabla del grupo ni los resultados previos, y son necesarios para evaluar las necesidades de clasificación, NO inventes. En el JSON, marca "datosFaltantes" con la lista específica de lo que necesitas del usuario, y BAJA la confianza de todos los picks a máximo 60%. Solo da confianza alta cuando el contexto del grupo esté completo.
 
+⚠️ REGLA ANTI-REPETICIÓN (CRÍTICO para velocidad y claridad):
+NO repitas el mismo análisis en varios campos. Cada bloque debe aportar información ÚNICA:
+- "resumen" da el contexto general (1 vez). No repitas ahí el pronóstico ni las trampas.
+- "marcadorEsperado.descripcion" es el ÚNICO lugar para el pronóstico/proyección del resultado. NO uses un campo "pronostico" aparte.
+- "trampasMercado" va SOLO dentro de "alertas". NO crees un bloque de trampas separado y luego lo repitas en alertas. Las trampas son un tipo de alerta.
+- "estiloMercados" analiza goles/córners/tarjetas SIN repetir lo que ya dijiste en resumen.
+- Si un dato (ej: conflicto de forma de un equipo) ya lo mencionaste, NO lo vuelvas a escribir completo en otro campo; solo refiérete a él brevemente.
+Sé conciso. Menos texto repetido = análisis más rápido y útil.
+
 JSON puro sin backticks:
-{"resumen":"contexto completo del partido y fase","estadoGrupo":"resumen de la tabla: quién lidera, quién está obligado, quién puede rotar (o vacío si no hay datos)","condicionPartido":"qué necesita cada selección en esta fase específica","necesidadLocal":"qué resultado necesita el local y su urgencia","necesidadVisitante":"qué resultado necesita el visitante y su urgencia","formaLocal":"últimos 5 con goles - diferenciando competitivos vs amistosos","formaVisitante":"últimos 5 con goles - diferenciando competitivos vs amistosos","h2hMundiales":"historial específico en Mundiales y torneos mayores","rotacionesEsperadas":"qué jugadores pueden rotar si algún equipo ya clasificó","fatigaAcumulada":"análisis de fatiga por partidos jugados en el torneo","arbitro":{"nombre":"","tarjetasPromedio":"","tendencia":"","impactoMercados":""},"tactico":"sistemas y matchup táctico","estiloMercados":{"goles":"cómo los estilos afectan goles (over/under y por qué)","corners":"proyección de córners según estilo","tarjetas":"proyección de tarjetas según físico/faltas","resultado":"cómo el choque de estilos define el 1x2"},"factorHinchada":"impacto de la hinchada/localía en este partido (especial si juega anfitrión)","factoresOcultos":"presión mediática/clima/altitud/contexto emocional","marcadorEsperado":{"local":1,"visitante":0,"totalGoles":1.8,"descripcion":"proyección considerando fase y necesidades"},"comparacionH2H":[{"categoria":"Nivel FIFA","local":"","visitante":"","ventaja":""},{"categoria":"Forma reciente","local":"","visitante":"","ventaja":""},{"categoria":"Motivación","local":"","visitante":"","ventaja":""},{"categoria":"Fatiga","local":"","visitante":"","ventaja":""},{"categoria":"Lesiones","local":"","visitante":"","ventaja":""},{"categoria":"H2H Mundiales","local":"","visitante":"","ventaja":""}],"mercadosCalificados":[{"mercado":"nombre","nota":8,"comentario":"por qué esa nota"}],"trampasMercado":["descripción de cada trampa detectada"],"mejorApuesta":{"mercado":"","linea":"","razon":"por qué es la de mayor valor"},"apuestaEvitar":{"mercado":"","razon":"por qué evitarla"},"datosFaltantes":[],"picks":[{"mercado":"nombre EXACTO","linea":"","tipo":"","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"datos reales considerando fase del torneo","condicionPartido":"","cuotaSugerida":"","ev":"","riesgo":""}],"pronostico":"resultado considerando fase y contexto","alertas":[],"perfilPartido":"cerrado"}
+{"resumen":"contexto en MÁXIMO 3 líneas: quién es favorito, forma, qué se juega. Sin repetir nada de los otros campos","estadoGrupo":"1-2 líneas: posición en el grupo y qué necesita cada uno (o vacío si no hay tabla)","formaLocal":"últimos 5 con goles","formaVisitante":"últimos 5 con goles","arbitro":{"nombre":"","tarjetasPromedio":"","tendencia":"","impactoMercados":"breve"},"estiloMercados":{"goles":"estilo→over/under, conciso","corners":"proyección córners, conciso","tarjetas":"proyección tarjetas, conciso","resultado":"choque de estilos→1x2, conciso"},"mercadosCalificados":[{"mercado":"nombre","nota":8,"comentario":"breve"}],"mejorApuesta":{"mercado":"","linea":"","razon":"por qué es la de mayor valor"},"apuestaEvitar":{"mercado":"","razon":"por qué evitarla"},"datosFaltantes":[],"picks":[{"mercado":"nombre EXACTO","linea":"","tipo":"","confianza":72,"prioridad":"alta","pesoAnalisis":8,"justificacion":"datos reales, conciso","cuotaSugerida":"","ev":"","riesgo":""}],"alertas":["trampas del mercado Y avisos de tu historial, TODO aquí junto, sin repetir lo de otros campos"],"perfilPartido":"cerrado"}
+
+⚠️ IMPORTANTE: Sé CONCISO. No repitas el mismo dato en varios campos. Cada campo aporta algo único. Respuesta corta y directa = mejor.
 
 REGLAS CRÍTICAS POR FASE:
 - GRUPOS J3: Muy difícil de predecir si ambos clasifican. Baja confianza máx 68%.
@@ -1525,7 +1536,7 @@ export default function App() {
       cuotaManual: ticket.manual,
       potencial: ticket.potencial,
       estado: "pendiente", resumenIA: aiResult?.resumen || "",
-      pronosticoIA: aiResult?.pronostico || "",
+      pronosticoIA: aiResult?.pronostico || aiResult?.marcadorEsperado?.descripcion || "",
     };
     setHistorial(prev => [t, ...prev]);
     showToast("✅ Ticket guardado en historial", "success");
@@ -1545,7 +1556,7 @@ export default function App() {
       mejorApuesta: aiResult.mejorApuesta || null,
       apuestaEvitar: aiResult.apuestaEvitar || null,
       trampasMercado: aiResult.trampasMercado || [],
-      pronostico: aiResult.pronostico || "",
+      pronostico: aiResult.pronostico || aiResult.marcadorEsperado?.descripcion || "",
       perfilPartido: aiResult.perfilPartido || "",
       marcadorEsperado: aiResult.marcadorEsperado || null,
       resultadoReal: { golesLocal: "", golesVisita: "", tarjetas: "", corners: "", notas: "" },
@@ -1775,16 +1786,29 @@ export default function App() {
       else if (modoMundial) prompt = buildMundialPrompt(match, feedbackCtx + notaCtx + extraCtx + teamProfileCtx, jornadaCtx, memoryCtx, mundialCtx, mundialRapido);
       else prompt = buildFutbolPrompt(match, feedbackCtx + notaCtx + extraCtx + teamProfileCtx, jornadaCtx, memoryCtx);
 
-      const resp = await fetch("/api/ai-analysis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: AI_MODEL,
-          max_tokens: modoMundial && !mundialRapido ? 8000 : 4000,
-          useWebSearch: useWebSearch,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
+      const ctrl = new AbortController();
+      const timeoutId = setTimeout(() => ctrl.abort(), 90000); // 90s máximo
+      let resp;
+      try {
+        resp = await fetch("/api/ai-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: AI_MODEL,
+            max_tokens: modoMundial && !mundialRapido ? 4000 : 3000,
+            useWebSearch: useWebSearch,
+            messages: [{ role: "user", content: prompt }],
+          }),
+          signal: ctrl.signal,
+        });
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        if (fetchErr.name === "AbortError") {
+          throw new Error("El análisis tardó demasiado (90s). Prueba con 'Sin web' o 'Rápido', o intenta de nuevo.");
+        }
+        throw fetchErr;
+      }
+      clearTimeout(timeoutId);
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}));
         const msg = errData?.error?.message || errData?.message || `Error ${resp.status}`;
@@ -2647,16 +2671,17 @@ export default function App() {
                   )}
                 </div>
 
-                {/* Alerts */}
-                {aiResult.alertas?.filter(Boolean).length > 0 && (
+                {/* Alerts (incluye trampas del mercado, unificadas aquí) */}
+                {((aiResult.alertas?.filter(Boolean).length > 0) || (modoMundial && aiResult.trampasMercado?.filter(Boolean).length > 0)) && (
                   <div style={{ background: "rgba(245,158,11,.06)", border: "1px solid rgba(245,158,11,.2)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
                     <div style={{ fontWeight: 800, fontSize: 12, color: "#fbbf24", marginBottom: 6 }}>⚠️ ALERTAS DEL MOTOR</div>
-                    {aiResult.alertas.map((a, i) => <div key={i} style={{ fontSize: 13, color: "#fde68a", marginBottom: 2 }}>• {a}</div>)}
+                    {aiResult.alertas?.filter(Boolean).map((a, i) => <div key={`a${i}`} style={{ fontSize: 13, color: "#fde68a", marginBottom: 2 }}>• {a}</div>)}
+                    {modoMundial && aiResult.trampasMercado?.filter(Boolean).map((t, i) => <div key={`t${i}`} style={{ fontSize: 13, color: "#fed7aa", marginBottom: 2 }}>⚠️ {t}</div>)}
                   </div>
                 )}
 
-                {/* Condicion del partido — NEW */}
-                {aiResult.condicionPartido && (
+                {/* Condicion del partido — solo en ligas (en Mundial lo cubre Estado del Grupo) */}
+                {!modoMundial && aiResult.condicionPartido && (
                   <div style={{ background: "rgba(139,92,246,.06)", border: "1px solid rgba(139,92,246,.2)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
                     <div style={{ fontWeight: 800, fontSize: 12, color: "#a78bfa", marginBottom: 6 }}>⚡ CONDICIÓN DEL PARTIDO</div>
                     <p style={{ fontSize: 13, color: "#ddd6fe", margin: 0, lineHeight: 1.6 }}>{aiResult.condicionPartido}</p>
@@ -2748,16 +2773,6 @@ export default function App() {
                         </div>
                       );
                     })}
-                  </div>
-                )}
-
-                {/* ── MUNDIAL: trampas del mercado ────────────────────────────── */}
-                {modoMundial && aiResult.trampasMercado?.filter(Boolean).length > 0 && (
-                  <div style={{ background: "rgba(251,146,60,.07)", border: "1px solid rgba(251,146,60,.25)", borderRadius: 14, padding: "12px 16px", marginBottom: 16 }}>
-                    <div style={{ fontWeight: 800, fontSize: 12, color: "#fb923c", marginBottom: 6 }}>⚠️ TRAMPAS DEL MERCADO</div>
-                    {aiResult.trampasMercado.filter(Boolean).map((t, i) => (
-                      <div key={i} style={{ fontSize: 12, color: "#fed7aa", marginBottom: 3, lineHeight: 1.5 }}>• {t}</div>
-                    ))}
                   </div>
                 )}
 
